@@ -1,0 +1,112 @@
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Editor / IDE
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checking / lint
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Logs / temporary files
+# =========================
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# =========================
+# Datasets / large files
+# =========================
+data/
+datasets/
+*.h5
+*.hdf5
+*.npz
+*.npy
+
+# =========================
+# ML checkpoints / outputs
+# =========================
+checkpoints/
+weights/
+outputs/
+runs/
+results/
+
+*.ckpt
+*.pth
+*.pt
+*.onnx
+
+# TensorBoard
+events.out.tfevents.*
+
+# Weights & Biases
+wandb/
+
+# =========================
+# CUDA / compiled files
+# =========================
+*.so
+*.o
+*.a
+*.out
+
+# =========================
+# Project-local settings
+# =========================
+config.local.*
+local/
+
+reference_repo/
