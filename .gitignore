@@ -68,8 +68,8 @@ temp/
 # =========================
 # Datasets / large files
 # =========================
-data/
-datasets/
+/data/
+/datasets/
 *.h5
 *.hdf5
 *.npz
@@ -80,6 +80,7 @@ datasets/
 # =========================
 checkpoints/
 weights/
+cache/
 outputs/
 runs/
 results/

@@ -1,0 +1,30 @@
+# @package _global_
+# Optional follow-up after the GEP-compatible three-channel baseline.
+experiment:
+  name: e1_h_distill_lstm_voxel20
+
+dataset:
+  representation:
+    type: voxel_grid
+    channels: 20
+    event_bins: 10
+    polarity_split: true
+    voxel_normalization: nonzero_standardize
+    normalize_mean: null
+    normalize_std: null
+
+model:
+  event_encoder:
+    in_channels: 20
+    patch_init: random
+
+loss:
+  h_distill:
+    enabled: true
+    cosine_weight: 1.0
+    mse_weight: 1.0
+  z_objective:
+    type: none
+    weight: 0.0
+    cosine_weight: 1.0
+    mse_weight: 1.0

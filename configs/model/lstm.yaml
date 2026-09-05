@@ -1,0 +1,19 @@
+event_encoder:
+  architecture: dinov3_vits16
+  in_channels: 3
+  pretrained_init: true
+  patch_init: pretrained
+
+temporal:
+  type: lstm
+  input_dim: 384
+  hidden_dim: 384
+  output_dim: 384
+  num_layers: 2
+  dropout: 0.0
+  detach_state_every: null
+
+projector:
+  input_dim: 384
+  hidden_dim: 768
+  output_dim: 384

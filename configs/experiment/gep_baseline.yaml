@@ -1,0 +1,21 @@
+# @package _global_
+experiment:
+  name: e0_gep_like_dinov3
+
+model:
+  temporal:
+    type: identity
+    input_dim: 384
+    output_dim: 384
+
+loss:
+  h_distill:
+    enabled: false
+    cosine_weight: 1.0
+    mse_weight: 1.0
+  z_objective:
+    type: direct_dino
+    weight: 1.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
+

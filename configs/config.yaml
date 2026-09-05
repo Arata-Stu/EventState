@@ -1,0 +1,65 @@
+defaults:
+  - _self_
+  - dataset: dsec
+  - model: lstm
+  - teacher: dinov3_vits16
+  - experiment: h_distill_lstm
+
+seed: 0
+device: auto
+
+loss:
+  h_distill:
+    enabled: true
+    cosine_weight: 1.0
+    mse_weight: 1.0
+  z_objective:
+    type: none
+    weight: 1.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
+
+optimizer:
+  type: adamw
+  lr: 1.0e-4
+  weight_decay: 0.05
+  event_encoder_lr_mult: 0.1
+  temporal_lr_mult: 1.0
+  projector_lr_mult: 1.0
+
+scheduler:
+  warmup_steps: 1000
+  min_lr_ratio: 0.01
+
+training:
+  max_steps: 100000
+  batch_size: 2
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  precision: bf16
+  gradient_clip: 1.0
+  gradient_accumulation: 1
+  log_every: 20
+  validate_every: 1000
+  checkpoint_every: 1000
+  validation_batches: 100
+  resume: null
+
+evaluation:
+  checkpoint: null
+  # Full chronological validation is the evaluation default. Periodic training
+  # validation remains bounded by training.validation_batches.
+  max_batches: null
+  # null computes validation-set tertiles. Set [low_max, high_min] to compare
+  # fixed event-count ranges across runs.
+  event_count_thresholds: null
+
+output:
+  directory: ${hydra:runtime.output_dir}
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${experiment.name}
+  job:
+    chdir: false

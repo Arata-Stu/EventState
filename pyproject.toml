@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "event-state"
+version = "0.1.0"
+description = "Persistent visual state pretraining for event cameras"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "h5py>=3.9",
+  "hdf5plugin>=5.1,<6",
+  "hydra-core>=1.3,<1.4",
+  "numpy>=1.24",
+  "Pillow>=10",
+  "PyYAML>=6",
+  "tensorboard>=2.14",
+  "torch>=2.7.1",
+  "torchvision>=0.22.1",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+prepare = ["opencv-python>=4.8"]
+visualize = ["matplotlib>=3.8"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+include = ["event_state*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

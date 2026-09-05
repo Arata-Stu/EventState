@@ -1,0 +1,15 @@
+event_encoder:
+  architecture: dinov3_vits16
+  in_channels: 3
+  pretrained_init: true
+  patch_init: pretrained
+
+temporal:
+  type: mamba
+  input_dim: 384
+  output_dim: 384
+
+projector:
+  input_dim: 384
+  hidden_dim: 768
+  output_dim: 384

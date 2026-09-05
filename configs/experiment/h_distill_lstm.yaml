@@ -1,0 +1,14 @@
+# @package _global_
+experiment:
+  name: e1_h_distill_lstm
+
+loss:
+  h_distill:
+    enabled: true
+    cosine_weight: 1.0
+    mse_weight: 1.0
+  z_objective:
+    type: none
+    weight: 0.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
