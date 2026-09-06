@@ -16,8 +16,8 @@ dependencies = [
   "Pillow>=10",
   "PyYAML>=6",
   "tensorboard>=2.14",
-  "torch>=2.7.1",
-  "torchvision>=0.22.1",
+  "torch==2.14.0",
+  "torchvision==0.29.0",
   "tqdm>=4.66",
 ]
 
@@ -25,6 +25,22 @@ dependencies = [
 prepare = ["opencv-python>=4.8"]
 visualize = ["matplotlib>=3.8"]
 dev = ["pytest>=8", "ruff>=0.6"]
+
+# CUDA 13 no longer supports the Volta (sm_70) architecture used by Tesla V100.
+# On the Linux training host, keep PyTorch on the final Volta-compatible wheel
+# line. macOS falls back to the normal PyPI build for local inspection.
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+torchvision = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 [tool.setuptools.packages.find]
 include = ["event_state*"]

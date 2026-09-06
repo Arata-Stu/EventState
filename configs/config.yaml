@@ -37,7 +37,8 @@ training:
   num_workers: 4
   pin_memory: true
   persistent_workers: true
-  precision: bf16
+  # Tesla V100 (Volta) has no native BF16 support.
+  precision: fp16
   gradient_clip: 1.0
   gradient_accumulation: 1
   log_every: 20

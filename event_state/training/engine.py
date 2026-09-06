@@ -65,7 +65,7 @@ class EventStateTrainer:
         self.best_validation_loss = float("inf")
         self._restored_data_state: dict[str, Any] = {}
 
-        self.precision = str(_value(self.training_config, "precision", "bf16")).lower()
+        self.precision = str(_value(self.training_config, "precision", "fp16")).lower()
         if self.precision not in {"bf16", "fp16", "float16", "fp32", "float32"}:
             raise ValueError(f"Unsupported training precision: {self.precision}")
         self.amp_dtype = torch.bfloat16 if self.precision == "bf16" else torch.float16

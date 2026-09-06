@@ -1,3 +1,5 @@
+# Tesla V100では次のようにCUDA 12.6 backendを明示してください。
+# uv pip install --torch-backend=cu126 -r requirements.txt
 h5py>=3.9
 hdf5plugin>=5.1,<6
 hydra-core>=1.3,<1.4
@@ -5,8 +7,8 @@ numpy>=1.24
 Pillow>=10
 PyYAML>=6
 tensorboard>=2.14
-torch>=2.7.1
-torchvision>=0.22.1
+torch==2.14.0
+torchvision==0.29.0
 tqdm>=4.66
 
 # Dataset preparation only:

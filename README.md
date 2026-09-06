@@ -46,13 +46,26 @@ positive=青の白背景event frameを90 percentile clipで作り、GEPで使わ
 
 ## セットアップ
 
-Python 3.11以上、PyTorch 2.7.1以上を想定します。CUDAでは既定のbf16 autocastを使います。
-macOS/MPSでは未対応のautocast設定を明示的な警告付きでFP32へfallbackします。
+Python 3.11以上を想定します。学習機のTesla V100（Volta、sm_70）に合わせ、PyTorchは
+Volta対応wheelが提供される最後の系列である2.14.0 + CUDA 12.6に固定しています。CUDAでは
+既定のFP16 autocastを使います。macOS/MPSでは未対応のautocast設定を明示的な警告付きで
+FP32へfallbackします。
 
 ```bash
-python3 -m venv .venv
+uv venv --python 3.12 .venv
 source .venv/bin/activate
-pip install -e '.[prepare]'
+uv sync --extra prepare
+```
+
+`pyproject.toml`の`tool.uv.sources`により、Linux x86_64では`torch`と`torchvision`だけを
+PyTorch公式のCUDA 12.6 indexから取得し、その他の依存関係はPyPIから取得します。確認時は
+次の表示になり、architecture一覧に`sm_70`が含まれることを確認してください。
+
+既存フローの都合で`requirements.txt`を直接使う場合は、ドライバのCUDA 13.0表示による
+自動選択を避け、`uv pip install --torch-backend=cu126 -r requirements.txt`と明示します。
+
+```bash
+uv run python -c "import torch; print(torch.__version__, torch.version.cuda); print(torch.cuda.get_arch_list()); print(torch.ones(1, device='cuda'))"
 ```
 
 DINOv3はvendorしていません。既定では公式repositoryの固定commitをTorch Hub経由で
@@ -347,8 +360,8 @@ TensorBoard log、JSON metrics、checkpointはHydra run directory以下へ保存
 ## テスト
 
 ```bash
-pip install -e '.[dev]'
-pytest
+uv sync --extra dev
+uv run pytest
 ```
 
 event表現、timestamp境界、sequence boundary、paired transform、DINO patch shape、
