@@ -223,6 +223,11 @@ python tools/cache_dinov3_features.py \
   --output-dir /path/to/cache/dinov3_vits16
 ```
 
+複数GPUでは、同じsplitのsorted sequence一覧を重複のないshardへ分割できます。例えば3 GPUなら
+3 processすべてに同じ`--num-shards 3`を与え、`--shard-index 0,1,2`を一つずつ割り当てます。
+各processは別sequence directoryだけを書き換えるため、同じoutput directoryを共有できます。
+中断後も同じ指定で再実行すると既存fileを検証して再利用します。
+
 各sequenceには`metadata.json`、timestamp名の`.pt`、全frame完了後だけ作られる
 `_SUCCESS`を保存します。各frame payloadの主要fieldは次のとおりです。
 

@@ -108,6 +108,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--device", default="auto", help="auto, cpu, cuda, cuda:N, or mps")
     parser.add_argument(
+        "--num-shards",
+        type=int,
+        default=1,
+        help="Deterministically divide sorted sequences into this many disjoint shards",
+    )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="Zero-based shard to process; use one process per GPU",
+    )
+    parser.add_argument(
         "--cache-dtype",
         choices=("float16", "bfloat16", "float32"),
         default="float16",
@@ -125,7 +137,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     validate_args(args)
     root = args.root.expanduser().resolve()
     output_root = args.output_dir.expanduser().resolve()
-    sequences = discover_dsec_sequences(root, args.split, args.sequences)
+    all_sequences = discover_dsec_sequences(root, args.split, args.sequences)
+    sequences = all_sequences[args.shard_index :: args.num_shards]
+    print(
+        f"DINOv3 cache shard {args.shard_index}/{args.num_shards}: "
+        f"{len(sequences)}/{len(all_sequences)} {args.split} sequences"
+    )
+    if not sequences:
+        print("No sequences assigned to this shard.")
+        return
     checkpoint = normalize_checkpoint(args.checkpoint)
     model_metadata = build_model_metadata(args, checkpoint)
     input_metadata = {
@@ -324,6 +344,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("embedding dim must be positive")
     if args.batch_size <= 0:
         raise ValueError("batch size must be positive")
+    if args.num_shards <= 0:
+        raise ValueError("number of shards must be positive")
+    if not 0 <= args.shard_index < args.num_shards:
+        raise ValueError("shard index must be in [0, num_shards)")
     if any(value <= 0 for value in args.image_std):
         raise ValueError("image standard deviations must be positive")
     if args.checkpoint is not None and not args.pretrained:
