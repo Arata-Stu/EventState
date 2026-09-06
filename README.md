@@ -1,5 +1,9 @@
 # EventState
 
+> **Built with DINOv3.** This project uses Meta AI's DINOv3 ViT-S/16 as a
+> frozen RGB teacher and as event-encoder initialization. See
+> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for license and attribution details.
+
 イベントカメラの短時間特徴 `z_t` と、時間方向に統合したpersistent visual state
 `h_t` を分けて学習するためのpretraining実装です。Phase 0/1ではFrozen DINOv3
 ViT-S/16のdense patch tokenを教師とし、次を比較します。
@@ -187,8 +191,9 @@ distorted-event-view imageは取得しません。本projectは独自にevent-re
 `transductive / test-exposed pretraining`と明記します。
 
 現在の既定`val_split=test`はGEPとの比較・alignment開発用であり、DSEC-Detectionに対する
-benchmark-cleanな設定ではありません。後者では`train_split=train`と`val_split=train`を使い、
-互いに重ならない`train_sequences` / `val_sequences`を必ず明示してください。
+benchmark-cleanな設定ではありません。本実験用の`dataset=dsec_benchmark_clean`は、公式train
+41件だけを33 train / 8 internal validationへ固定分割します。validationはrecording group単位で
+`interlaken_00_{c..g}`と`zurich_city_11_{a..c}`を全てhold outし、公式validation/testは使いません。
 
 ## 1. DSECの準備
 
@@ -262,7 +267,8 @@ teacherを使います。
 cacheの完全性検証はstrict correctnessを優先し、起動時にsourceと期待outputの全byteを
 SHA-256で再確認します。大規模なDSEC cache、外付けdisk、network filesystemでは起動に
 相応のI/O時間がかかります。複数実験では検証済みcacheを同じ高速なlocal storageから使う
-ことを推奨します。
+ことを推奨します。検証中は`[cache-validation]`としてsplit、sequence、進捗数を表示し、GPUへの
+model配置と`Starting ...`表示は検証完了後に行います。
 
 ## 3. 学習
 
@@ -287,6 +293,21 @@ python train.py model=lstm experiment=h_distill_lstm dataset.root=/path/to/DSEC
 # E2: z と h の両方をDINOv3へalign
 python train.py model=lstm experiment=h_distill_lstm_zloss dataset.root=/path/to/DSEC
 ```
+
+V100 32GB × 3台では、benchmark-clean splitのE0/E1/E2を1 GPUに1実験ずつ割り当てるlauncherを
+使えます。既定batch sizeは、V100 smoke runの実測をもとに8としています。
+
+```bash
+bash tools/run_v100_baselines.sh \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/cache/dinov3_vits16 \
+  --checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth
+```
+
+launcherはGPU 0/1/2をE0/E1/E2へ固定し、同一timestampのrun root以下へ個別checkpoint、
+TensorBoard、console logを保存します。最初は`--max-steps 2000`などで長めのpilotを行い、
+GPU memoryとvalidation推移を確認してから100000 stepの本実験へ進みます。
 
 上の短い例ではcache pathを環境変数`EVENT_STATE_CACHE`または追加overrideで与えてください。
 Hydraの最終設定は各run directoryへ保存され、checkpointにはstudent model、optimizer、

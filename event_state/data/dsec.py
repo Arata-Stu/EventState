@@ -364,7 +364,17 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         self._teacher_cache_manifests: dict[str, dict[str, Any]] = {}
         self._clips: list[tuple[str, int, int]] = []
 
-        for sequence_name in self.sequence_names:
+        validation_is_active = (
+            self.event_cache_dir is not None or self.feature_cache_dir is not None
+        )
+        sequence_count = len(self.sequence_names)
+        for sequence_index, sequence_name in enumerate(self.sequence_names, start=1):
+            if validation_is_active:
+                print(
+                    f"[cache-validation] split={self.split} "
+                    f"sequence={sequence_name} ({sequence_index}/{sequence_count})",
+                    flush=True,
+                )
             frames = self._load_frame_manifest(sequence_name)
             self._frames_by_sequence[sequence_name] = frames
             if self.event_cache_dir is not None:
@@ -392,6 +402,12 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
                     for start in range(1, max(1, stop), clip_stride)
                     if start + self.sequence_length <= len(frames)
                 )
+        if validation_is_active:
+            print(
+                f"[cache-validation] split={self.split} complete: "
+                f"{sequence_count} sequences",
+                flush=True,
+            )
         if not self._clips:
             raise ValueError(
                 f"No clips of length {sequence_length} are available in DSEC split {split!r}"

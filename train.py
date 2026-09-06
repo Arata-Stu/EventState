@@ -41,6 +41,10 @@ def main(config: DictConfig) -> None:
             expected_config=checkpoint_config,
             compatibility_mode="resume",
         )
+    print(
+        "Building runtime; validating DSEC inputs and caches before GPU initialization...",
+        flush=True,
+    )
     runtime = build_runtime(config)
     logger = TrainingLogger(config.output.directory, resolved_yaml)
     try:

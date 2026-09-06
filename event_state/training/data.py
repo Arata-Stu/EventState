@@ -173,7 +173,17 @@ def _validate_teacher_cache(
     expected_mean = [float(item) for item in _value(teacher_config, "image_mean")]
     expected_std = [float(item) for item in _value(teacher_config, "image_std")]
     expected_identity = _expected_teacher_identity(teacher_config)
-    for sequence_name in dataset.sequence_names:
+    sequence_count = len(dataset.sequence_names)
+    print(
+        f"[cache-contract] split={dataset.split}: validating {sequence_count} teacher manifests",
+        flush=True,
+    )
+    for sequence_index, sequence_name in enumerate(dataset.sequence_names, start=1):
+        print(
+            f"[cache-contract] split={dataset.split} sequence={sequence_name} "
+            f"({sequence_index}/{sequence_count})",
+            flush=True,
+        )
         metadata_path = cache_root / sequence_name / "metadata.json"
         if not metadata_path.is_file():
             raise FileNotFoundError(
@@ -247,6 +257,7 @@ def _validate_teacher_cache(
             raise ValueError(f"Teacher cache image std differs from the config: {metadata_path}")
         if metadata.get("cache_dtype") != str(_value(teacher_config, "cache_dtype", "float16")):
             raise ValueError(f"Teacher cache dtype differs from the config: {metadata_path}")
+    print(f"[cache-contract] split={dataset.split} complete", flush=True)
 
 
 def _validate_dataset_location(dataset_config: Any) -> None:

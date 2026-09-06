@@ -102,3 +102,22 @@ checkpoint選択を含めて未使用にする。追加7件を含む全60件で�
 
 取得scriptは追加7件をoriginal DSECへ自動mergeせず、`dsec_det_extra/`へ隔離する。公式split名は
 `tools/manifests/dsec_det_official_split.yaml`に固定している。
+
+## 10. Benchmark-clean internal validation splitを実験前に固定する
+
+標準E0/E1/E2では`dataset=dsec_benchmark_clean`を使う。DSEC-Detection公式train 41件のうち、
+recording group全体として`interlaken_00_{c..g}`（5件）と`zurich_city_11_{a..c}`（3件）を
+internal validationへhold outし、残り33件だけをoptimizationに使う。この分割は、本学習結果を
+見る前に地理的多様性と同一recording group内の近接sequence漏洩を避ける目的で固定した。
+
+公式validation 6件と公式test 13件はpretraining、early stopping、checkpoint選択、cache統計に
+使用しない。GEP比較・alignment開発でoriginal testを使う設定は標準結果と混ぜない。
+
+## 11. DINOv3 attributionと配布物
+
+本repositoryはDINOv3 source codeとpretrained weightを再配布せず、公式sourceの固定revisionと
+利用者が別途取得したweight pathだけを参照する。READMEには「Built with DINOv3」を表示し、
+`THIRD_PARTY_NOTICES.md`に使用箇所、公式project、license、paperを記録する。
+
+DINOv3初期値を含む学習済みcheckpointを第三者へ配布する前には、weight取得時に同意したlicenseを
+改めて確認し、必要なagreementとattributionを配布物へ同梱する。論文ではDINOv3利用を明記・引用する。

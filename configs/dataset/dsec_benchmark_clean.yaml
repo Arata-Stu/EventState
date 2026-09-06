@@ -1,0 +1,78 @@
+name: dsec
+root: null
+
+# Benchmark-clean pretraining protocol. Both subsets come only from the
+# canonical 41 DSEC-Detection training sequences. The two held-out recording
+# groups were fixed before full experiments and must not be tuned per result.
+train_split: train
+val_split: train
+train_sequences:
+  - thun_00_a
+  - zurich_city_00_a
+  - zurich_city_00_b
+  - zurich_city_01_a
+  - zurich_city_01_b
+  - zurich_city_01_c
+  - zurich_city_01_d
+  - zurich_city_01_e
+  - zurich_city_01_f
+  - zurich_city_02_a
+  - zurich_city_02_b
+  - zurich_city_02_c
+  - zurich_city_02_d
+  - zurich_city_02_e
+  - zurich_city_03_a
+  - zurich_city_04_a
+  - zurich_city_04_b
+  - zurich_city_04_c
+  - zurich_city_04_d
+  - zurich_city_04_e
+  - zurich_city_04_f
+  - zurich_city_05_a
+  - zurich_city_05_b
+  - zurich_city_06_a
+  - zurich_city_07_a
+  - zurich_city_08_a
+  - zurich_city_09_a
+  - zurich_city_09_b
+  - zurich_city_09_c
+  - zurich_city_09_d
+  - zurich_city_09_e
+  - zurich_city_10_a
+  - zurich_city_10_b
+val_sequences:
+  - interlaken_00_c
+  - interlaken_00_d
+  - interlaken_00_e
+  - interlaken_00_f
+  - interlaken_00_g
+  - zurich_city_11_a
+  - zurich_city_11_b
+  - zurich_city_11_c
+
+sequence_length: 8
+clip_stride: 1
+event_window: rgb_interval
+sensor_height: 480
+sensor_width: 640
+rectify_events: true
+
+representation:
+  type: gep_rgb
+  channels: 3
+  percentile: 90.0
+  event_bins: 10
+  polarity_split: true
+  voxel_normalization: nonzero_standardize
+  normalize_mean: [0.8993729785, 0.7969581015, 0.8928228776]
+  normalize_std: [0.2204336077, 0.2921656668, 0.2204992771]
+
+image_directory: aligned_event
+event_cache_dir: null
+input_height: 448
+input_width: 640
+
+augmentation:
+  enabled: false
+  scale: [0.8, 1.0]
+  horizontal_flip_probability: 0.5
