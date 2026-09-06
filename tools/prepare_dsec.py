@@ -55,7 +55,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         )
     )
     parser.add_argument("--root", type=Path, required=True, help="DSEC dataset root")
-    parser.add_argument("--split", choices=("train", "test"), default="train")
+    parser.add_argument(
+        "--split",
+        choices=("train", "test", "all"),
+        default="train",
+        help="Dataset split to prepare; all processes train followed by test",
+    )
     parser.add_argument(
         "--sequences",
         nargs="+",
@@ -105,25 +110,27 @@ def main(argv: Sequence[str] | None = None) -> None:
     validate_args(args)
     root = args.root.expanduser().resolve()
     cache_root = args.event_cache_dir.expanduser().resolve() if args.event_cache_dir else None
-    sequences = discover_dsec_sequences(root, args.split, args.sequences)
-
     totals = {"images_written": 0, "images_skipped": 0, "events_written": 0, "events_skipped": 0}
-    for sequence_name in sequences:
-        result = prepare_sequence(
-            root=root,
-            split=args.split,
-            sequence_name=sequence_name,
-            image_output_subdir=args.image_output_subdir,
-            event_cache_dir=cache_root,
-            representation_name=args.representation,
-            percentile=args.percentile,
-            event_bins=args.event_bins,
-            voxel_normalization=args.voxel_normalization,
-            rectify_events=args.rectify_events,
-            overwrite=args.overwrite,
-        )
-        for key, value in result.items():
-            totals[key] += value
+    splits = ("train", "test") if args.split == "all" else (args.split,)
+    for split in splits:
+        sequences = discover_dsec_sequences(root, split, args.sequences)
+        print(f"Preparing DSEC {split}: {len(sequences)} sequences")
+        for sequence_name in sequences:
+            result = prepare_sequence(
+                root=root,
+                split=split,
+                sequence_name=sequence_name,
+                image_output_subdir=args.image_output_subdir,
+                event_cache_dir=cache_root,
+                representation_name=args.representation,
+                percentile=args.percentile,
+                event_bins=args.event_bins,
+                voxel_normalization=args.voxel_normalization,
+                rectify_events=args.rectify_events,
+                overwrite=args.overwrite,
+            )
+            for key, value in result.items():
+                totals[key] += value
 
     print(
         "DSEC preparation complete: "
@@ -408,6 +415,8 @@ def prepare_sequence(
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if args.split == "all" and args.sequences:
+        raise ValueError("--sequences cannot be combined with --split all")
     validate_preparation_options(
         image_output_subdir=args.image_output_subdir,
         representation_name=args.representation,

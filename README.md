@@ -54,15 +54,16 @@ FP32へfallbackします。
 ```bash
 uv venv --python 3.12 env
 source env/bin/activate
-uv sync --active --extra prepare
+uv pip install --torch-backend=cu126 -e '.[prepare]'
 ```
 
-`pyproject.toml`の`tool.uv.sources`により、Linux x86_64では`torch`と`torchvision`だけを
-PyTorch公式のCUDA 12.6 indexから取得し、その他の依存関係はPyPIから取得します。確認時は
-次の表示になり、architecture一覧に`sm_70`が含まれることを確認してください。
+V100環境では、ドライバの`CUDA Version: 13.0`からcu130を自動選択させないことが重要です。
+`--torch-backend=cu126`を必ず明示し、PyTorch公式のCUDA 12.6 indexから`torch`と
+`torchvision`を取得します。`uv sync`でcu130が選択された環境は流用せず、作り直してください。
+確認時は次の表示になり、architecture一覧に`sm_70`が含まれることを確認します。
 
-既存フローの都合で`requirements.txt`を直接使う場合は、ドライバのCUDA 13.0表示による
-自動選択を避け、`uv pip install --torch-backend=cu126 -r requirements.txt`と明示します。
+既存フローの都合で`requirements.txt`を直接使う場合も、
+`uv pip install --torch-backend=cu126 -r requirements.txt`と明示します。
 
 ```bash
 python -c "import torch; print(torch.__version__, torch.version.cuda); print(torch.cuda.get_arch_list()); print(torch.ones(1, device='cuda'))"
@@ -197,14 +198,12 @@ RGBをevent camera座標へwarpします。event representationも同時にcache
 ```bash
 python tools/prepare_dsec.py \
   --root /path/to/DSEC \
-  --split train \
-  --event-cache-dir /path/to/cache/events/gep_rgb
-
-python tools/prepare_dsec.py \
-  --root /path/to/DSEC \
-  --split test \
+  --split all \
   --event-cache-dir /path/to/cache/events/gep_rgb
 ```
+
+`--split all`はtrainを完了してからtestを処理します。片方だけ処理する場合は`train`または
+`test`を指定します。`--sequences`による部分実行はsplitを一つに限定した場合だけ使用できます。
 
 event cacheを省略すると、学習時にraw HDF5から同じ表現を生成します。
 既存outputがあるのに対応する`metadata.json`がない場合、その生成条件を確認できないため
@@ -360,7 +359,7 @@ TensorBoard log、JSON metrics、checkpointはHydra run directory以下へ保存
 ## テスト
 
 ```bash
-uv sync --active --extra dev
+uv pip install --torch-backend=cu126 -e '.[prepare,dev]'
 pytest
 ```
 
