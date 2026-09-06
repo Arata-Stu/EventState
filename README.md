@@ -111,7 +111,8 @@ EventStateに必要なevents、左rectified images、calibrationだけを公式�
 scriptを用意しています。macOS標準のBash 3.2でも動作し、転送途中の`.part`は削除せず、
 同じcommandを再実行すると続きから取得します。展開途中の場合も同じZIPを再利用し、全sequenceの
 必須fileを確認できた後だけ完了markerを作ります。resume前には保存済みのContent-Length、ETag、
-Last-Modifiedを現在のserver応答と照合し、配布物が変わっていれば継ぎ足さず停止します。
+Last-Modifiedを現在のserver応答と照合し、配布物が変わっていれば継ぎ足さず停止します。一時的な
+接続切断は`.part`の現在位置から自動で最大20回再試行します。
 
 ```bash
 # まずURLと保存先だけを確認

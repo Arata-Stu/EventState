@@ -221,7 +221,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 [ -f "$SPLIT_MANIFEST" ] || fail "split manifest not found: $SPLIT_MANIFEST"
-for command_name in curl unzip zipinfo find grep sed awk wc date hostname cmp sort; do
+for command_name in curl unzip zipinfo find grep sed awk wc date hostname cmp sort sleep; do
   require_command "$command_name"
 done
 
@@ -499,6 +499,8 @@ download_archive() {
   local remote_identity="${archive}.remote"
   local current_identity="${remote_identity}.current.$$"
   local curl_status expected_bytes actual_bytes
+  local attempt=1
+  local max_attempts=20
   if [ -f "$archive" ]; then
     log "using completed archive: $archive"
     return
@@ -516,29 +518,54 @@ download_archive() {
     fi
   fi
   mv -f "$current_identity" "$remote_identity"
-  log "downloading (resume enabled): $url"
-  set +e
-  curl \
-    --fail \
-    --location \
-    --continue-at - \
-    --retry 10 \
-    --retry-delay 5 \
-    --connect-timeout 30 \
-    --output "$partial" \
-    "$url"
-  curl_status=$?
-  set -e
-  if [ "$curl_status" -ne 0 ]; then
-    # curl reports a range error when a .part file is already exactly complete.
-    # A full CRC pass is costly, so it is only used for this recovery path.
-    if [ -s "$partial" ] && unzip -tq "$partial" >/dev/null 2>&1; then
-      log "the partial file is already a complete ZIP; accepting it"
-    else
-      fail "download interrupted (curl $curl_status); rerun to continue $partial"
-    fi
-  fi
   expected_bytes=$(sed -n 's/^content_length=//p' "$remote_identity")
+  log "downloading (resume enabled): $url"
+  while [ "$attempt" -le "$max_attempts" ]; do
+    set +e
+    curl \
+      --fail \
+      --location \
+      --continue-at - \
+      --retry 5 \
+      --retry-delay 5 \
+      --connect-timeout 30 \
+      --output "$partial" \
+      "$url"
+    curl_status=$?
+    set -e
+    if [ "$curl_status" -eq 0 ]; then
+      break
+    fi
+
+    actual_bytes=0
+    if [ -f "$partial" ]; then
+      actual_bytes=$(wc -c < "$partial" | tr -d '[:space:]')
+    fi
+    # curl may report a range error when the .part is already exactly complete.
+    # Avoid an expensive CRC pass after ordinary mid-transfer disconnects.
+    if [ "$actual_bytes" = "$expected_bytes" ]; then
+      if unzip -tq "$partial" >/dev/null 2>&1; then
+        log "the partial file is already a complete ZIP; accepting it"
+        curl_status=0
+        break
+      fi
+      mv -f "$partial" "${partial}.corrupt.$(date -u '+%Y%m%dT%H%M%SZ').$$"
+      fail "complete-sized partial file failed ZIP CRC; a fresh download is required"
+    fi
+
+    case "$curl_status" in
+      3|22|23|26|27|33|43|48|60|63|77)
+        fail "non-retryable curl error $curl_status; partial data remain at $partial"
+        ;;
+    esac
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      fail "download interrupted after $max_attempts attempts; rerun to continue $partial"
+    fi
+    log "connection interrupted (curl $curl_status); retrying from byte $actual_bytes"
+    attempt=$((attempt + 1))
+    sleep 15
+  done
+
   actual_bytes=$(wc -c < "$partial" | tr -d '[:space:]')
   if [ "$actual_bytes" != "$expected_bytes" ]; then
     fail "download size mismatch for $partial: expected $expected_bytes, got $actual_bytes"
