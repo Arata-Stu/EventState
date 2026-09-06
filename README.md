@@ -52,9 +52,9 @@ Volta対応wheelが提供される最後の系列である2.14.0 + CUDA 12.6に�
 FP32へfallbackします。
 
 ```bash
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-uv sync --extra prepare
+uv venv --python 3.12 env
+source env/bin/activate
+uv sync --active --extra prepare
 ```
 
 `pyproject.toml`の`tool.uv.sources`により、Linux x86_64では`torch`と`torchvision`だけを
@@ -65,7 +65,7 @@ PyTorch公式のCUDA 12.6 indexから取得し、その他の依存関係はPyPI
 自動選択を避け、`uv pip install --torch-backend=cu126 -r requirements.txt`と明示します。
 
 ```bash
-uv run python -c "import torch; print(torch.__version__, torch.version.cuda); print(torch.cuda.get_arch_list()); print(torch.ones(1, device='cuda'))"
+python -c "import torch; print(torch.__version__, torch.version.cuda); print(torch.cuda.get_arch_list()); print(torch.ones(1, device='cuda'))"
 ```
 
 DINOv3はvendorしていません。既定では公式repositoryの固定commitをTorch Hub経由で
@@ -360,8 +360,8 @@ TensorBoard log、JSON metrics、checkpointはHydra run directory以下へ保存
 ## テスト
 
 ```bash
-uv sync --extra dev
-uv run pytest
+uv sync --active --extra dev
+pytest
 ```
 
 event表現、timestamp境界、sequence boundary、paired transform、DINO patch shape、
