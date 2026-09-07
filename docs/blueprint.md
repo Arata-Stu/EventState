@@ -671,7 +671,7 @@ temporal:
   type: lstm
   input_dim: 384
   hidden_dim: 384
-  num_layers: 2
+  num_layers: 1
   dropout: 0.0
 ```
 
@@ -2036,7 +2036,7 @@ event_encoder:
 temporal:
   type: lstm
   hidden_dim: 384
-  num_layers: 2
+  num_layers: 1
 
 loss:
   h_distill:

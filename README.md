@@ -185,15 +185,17 @@ distorted-event-view imageは取得しません。本projectは独自にevent-re
 後者をteacher画像として混用しないでください。
 
 標準的なDSEC-Detectionのinductive評価を行う本実験では、pretrainingに使うのは公式train
-41件だけとし、その中からsequence単位の内部validationを切ります。公式validation 6件と
-公式test 13件はteacher/event cache、正規化統計、early stopping、checkpoint選択にも使いません。
+41件だけとします。設計開発中はその中からsequence単位の内部validationを切りますが、条件を
+固定した本学習では41件すべてに勾配更新を行い、固定stepの最終重みを採用します。公式validation
+6件と公式test 13件はteacher/event cache、正規化統計、early stopping、checkpoint選択にも使いません。
 全60件でのself-supervised pretrainingは有効な追加実験ですが、標準結果とは分けて
 `transductive / test-exposed pretraining`と明記します。
 
 現在の既定`val_split=test`はGEPとの比較・alignment開発用であり、DSEC-Detectionに対する
-benchmark-cleanな設定ではありません。本実験用の`dataset=dsec_benchmark_clean`は、公式train
-41件だけを33 train / 8 internal validationへ固定分割します。validationはrecording group単位で
-`interlaken_00_{c..g}`と`zurich_city_11_{a..c}`を全てhold outし、公式validation/testは使いません。
+benchmark-cleanな設定ではありません。開発用の`dataset=dsec_benchmark_clean`は、公式train
+41件だけを33 train / 8 internal validationへ固定分割します。本学習用の
+`dataset=dsec_det_train41`は41件すべてを学習に使い、validationを構築しません。どちらも
+公式validation/testは使いません。
 
 ## 1. DSECの準備
 
@@ -329,6 +331,22 @@ bash tools/run_v100_baselines.sh \
 launcherはGPU 0/1/2をE0/E1/E2へ固定し、同一timestampのrun root以下へ個別checkpoint、
 TensorBoard、console logを保存します。最初は`--max-steps 2000`などで長めのpilotを行い、
 GPU memoryとvalidation推移を確認してから100000 stepの本実験へ進みます。
+
+現在の本番比較としてE1を後回しにし、E0/E2/E4を公式train 41件すべてで同じ100000 stepだけ
+学習する場合は次を使います。
+
+```bash
+bash tools/run_v100_e0_e2_e4.sh \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth
+```
+
+GPU 0/1/2をそれぞれE0/E2/E4へ割り当てます。E2/E4のtemporal modelは1層LSTMです。
+3実験とも`dsec_det_train41`を使い、公式train 41件すべてに勾配更新を行います。表現validationと
+`best.pt`生成は無効で、既定runでは`checkpoints/step_00100000.pt`を採用します。公式validation/test
+は表現学習やcheckpoint選択へ使用しません。E1の本学習は[実験TODO](docs/todo.md)に記録しています。
 
 上の短い例ではcache pathを環境変数`EVENT_STATE_CACHE`または追加overrideで与えてください。
 Hydraの最終設定は各run directoryへ保存され、checkpointにはstudent model、optimizer、
@@ -532,7 +550,9 @@ bash tools/run_v100_event_dropout.sh \
 
 検出評価はDAGRと同じ公式41 train / 6 validation / 13 test splitをそのまま使います。
 独自33/8 pretraining splitはcheckpoint開発だけのもので、検出headのsplitには流用しません。
-主結果はDAGR互換の`car` / `pedestrian` 2 classとCOCO mAP@[.50:.95]です。
+`probe` protocolはrectified 448×640座標で`z` / `h`の診断を行う内部比較です。公開benchmarkの
+主結果には、後述する`dsec-det` protocolの`car` / `pedestrian` 2 classとCOCO
+mAP@[.50:.95]を使います。
 
 DSEC-Det labelはraw dataへmergeせず、resume可能なdownload scriptで別directoryへ取得します。
 
@@ -639,6 +659,61 @@ CUDA_VISIBLE_DEVICES=0 python tools/evaluate_dsec_detection.py \
 
 YOLOXの設計はApache-2.0の公開方式を参照していますが、本実装はEventState内で独立実装しており、
 GPL-3.0のDAGR/RVT sourceをimportまたはcopyしません。
+
+### DSEC-Det event-only benchmark protocol
+
+公表値にはDAGRと同じdistorted event viewを使います。公式処理に合わせ、上端430 pxを保持して
+1/2へ縮小した320×215座標、縮小後の最小辺`>10`・対角`>15`、連続する有効label frame対、
+公式41/6/13 splitを固定します。EventState cacheはrectified座標なので、sequence固有の
+`rectify_map.h5`を使って特徴mapを一度だけdistorted座標へwarpします。
+
+trainとvalidationのbenchmark feature cacheは、roleごとに3 GPUで準備できます。
+
+```bash
+INPUT=/path/to/DSEC_cache/detection_features/E4
+OUTPUT=/path/to/DSEC_cache/detection_features/E4_dsec_det
+LOGS=/path/to/DSEC_cache/logs/dsec_det_warp
+mkdir -p "$OUTPUT" "$LOGS"
+
+for ROLE in train val; do
+  PIDS=""
+  for GPU in 0 1 2; do
+    CUDA_VISIBLE_DEVICES="$GPU" python \
+      tools/prepare_dsec_detection_benchmark_features.py \
+      --input-dir "$INPUT" \
+      --output-dir "$OUTPUT" \
+      --dataset-root /path/to/DSEC \
+      --role "$ROLE" \
+      --features z h \
+      --batch-size 64 \
+      --device cuda \
+      --num-shards 3 \
+      --shard-index "$GPU" \
+      > "$LOGS/${ROLE}_gpu${GPU}.log" 2>&1 &
+    PIDS="$PIDS $!"
+  done
+  STATUS=0
+  for PID in $PIDS; do wait "$PID" || STATUS=1; done
+  [ "$STATUS" -eq 0 ] || exit 1
+done
+```
+
+`probe`のheadとは座標とframe集合が異なるため、benchmark headは別に学習します。
+
+```bash
+bash tools/run_dsec_detection_probes.sh \
+  --feature-cache-dir /path/to/DSEC_cache/detection_features/E4_dsec_det \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --output-dir outputs/dsec_detection_benchmark/E4 \
+  --protocol dsec-det \
+  --batch-size 16 \
+  --epochs 50
+```
+
+最終testでは、まず元のfeature cacheを`--role test`で生成し、benchmark feature変換も
+`--role test`で実行します。その後`tools/evaluate_dsec_detection.py`へbenchmarkの`best.pt`を
+渡します。checkpointに記録された`dsec-det` protocolは評価時にも強制されます。
 
 ## テスト
 

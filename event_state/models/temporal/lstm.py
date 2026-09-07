@@ -26,7 +26,7 @@ class PatchwiseLSTM(TemporalBackbone):
         input_dim: int = 384,
         hidden_dim: int = 384,
         output_dim: int = 384,
-        num_layers: int = 2,
+        num_layers: int = 1,
         dropout: float = 0.0,
         detach_state_every: int | None = None,
     ) -> None:

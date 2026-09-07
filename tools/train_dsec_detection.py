@@ -38,6 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--feature", choices=("z", "h", "concat"), required=True)
+    parser.add_argument(
+        "--protocol",
+        choices=("probe", "dsec-det"),
+        default="probe",
+        help="Internal rectified probe or DAGR-compatible DSEC-Det benchmark",
+    )
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--num-workers", type=int, default=4)
@@ -112,6 +118,7 @@ def main() -> None:
         "labels_root": args.labels_root,
         "dataset_root": args.dataset_root,
         "feature": args.feature,
+        "protocol": args.protocol,
     }
     train_dataset = DSECDetectionFeatureDataset(
         sequences=split.train, horizontal_flip_probability=0.5, **common
@@ -149,6 +156,7 @@ def main() -> None:
         in_channels=sample_channels,
         width=args.head_width,
         input_stride=train_dataset.patch_size,
+        image_size=train_dataset.input_size,
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
@@ -167,7 +175,9 @@ def main() -> None:
         {
             "official_split_counts": {"train": 41, "val": 6, "test": 13},
             "classes": ["car", "pedestrian"],
-            "coordinate_space": "rectified_event",
+            "coordinate_space": (
+                "dsec_det_distorted" if args.protocol == "dsec-det" else "rectified_event"
+            ),
             "train_frames": len(train_dataset),
             "validation_frames": len(validation_dataset),
             "input_stride": train_dataset.patch_size,

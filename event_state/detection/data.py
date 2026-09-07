@@ -10,6 +10,7 @@ from typing import Any, Sequence
 import h5py
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import Dataset
 
@@ -85,6 +86,23 @@ def find_rectify_map(dataset_root: str | Path, sequence: str) -> Path:
         detail = "none" if not matches else ", ".join(str(path) for path in matches)
         raise FileNotFoundError(
             f"Expected exactly one rectify_map.h5 for {sequence!r}; found {detail}"
+        )
+    return matches[0]
+
+
+def find_image_timestamps(dataset_root: str | Path, sequence: str) -> Path:
+    root = Path(dataset_root).expanduser()
+    candidates = [
+        root / "train_images" / sequence / "images" / "timestamps.txt",
+        root / "test_images" / sequence / "images" / "timestamps.txt",
+        root / "dsec_det_extra" / "train" / sequence / "images" / "timestamps.txt",
+        root / "dsec_det_extra" / "test" / sequence / "images" / "timestamps.txt",
+    ]
+    matches = [path for path in candidates if path.is_file()]
+    if len(matches) != 1:
+        detail = "none" if not matches else ", ".join(str(path) for path in matches)
+        raise FileNotFoundError(
+            f"Expected exactly one timestamps.txt for {sequence!r}; found {detail}"
         )
     return matches[0]
 
@@ -227,6 +245,128 @@ def load_sequence_targets(
     return result
 
 
+def load_dagr_sequence_targets(
+    *,
+    labels_root: str | Path,
+    dataset_root: str | Path,
+    sequence: str,
+    scale: int = 2,
+    cropped_height: int = 430,
+    sensor_width: int = 640,
+    min_box_side: float = 10.0,
+    min_box_diagonal: float = 15.0,
+) -> dict[int, dict[str, Tensor]]:
+    """Load the exact frame subset and distorted coordinates used by DAGR."""
+
+    if scale <= 0 or cropped_height <= 0 or sensor_width <= 0:
+        raise ValueError("DAGR geometry values must be positive")
+    tracks_path = find_tracks_file(labels_root, sequence)
+    tracks = np.load(tracks_path, allow_pickle=False)
+    required = {"t", "x", "y", "w", "h", "class_id"}
+    fields = set(tracks.dtype.names or ())
+    if not required <= fields:
+        raise ValueError(f"{tracks_path} lacks track fields: {sorted(required - fields)}")
+
+    width = sensor_width // scale
+    height = cropped_height // scale
+    mapped_ids = np.array(
+        [DAGR_CLASS_ID_MAP.get(int(value), -1) for value in tracks["class_id"]],
+        dtype=np.int64,
+    )
+    x1 = np.clip(tracks["x"].astype(np.float32) / scale, 0, width - 1)
+    y1 = np.clip(tracks["y"].astype(np.float32) / scale, 0, height - 1)
+    x2 = np.clip(
+        (tracks["x"] + tracks["w"]).astype(np.float32) / scale,
+        0,
+        width - 1,
+    )
+    y2 = np.clip(
+        (tracks["y"] + tracks["h"]).astype(np.float32) / scale,
+        0,
+        height - 1,
+    )
+    widths = x2 - x1
+    heights = y2 - y1
+    track_timestamps = tracks["t"].astype(np.int64)
+    keep = (
+        (mapped_ids >= 0)
+        & np.isfinite(x1 + y1 + x2 + y2)
+        & (widths > min_box_side)
+        & (heights > min_box_side)
+        & (np.sqrt(widths**2 + heights**2) > min_box_diagonal)
+    )
+
+    image_timestamps = np.atleast_1d(
+        np.loadtxt(find_image_timestamps(dataset_root, sequence), dtype=np.int64)
+    )
+    if image_timestamps.ndim != 1 or len(image_timestamps) < 2:
+        raise ValueError(f"Invalid DSEC image timestamps for {sequence}")
+    valid_timestamps = np.unique(track_timestamps[keep])
+    valid_indices = np.nonzero(np.isin(image_timestamps, valid_timestamps))[0]
+    # DAGR constructs pairs only where two valid image indices are consecutive,
+    # consumes events after the first image, and evaluates the second label.
+    evaluated_indices = valid_indices[1:][np.diff(valid_indices) == 1]
+
+    result: dict[int, dict[str, Tensor]] = {}
+    for image_index in evaluated_indices:
+        timestamp = int(image_timestamps[image_index])
+        selected = keep & (track_timestamps == timestamp)
+        boxes = np.stack((x1[selected], y1[selected], x2[selected], y2[selected]), axis=1)
+        result[timestamp] = {
+            "boxes": torch.from_numpy(boxes.astype(np.float32)),
+            "labels": torch.from_numpy(mapped_ids[selected]),
+        }
+    return result
+
+
+def build_dagr_sampling_grid(
+    rectify_map: np.ndarray,
+    *,
+    source_input_size: tuple[int, int],
+    source_stride: int,
+    scale: int = 2,
+    cropped_height: int = 430,
+    sensor_width: int = 640,
+) -> Tensor:
+    """Map a rectified EventState token map onto the DAGR distorted grid."""
+
+    if rectify_map.ndim != 3 or rectify_map.shape[2] != 2:
+        raise ValueError("rectify_map must have shape [H, W, 2]")
+    if source_stride <= 0 or source_stride % scale:
+        raise ValueError("source_stride must be positive and divisible by scale")
+    source_height, source_width = rectify_map.shape[:2]
+    target_height, target_width = source_input_size
+    target_ratio = target_width / target_height
+    crop_width = min(
+        source_width,
+        max(1, round(math.sqrt(source_height * source_width * target_ratio))),
+    )
+    crop_height = min(source_height, max(1, round(crop_width / target_ratio)))
+    if crop_height > source_height:
+        crop_height = source_height
+        crop_width = min(source_width, max(1, round(crop_height * target_ratio)))
+    top = (source_height - crop_height) // 2
+    left = (source_width - crop_width) // 2
+    scale_x = target_width / crop_width
+    scale_y = target_height / crop_height
+
+    detector_stride = source_stride // scale
+    detector_height = cropped_height // scale
+    detector_width = sensor_width // scale
+    grid_height = math.ceil(detector_height / detector_stride)
+    grid_width = math.ceil(detector_width / detector_stride)
+    ys = (np.arange(grid_height, dtype=np.float32) + 0.5) * detector_stride * scale
+    xs = (np.arange(grid_width, dtype=np.float32) + 0.5) * detector_stride * scale
+    raw_y = np.clip(np.rint(ys).astype(np.int64), 0, source_height - 1)
+    raw_x = np.clip(np.rint(xs).astype(np.int64), 0, source_width - 1)
+    mapped = rectify_map[raw_y[:, None], raw_x[None, :]].astype(np.float32)
+    transformed_x = (mapped[..., 0] - left) * scale_x
+    transformed_y = (mapped[..., 1] - top) * scale_y
+    normalized_x = 2.0 * transformed_x / target_width - 1.0
+    normalized_y = 2.0 * transformed_y / target_height - 1.0
+    return torch.from_numpy(np.stack((normalized_x, normalized_y), axis=-1))
+
+
 class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
     """Frames with DSEC-Det labels backed by frozen EventState feature caches."""
 
@@ -238,14 +378,21 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
         dataset_root: str | Path,
         sequences: Sequence[str],
         feature: str,
+        protocol: str = "probe",
         horizontal_flip_probability: float = 0.0,
     ) -> None:
         if feature not in {"z", "h", "concat"}:
             raise ValueError("feature must be z, h, or concat")
+        if protocol not in {"probe", "dsec-det"}:
+            raise ValueError("protocol must be probe or dsec-det")
         self.feature_cache_dir = Path(feature_cache_dir).expanduser()
         self.feature = feature
+        self.protocol = protocol
         self.input_size: tuple[int, int] | None = None
         self.patch_size: int | None = None
+        self.sampling_grids: dict[str, Tensor] = {}
+        source_input_size: tuple[int, int] | None = None
+        source_patch_size: int | None = None
         self.horizontal_flip_probability = float(horizontal_flip_probability)
         if not 0.0 <= self.horizontal_flip_probability <= 1.0:
             raise ValueError("horizontal_flip_probability must be in [0, 1]")
@@ -264,16 +411,16 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
             ):
                 raise ValueError(f"Invalid detection feature input_size: {metadata_path}")
             current_input_size = (input_size[0], input_size[1])
-            if self.input_size is None:
-                self.input_size = current_input_size
-            elif self.input_size != current_input_size:
+            if source_input_size is None:
+                source_input_size = current_input_size
+            elif source_input_size != current_input_size:
                 raise ValueError("Detection feature sequences use different input sizes")
             patch_size = metadata.get("patch_size")
             if not isinstance(patch_size, int) or patch_size <= 0:
                 raise ValueError(f"Invalid detection feature patch_size: {metadata_path}")
-            if self.patch_size is None:
-                self.patch_size = patch_size
-            elif self.patch_size != patch_size:
+            if source_patch_size is None:
+                source_patch_size = patch_size
+            elif source_patch_size != patch_size:
                 raise ValueError("Detection feature sequences use different patch sizes")
             available = set(metadata.get("features", []))
             required_features = {"z", "h"} if feature == "concat" else {feature}
@@ -281,12 +428,38 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
                 raise ValueError(
                     f"{metadata_path} does not contain {sorted(required_features)}"
                 )
-            targets = load_sequence_targets(
-                labels_root=labels_root,
-                dataset_root=dataset_root,
-                sequence=sequence,
-                target_size=(input_size[0], input_size[1]),
-            )
+            if protocol == "dsec-det":
+                targets = load_dagr_sequence_targets(
+                    labels_root=labels_root,
+                    dataset_root=dataset_root,
+                    sequence=sequence,
+                )
+                coordinate_space = metadata.get("coordinate_space", "rectified_event")
+                if coordinate_space == "dsec_det_distorted":
+                    if current_input_size != (215, 320) or patch_size != 8:
+                        raise ValueError(
+                            f"Invalid prewarped DSEC-Det geometry: {metadata_path}"
+                        )
+                elif coordinate_space == "rectified_event":
+                    with h5py.File(find_rectify_map(dataset_root, sequence), "r") as handle:
+                        rectify_map = np.asarray(handle["rectify_map"], dtype=np.float32)
+                    self.sampling_grids[sequence] = build_dagr_sampling_grid(
+                        rectify_map,
+                        source_input_size=current_input_size,
+                        source_stride=patch_size,
+                    )
+                else:
+                    raise ValueError(
+                        f"Unsupported feature coordinate_space={coordinate_space!r}: "
+                        f"{metadata_path}"
+                    )
+            else:
+                targets = load_sequence_targets(
+                    labels_root=labels_root,
+                    dataset_root=dataset_root,
+                    sequence=sequence,
+                    target_size=current_input_size,
+                )
             for path in sorted(directory.glob("*.pt")):
                 if not path.stem.isdecimal():
                     continue
@@ -295,10 +468,14 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
                     self.samples.append((sequence, timestamp, path, targets[timestamp]))
         if not self.samples:
             raise ValueError("No labeled DSEC-Detection feature frames were found")
-        if self.input_size is None:
-            raise RuntimeError("Detection feature input size was not initialized")
-        if self.patch_size is None:
-            raise RuntimeError("Detection feature patch size was not initialized")
+        if source_input_size is None or source_patch_size is None:
+            raise RuntimeError("Detection feature geometry was not initialized")
+        if protocol == "dsec-det":
+            self.input_size = (430 // 2, 640 // 2)
+            self.patch_size = 8
+        else:
+            self.input_size = source_input_size
+            self.patch_size = source_patch_size
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -319,9 +496,19 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
             value = features[self.feature]
         if not isinstance(value, Tensor) or value.ndim != 3:
             raise ValueError(f"Feature must have shape [C, H, W]: {path}")
+        if self.protocol == "dsec-det" and sequence in self.sampling_grids:
+            value = value.float()
+            grid = self.sampling_grids[sequence]
+            value = F.grid_sample(
+                value.unsqueeze(0),
+                grid.unsqueeze(0),
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            )[0]
         expected_grid = (
-            self.input_size[0] // self.patch_size,
-            self.input_size[1] // self.patch_size,
+            math.ceil(self.input_size[0] / self.patch_size),
+            math.ceil(self.input_size[1] / self.patch_size),
         )
         if tuple(value.shape[-2:]) != expected_grid:
             raise ValueError(
@@ -361,7 +548,10 @@ __all__ = [
     "DSECDetectionFeatureDataset",
     "detection_collate",
     "find_rectify_map",
+    "find_image_timestamps",
     "find_tracks_file",
+    "build_dagr_sampling_grid",
+    "load_dagr_sequence_targets",
     "load_sequence_targets",
     "rectify_xywh_boxes",
     "transform_xywh_boxes_to_input",

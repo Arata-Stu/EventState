@@ -36,7 +36,7 @@ class EventStateTrainer:
         model: nn.Module,
         teacher: nn.Module | None,
         train_loader: Any | None,
-        validation_loader: Any,
+        validation_loader: Any | None,
         optimizer: torch.optim.Optimizer | None,
         scheduler: WarmupCosineScheduler | None,
         h_distillation_loss: nn.Module,
@@ -539,6 +539,8 @@ class EventStateTrainer:
 
     @torch.inference_mode()
     def validate(self, *, max_batches: int | None = None) -> dict[str, float]:
+        if self.validation_loader is None:
+            raise RuntimeError("Validation is disabled for this train-only run")
         self.model.eval()
         if self.teacher is not None:
             self.teacher.eval()
@@ -655,6 +657,11 @@ class EventStateTrainer:
             state=self._restored_data_state,
         )
         log_every = int(_value(self.training_config, "log_every", 20))
+        validation_enabled = bool(
+            _value(self.training_config, "validation_enabled", True)
+        )
+        if validation_enabled and self.validation_loader is None:
+            raise RuntimeError("training.validation_enabled=true requires a validation loader")
         validate_every = int(_value(self.training_config, "validate_every", 1000))
         checkpoint_every = int(_value(self.training_config, "checkpoint_every", 1000))
         validation_batches_value = _value(self.training_config, "validation_batches", None)
@@ -678,7 +685,9 @@ class EventStateTrainer:
                 logged = {f"train/{name}": value for name, value in metrics.items()}
                 self.logger.scalars(logged, self.global_step)
                 self.logger.console("train", self.global_step, metrics)
-            if self.global_step % validate_every == 0 or self.global_step == max_steps:
+            if validation_enabled and (
+                self.global_step % validate_every == 0 or self.global_step == max_steps
+            ):
                 validation = self.validate(max_batches=validation_batches)
                 self.logger.scalars(validation, self.global_step)
                 self.logger.console("validation", self.global_step, validation)
@@ -695,7 +704,7 @@ class EventStateTrainer:
                 last_checkpoint_step = self.global_step
             self.logger.flush()
 
-        if last_validation_step != self.global_step:
+        if validation_enabled and last_validation_step != self.global_step:
             validation = self.validate(max_batches=validation_batches)
             self.logger.scalars(validation, self.global_step)
         if last_checkpoint_step != self.global_step:

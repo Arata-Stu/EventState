@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--role", choices=("val", "test"), default="val")
     parser.add_argument("--feature", choices=("z", "h", "concat"), required=True)
+    parser.add_argument(
+        "--protocol",
+        choices=("probe", "dsec-det"),
+        default=None,
+        help="Defaults to the protocol recorded in the detector checkpoint",
+    )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", default="cuda")
@@ -45,12 +51,23 @@ def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
     split = load_dsec_detection_split(args.split_manifest)
+    checkpoint: dict[str, Any] = torch.load(
+        args.checkpoint, map_location="cpu", weights_only=False
+    )
+    config = checkpoint.get("config", {})
+    checkpoint_protocol = str(config.get("protocol", "probe"))
+    protocol = args.protocol or checkpoint_protocol
+    if protocol != checkpoint_protocol:
+        raise ValueError(
+            f"Probe was trained with protocol={checkpoint_protocol!r}, not {protocol!r}"
+        )
     dataset = DSECDetectionFeatureDataset(
         feature_cache_dir=args.feature_cache_dir,
         labels_root=args.labels_root,
         dataset_root=args.dataset_root,
         sequences=split.sequences(args.role),
         feature=args.feature,
+        protocol=protocol,
     )
     loader = DataLoader(
         dataset,
@@ -61,10 +78,6 @@ def main() -> None:
         persistent_workers=args.num_workers > 0,
         collate_fn=detection_collate,
     )
-    checkpoint: dict[str, Any] = torch.load(
-        args.checkpoint, map_location="cpu", weights_only=False
-    )
-    config = checkpoint.get("config", {})
     expected_feature = config.get("feature")
     if expected_feature is not None and expected_feature != args.feature:
         raise ValueError(
@@ -77,6 +90,7 @@ def main() -> None:
         in_channels=channels,
         width=int(config.get("head_width", 192)),
         input_stride=int(config.get("input_stride", dataset.patch_size)),
+        image_size=dataset.input_size,
     ).to(device)
     model.load_state_dict(checkpoint["model"])
     model.eval()
@@ -96,7 +110,15 @@ def main() -> None:
                 timestamps=batch["timestamps"],
                 image_size=dataset.input_size,
             )
-    metrics = {"role": args.role, "feature": args.feature, **evaluator.compute()}
+    metrics = {
+        "role": args.role,
+        "feature": args.feature,
+        "protocol": protocol,
+        "coordinate_space": (
+            "dsec_det_distorted" if protocol == "dsec-det" else "rectified_event"
+        ),
+        **evaluator.compute(),
+    }
     encoded = json.dumps(metrics, indent=2, sort_keys=True) + "\n"
     print(encoded, end="")
     if args.output is not None:

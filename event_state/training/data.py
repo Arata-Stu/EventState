@@ -106,7 +106,7 @@ def _build_transform(dataset_config: Any, *, training: bool, channels: int) -> A
 @dataclass(frozen=True)
 class DataLoaders:
     train: DataLoader
-    validation: DataLoader
+    validation: DataLoader | None
     generator: torch.Generator
 
 
@@ -356,10 +356,11 @@ def build_dataloaders(config: Any) -> DataLoaders:
     _validate_dataset_location(dataset_config)
 
     train_split = str(_value(dataset_config, "train_split", "train"))
+    validation_enabled = bool(_value(training_config, "validation_enabled", True))
     validation_split = str(_value(dataset_config, "val_split", "test"))
     train_sequences = _as_optional_list(_value(dataset_config, "train_sequences"))
     validation_sequences = _as_optional_list(_value(dataset_config, "val_sequences"))
-    if train_split == validation_split:
+    if validation_enabled and train_split == validation_split:
         if train_sequences is None or validation_sequences is None:
             raise ValueError(
                 "When train_split and val_split are identical, both sequence manifests "
@@ -384,18 +385,23 @@ def build_dataloaders(config: Any) -> DataLoaders:
         ),
         **common,
     )
-    validation_dataset = _build_validation_dataset(config, event_representation)
+    validation_dataset = (
+        _build_validation_dataset(config, event_representation)
+        if validation_enabled
+        else None
+    )
     if cache_features:
         _validate_teacher_cache(
             train_dataset,
             teacher_config=teacher_config,
             dataset_config=dataset_config,
         )
-        _validate_teacher_cache(
-            validation_dataset,
-            teacher_config=teacher_config,
-            dataset_config=dataset_config,
-        )
+        if validation_dataset is not None:
+            _validate_teacher_cache(
+                validation_dataset,
+                teacher_config=teacher_config,
+                dataset_config=dataset_config,
+            )
 
     batch_size = int(_value(training_config, "batch_size", 1))
     if batch_size <= 0:
@@ -410,14 +416,18 @@ def build_dataloaders(config: Any) -> DataLoaders:
         drop_last=False,
         **loader_options,
     )
-    validation_loader = DataLoader(
-        validation_dataset,
-        # Chronological state must never be mixed across sequences. A batch of
-        # one also lets the final clip of each sequence be shorter than T.
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
-        **loader_options,
+    validation_loader = (
+        DataLoader(
+            validation_dataset,
+            # Chronological state must never be mixed across sequences. A batch of
+            # one also lets the final clip of each sequence be shorter than T.
+            batch_size=1,
+            shuffle=False,
+            drop_last=False,
+            **loader_options,
+        )
+        if validation_dataset is not None
+        else None
     )
     return DataLoaders(train=train_loader, validation=validation_loader, generator=generator)
 

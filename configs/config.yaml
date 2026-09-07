@@ -33,6 +33,9 @@ scheduler:
 
 training:
   max_steps: 100000
+  # Disable this only for a fixed-step final fit over every official training
+  # sequence. Such a run writes step checkpoints but deliberately no best.pt.
+  validation_enabled: true
   # A 20-step V100 smoke run used ~4.5 GiB at batch 2. Batch 8 is the
   # conservative full-run starting point for a 32 GiB V100.
   batch_size: 8

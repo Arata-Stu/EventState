@@ -55,10 +55,16 @@ class EventStatePyramid(nn.Module):
         p3 = self.p3(F.interpolate(p4_base, scale_factor=2.0, mode="nearest"))
         p5_base = self.p5(p4_base)
         p4 = self.pan4(
-            torch.cat((p4_base, F.max_pool2d(p3, kernel_size=2, stride=2)), dim=1)
+            torch.cat(
+                (p4_base, F.adaptive_max_pool2d(p3, p4_base.shape[-2:])),
+                dim=1,
+            )
         )
         p5 = self.pan5(
-            torch.cat((p5_base, F.max_pool2d(p4, kernel_size=2, stride=2)), dim=1)
+            torch.cat(
+                (p5_base, F.adaptive_max_pool2d(p4, p5_base.shape[-2:])),
+                dim=1,
+            )
         )
         return p3, p4, p5
 
@@ -121,6 +127,7 @@ class EventStateYOLOX(nn.Module):
         num_classes: int = 2,
         width: int = 192,
         input_stride: int = 16,
+        image_size: tuple[int, int] | None = None,
         confidence_threshold: float = 0.001,
         nms_threshold: float = 0.65,
         max_detections: int = 100,
@@ -132,6 +139,9 @@ class EventStateYOLOX(nn.Module):
             raise ValueError("input_stride must be a positive even integer")
         self.num_classes = int(num_classes)
         self.input_stride = int(input_stride)
+        self.image_size = image_size
+        if image_size is not None and any(int(value) <= 0 for value in image_size):
+            raise ValueError("image_size values must be positive")
         self.strides = (
             self.input_stride // 2,
             self.input_stride,
@@ -192,13 +202,14 @@ class EventStateYOLOX(nn.Module):
         decoded_boxes = self._decode_boxes(predictions[..., :4], grid, strides)
         if targets is not None:
             return self.loss(predictions, decoded_boxes, grid, strides, targets)
+        inferred_size = (
+            int(features.shape[-2]) * self.input_stride,
+            int(features.shape[-1]) * self.input_stride,
+        )
         return self.postprocess(
             predictions,
             decoded_boxes,
-            image_size=(
-                int(features.shape[-2]) * self.input_stride,
-                int(features.shape[-1]) * self.input_stride,
-            ),
+            image_size=self.image_size or inferred_size,
         )
 
     @torch.no_grad()

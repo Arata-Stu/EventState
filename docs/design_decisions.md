@@ -95,23 +95,26 @@ DSEC-Detectionの公式splitはtrain 41 / validation 6 / test 13である。追�
 物理archive上では前者が`train/`、後者が`test/`に入るため、directory名だけで学習対象を
 決めてはならない。
 
-標準的なinductive比較では、representation pretrainingも公式train 41件だけから作る。その41件を
-sequence単位で内部train/validationへ分け、公式validation/testはcache作成、正規化統計、
-checkpoint選択を含めて未使用にする。追加7件を含む全60件でのself-supervised pretrainingは
-別の`transductive / test-exposed` ablationとして明記する。
+標準的なinductive比較では、representation pretrainingも公式train 41件だけから作る。開発時は
+sequence単位の内部train/validationを使えるが、設定を確定した本学習では41件すべてに勾配更新を
+行い、固定stepの最終重みを採用する。公式validation/testはcache作成、正規化統計、checkpoint
+選択を含めて未使用にする。追加7件を含む全60件でのself-supervised pretrainingは別の
+`transductive / test-exposed` ablationとして明記する。
 
 取得scriptは追加7件をoriginal DSECへ自動mergeせず、`dsec_det_extra/`へ隔離する。公式split名は
 `tools/manifests/dsec_det_official_split.yaml`に固定している。
 
 ## 10. Benchmark-clean internal validation splitを実験前に固定する
 
-標準E0/E1/E2では`dataset=dsec_benchmark_clean`を使う。DSEC-Detection公式train 41件のうち、
+開発用E0/E1/E2では`dataset=dsec_benchmark_clean`を使える。DSEC-Detection公式train 41件のうち、
 recording group全体として`interlaken_00_{c..g}`（5件）と`zurich_city_11_{a..c}`（3件）を
 internal validationへhold outし、残り33件だけをoptimizationに使う。この分割は、本学習結果を
 見る前に地理的多様性と同一recording group内の近接sequence漏洩を避ける目的で固定した。
 
-公式validation 6件と公式test 13件はpretraining、early stopping、checkpoint選択、cache統計に
-使用しない。GEP比較・alignment開発でoriginal testを使う設定は標準結果と混ぜない。
+本番用E0/E2/E4では、設計を固定した後に`dataset=dsec_det_train41`で41件すべてを使って再学習し、
+validationを無効化して固定最終stepを採用する。公式validation 6件と公式test 13件はpretraining、
+early stopping、checkpoint選択、cache統計に使用しない。GEP比較・alignment開発でoriginal testを
+使う設定は標準結果と混ぜない。
 
 ## 11. DINOv3 attributionと配布物
 
@@ -130,8 +133,17 @@ DINOv3初期値を含む学習済みcheckpointを第三者へ配布する前に�
 
 最初の比較はprojection headを捨てたfrozen `z` / `h` / `concat[z,h]`に、共通のYOLOX型headを
 学習する。DSEC-Det labelはdistorted event座標である一方、EventStateはrectified event座標で
-事前学習されているため、bboxをsequence固有の`rectify_map.h5`で変換する。主metricはDAGRと
-同じ`car` / `pedestrian` mappingでのCOCO mAP@[.50:.95]とする。
+事前学習されている。内部`probe`ではbboxをrectified座標へ移すが、公表benchmarkでは逆に
+EventState特徴mapをsequence固有の`rectify_map.h5`でdistorted座標へwarpする。DAGRと同じ
+320×215 geometry、bbox filter、連続valid-frame条件を適用し、主metricを`car` / `pedestrian`
+mappingでのCOCO mAP@[.50:.95]とする。
 
 DAGRとRVTはデータ契約、filter、評価方式、head設計の参考に限定する。GPL sourceをimportまたは
 copyせず、YOLOX型headとCOCO adapterは本repository内で独立実装する。
+
+## 13. 標準temporal baselineは1層LSTMとする
+
+E2/E4の本学習では、各patch位置に共有するLSTMを1層とする。2層はblueprint作成時の未検証な
+初期値であり、時系列状態そのものの寄与を測る最小baselineとしては1層の方が解釈しやすい。
+2層版は必要に応じてdepth ablationとして別実験にする。旧E1/E2/E4の2,000 step checkpointは
+2層pilotとして保持するが、1層モデルとはstate dict形状が異なるため本学習へresumeしない。

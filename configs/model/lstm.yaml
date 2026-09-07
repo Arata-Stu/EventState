@@ -9,7 +9,7 @@ temporal:
   input_dim: 384
   hidden_dim: 384
   output_dim: 384
-  num_layers: 2
+  num_layers: 1
   dropout: 0.0
   detach_state_every: null
 

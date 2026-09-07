@@ -533,6 +533,75 @@ def test_validation_only_loader_does_not_construct_the_train_split(
     assert loader.batch_size == 1
 
 
+def test_train_only_loader_does_not_construct_validation_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[dict] = []
+
+    class DummyRepresentation:
+        channels = 3
+
+    class DummyDataset(torch.utils.data.Dataset):
+        def __init__(self, **kwargs) -> None:
+            constructed.append(kwargs)
+            self.sequence_names = list(kwargs["sequences"])
+            self.feature_cache_dir = None
+
+        def __len__(self) -> int:
+            return 1
+
+        def __getitem__(self, index: int) -> dict:
+            del index
+            return {"events": torch.zeros(1, 3, 2, 2)}
+
+    monkeypatch.setattr(
+        training_data,
+        "build_event_representation",
+        lambda dataset_config: DummyRepresentation(),
+    )
+    monkeypatch.setattr(training_data, "DSECSequenceDataset", DummyDataset)
+    config = {
+        "seed": 0,
+        "dataset": {
+            "name": "dsec",
+            "root": "/train-only",
+            "sequence_length": 8,
+            "clip_stride": 1,
+            "train_split": "train",
+            "train_sequences": ["train_a", "train_b"],
+            "val_split": None,
+            "val_sequences": None,
+            "image_directory": "aligned_event",
+            "rectify_events": True,
+            "event_cache_dir": None,
+            "event_window_fraction": 1.0,
+            "representation": {
+                "type": "gep_rgb",
+                "normalize_mean": [0.0, 0.0, 0.0],
+                "normalize_std": [1.0, 1.0, 1.0],
+            },
+            "augmentation": {"enabled": False},
+            "input_height": 448,
+            "input_width": 640,
+        },
+        "teacher": {"cache_features": False},
+        "training": {
+            "validation_enabled": False,
+            "batch_size": 1,
+            "num_workers": 0,
+            "pin_memory": False,
+            "persistent_workers": False,
+        },
+    }
+
+    loaders = training_data.build_dataloaders(config)
+
+    assert len(constructed) == 1
+    assert constructed[0]["split"] == "train"
+    assert constructed[0]["sequences"] == ["train_a", "train_b"]
+    assert loaders.validation is None
+
+
 def test_evaluation_local_dino_relocation_uses_content_identity(tmp_path: Path) -> None:
     saved_repository = tmp_path / "old_mount" / "dinov3"
     current_repository = tmp_path / "new_mount" / "dinov3"

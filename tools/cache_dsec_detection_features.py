@@ -221,6 +221,7 @@ def main() -> None:
                 "source_event_cache": str(source_dir),
                 "source_event_cache_metadata": source_metadata,
                 "frame_count": len(frame_paths),
+                "coordinate_space": "rectified_event",
                 "input_size": [event_transform.height, event_transform.width],
                 "patch_size": int(model.event_encoder.patch_size),
             }

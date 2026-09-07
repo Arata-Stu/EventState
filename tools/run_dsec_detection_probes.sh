@@ -10,13 +10,14 @@ DATASET_ROOT=""
 OUTPUT_DIR=""
 BATCH_SIZE=16
 EPOCHS=50
+PROTOCOL=probe
 
 usage() {
   cat <<'EOF'
 Usage:
   bash tools/run_dsec_detection_probes.sh \
     --feature-cache-dir PATH --labels-root PATH --dataset-root PATH --output-dir PATH \
-    [--batch-size N] [--epochs N]
+    [--batch-size N] [--epochs N] [--protocol probe|dsec-det]
 
 GPU 0 trains z, GPU 1 trains h, and GPU 2 trains concat[z,h].
 EOF
@@ -35,10 +36,16 @@ while [ "$#" -gt 0 ]; do
     --output-dir) OUTPUT_DIR=${2:?}; shift 2 ;;
     --batch-size) BATCH_SIZE=${2:?}; shift 2 ;;
     --epochs) EPOCHS=${2:?}; shift 2 ;;
+    --protocol) PROTOCOL=${2:?}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
 done
+
+case "$PROTOCOL" in
+  probe|dsec-det) ;;
+  *) fail "--protocol must be probe or dsec-det" ;;
+esac
 
 [ -d "$FEATURE_CACHE_DIR" ] || fail "feature cache not found: $FEATURE_CACHE_DIR"
 [ -d "$LABELS_ROOT" ] || fail "labels root not found: $LABELS_ROOT"
@@ -65,6 +72,7 @@ for GPU in 0 1 2; do
     --labels-root "$LABELS_ROOT" \
     --dataset-root "$DATASET_ROOT" \
     --feature "$FEATURE" \
+    --protocol "$PROTOCOL" \
     --output-dir "$OUTPUT_DIR/$FEATURE" \
     --batch-size "$BATCH_SIZE" \
     --epochs "$EPOCHS" \
