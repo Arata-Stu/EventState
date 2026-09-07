@@ -13,6 +13,7 @@ ROOT=""
 DATASET="dsec"
 SPLIT=""
 COMPONENTS_CSV="events,images,calibration"
+COMPONENTS_EXPLICIT=0
 DOWNLOAD_ONLY=0
 KEEP_ARCHIVES=0
 REPAIR_EXISTING=0
@@ -26,12 +27,15 @@ Usage:
   bash tools/download_dsec.sh --root PATH --split train|test|all [options]
 
 Options:
-  --dataset dsec|dsec-det-extra|both
+  --dataset dsec|dsec-det-extra|dsec-det-labels|both
       Download the original DSEC archives (default), the seven raw sequences
       added by DSEC-Detection, or both.  Extra sequences are kept under
       PATH/dsec_det_extra and are never merged into the main dataset.
+      dsec-det-labels downloads all official object annotations into
+      PATH/dsec_det_labels without changing the raw-data layout.
   --components LIST
-      Comma-separated subset of events,images,calibration (default: all three).
+      Comma-separated subset of events,images,calibration. For
+      dsec-det-labels the only component is object_detections.
   --download-only
       Download complete ZIP files but do not extract them.
   --keep-archives
@@ -89,6 +93,7 @@ while [ "$#" -gt 0 ]; do
     --components)
       [ "$#" -ge 2 ] || fail "--components requires a value"
       COMPONENTS_CSV=$2
+      COMPONENTS_EXPLICIT=1
       shift 2
       ;;
     --download-only)
@@ -123,14 +128,17 @@ done
 
 [ -n "$ROOT" ] || fail "--root is required"
 case "$DATASET" in
-  dsec|dsec-det-extra|both) ;;
-  *) fail "--dataset must be dsec, dsec-det-extra, or both" ;;
+  dsec|dsec-det-extra|dsec-det-labels|both) ;;
+  *) fail "--dataset must be dsec, dsec-det-extra, dsec-det-labels, or both" ;;
 esac
 case "$SPLIT" in
   train|test|all) ;;
   *) fail "--split must be train, test, or all" ;;
 esac
 [ -n "$COMPONENTS_CSV" ] || fail "--components cannot be empty"
+if [ "$DATASET" = "dsec-det-labels" ] && [ "$COMPONENTS_EXPLICIT" -eq 0 ]; then
+  COMPONENTS_CSV="object_detections"
+fi
 
 OLD_IFS=$IFS
 IFS=,
@@ -139,10 +147,16 @@ IFS=$OLD_IFS
 [ "${#COMPONENTS[@]}" -gt 0 ] || fail "no components selected"
 for component in "${COMPONENTS[@]}"; do
   case "$component" in
-    events|images|calibration) ;;
+    events|images|calibration|object_detections) ;;
     *) fail "unsupported component: $component" ;;
   esac
 done
+if [ "$DATASET" = "dsec-det-labels" ]; then
+  [ "$COMPONENTS_CSV" = "object_detections" ] || \
+    fail "dsec-det-labels supports only --components object_detections"
+elif [[ ",$COMPONENTS_CSV," = *,object_detections,* ]]; then
+  fail "object_detections requires --dataset dsec-det-labels"
+fi
 
 if [ "$SPLIT" = "all" ]; then
   SPLITS=(train test)
@@ -173,6 +187,9 @@ print_plan() {
     log "DSEC-Detection extra raw data are about 81.9 GB in total"
     log "extra data stay quarantined at $ROOT/dsec_det_extra"
   fi
+  if [ "$DATASET" = "dsec-det-labels" ]; then
+    log "DSEC-Detection labels are stored separately at $ROOT/dsec_det_labels"
+  fi
   log "extraction requires substantial additional free space"
   log "terms and citations: https://dsec.ifi.uzh.ch/dsec-datasets/download/"
 }
@@ -196,6 +213,8 @@ artifact_destination() {
   local component=$3
   if [ "$dataset" = "dsec" ]; then
     printf '%s/%s_%s\n' "$ROOT" "$split" "$component"
+  elif [ "$dataset" = "dsec-det-labels" ]; then
+    printf '%s/dsec_det_labels\n' "$ROOT"
   else
     printf '%s/dsec_det_extra\n' "$ROOT"
   fi
@@ -315,6 +334,9 @@ sequence_component_complete() {
     calibration)
       [ -s "$sequence_dir/calibration/cam_to_cam.yaml" ]
       ;;
+    object_detections)
+      [ -s "$sequence_dir/object_detections/left/tracks.npy" ]
+      ;;
     *)
       return 1
       ;;
@@ -374,6 +396,29 @@ validate_extra_layout() {
   done < <(extra_sequences "$split")
 }
 
+label_sequences() {
+  case "$1" in
+    train)
+      manifest_section train
+      manifest_section val
+      ;;
+    test)
+      manifest_section test
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_label_layout() {
+  local split=$1
+  local destination=$3
+  local sequence
+  [ -d "$destination/$split" ] || return 1
+  while IFS= read -r sequence; do
+    sequence_component_complete "$destination/$split/$sequence" object_detections || return 1
+  done < <(label_sequences "$split")
+}
+
 layout_valid() {
   local dataset=$1
   local split=$2
@@ -381,6 +426,8 @@ layout_valid() {
   local destination=$4
   if [ "$dataset" = "dsec" ]; then
     validate_base_layout "$split" "$component" "$destination"
+  elif [ "$dataset" = "dsec-det-labels" ]; then
+    validate_label_layout "$split" "$component" "$destination"
   else
     validate_extra_layout "$split" "$component" "$destination"
   fi
@@ -396,6 +443,10 @@ artifact_has_partial_output() {
     [ -d "$destination" ] || return 1
     first=$(find "$destination" -mindepth 1 -maxdepth 1 -print -quit)
     [ -n "$first" ]
+    return
+  fi
+  if [ "$dataset" = "dsec-det-labels" ]; then
+    [ -e "$destination/$split" ]
     return
   fi
   while IFS= read -r sequence; do
@@ -613,6 +664,8 @@ process_artifact() {
   local bytes owned=0
   if [ "$dataset" = "dsec" ]; then
     family=base
+  elif [ "$dataset" = "dsec-det-labels" ]; then
+    family=dsec_det_labels
   else
     family=dsec_det_extra
   fi

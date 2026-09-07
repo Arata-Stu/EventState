@@ -56,6 +56,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--root", type=Path, required=True, help="DSEC dataset root")
     parser.add_argument(
+        "--layout",
+        choices=("standard", "dsec-det-extra"),
+        default="standard",
+        help=(
+            "Read the normal component directories or the quarantined "
+            "dsec_det_extra/<split>/<sequence> layout"
+        ),
+    )
+    parser.add_argument(
         "--split",
         choices=("train", "test", "all"),
         default="train",
@@ -122,13 +131,22 @@ def main(argv: Sequence[str] | None = None) -> None:
     totals = {"images_written": 0, "images_skipped": 0, "events_written": 0, "events_skipped": 0}
     splits = ("train", "test") if args.split == "all" else (args.split,)
     for split in splits:
-        sequences = discover_dsec_sequences(root, split, args.sequences)
+        if args.layout == "standard":
+            sequences = discover_dsec_sequences(root, split, args.sequences)
+        else:
+            sequences = discover_dsec_extra_sequences(root, split, args.sequences)
         print(f"Preparing DSEC {split}: {len(sequences)} sequences")
         for sequence_name in sequences:
+            sequence_root = (
+                root / "dsec_det_extra" / split / sequence_name
+                if args.layout == "dsec-det-extra"
+                else None
+            )
             result = prepare_sequence(
                 root=root,
                 split=split,
                 sequence_name=sequence_name,
+                sequence_root=sequence_root,
                 image_output_subdir=args.image_output_subdir,
                 event_cache_dir=cache_root,
                 representation_name=args.representation,
@@ -154,6 +172,7 @@ def prepare_sequence(
     root: Path,
     split: str,
     sequence_name: str,
+    sequence_root: Path | None,
     image_output_subdir: str,
     event_cache_dir: Path | None,
     representation_name: str,
@@ -173,13 +192,27 @@ def prepare_sequence(
         event_window_fraction=event_window_fraction,
     )
     require_opencv()
-    image_sequence_root = root / f"{split}_images" / sequence_name / "images"
+    image_sequence_root = (
+        sequence_root / "images"
+        if sequence_root is not None
+        else root / f"{split}_images" / sequence_name / "images"
+    )
     image_dir = image_sequence_root / "left" / "rectified"
     timestamp_path = image_sequence_root / "timestamps.txt"
     calibration_path = (
-        root / f"{split}_calibration" / sequence_name / "calibration" / "cam_to_cam.yaml"
+        sequence_root / "calibration" / "cam_to_cam.yaml"
+        if sequence_root is not None
+        else root
+        / f"{split}_calibration"
+        / sequence_name
+        / "calibration"
+        / "cam_to_cam.yaml"
     )
-    event_dir = root / f"{split}_events" / sequence_name / "events" / "left"
+    event_dir = (
+        sequence_root / "events" / "left"
+        if sequence_root is not None
+        else root / f"{split}_events" / sequence_name / "events" / "left"
+    )
 
     frame_pairs = load_frame_pairs(image_dir, timestamp_path)
     alignment = load_dsec_camera_alignment(calibration_path)
@@ -447,6 +480,37 @@ def prepare_sequence(
         overwrite=overwrite,
     )
     return counts
+
+
+def discover_dsec_extra_sequences(
+    root: Path,
+    split: str,
+    requested: Sequence[str] | None,
+) -> list[str]:
+    """Discover the physically quarantined sequences added by DSEC-Detection."""
+
+    split_root = root / "dsec_det_extra" / split
+    if not split_root.is_dir():
+        raise FileNotFoundError(f"DSEC-Detection extra split not found: {split_root}")
+    available = {
+        path.name
+        for path in split_root.iterdir()
+        if path.is_dir()
+        and (path / "images").is_dir()
+        and (path / "events").is_dir()
+        and (path / "calibration").is_dir()
+    }
+    sequences = sorted(available) if requested is None else list(requested)
+    if len(sequences) != len(set(sequences)):
+        raise ValueError("The DSEC-Detection extra sequence list contains duplicates")
+    missing = sorted(set(sequences) - available)
+    if missing:
+        raise FileNotFoundError(
+            f"Sequences are absent from dsec_det_extra/{split}: {', '.join(missing)}"
+        )
+    if not sequences:
+        raise ValueError(f"No DSEC-Detection extra sequences found in {split_root}")
+    return sequences
 
 
 def validate_args(args: argparse.Namespace) -> None:

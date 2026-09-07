@@ -17,3 +17,6 @@ tqdm>=4.66
 # Feature visualization only:
 # matplotlib>=3.8
 # imageio-ffmpeg>=0.5
+
+# DSEC-Detection evaluation only:
+# pycocotools>=2.0.7

@@ -528,6 +528,118 @@ bash tools/run_v100_event_dropout.sh \
 学習後は、生成された`v100_event_dropout_*`を`--run-dir`に指定し、`--model E4`または
 `--model dropout`で上記のevent-drop ablationを実行できます。
 
+## DSEC-Detection frozen probe
+
+検出評価はDAGRと同じ公式41 train / 6 validation / 13 test splitをそのまま使います。
+独自33/8 pretraining splitはcheckpoint開発だけのもので、検出headのsplitには流用しません。
+主結果はDAGR互換の`car` / `pedestrian` 2 classとCOCO mAP@[.50:.95]です。
+
+DSEC-Det labelはraw dataへmergeせず、resume可能なdownload scriptで別directoryへ取得します。
+
+```bash
+bash tools/download_dsec.sh \
+  --root /path/to/DSEC \
+  --dataset dsec-det-labels \
+  --split all \
+  --yes
+```
+
+公式validationの6 sequenceは物理的にはDSEC-Detection追加train archiveにあります。隔離した
+`dsec_det_extra`から通常のGEP cacheへ追加します。
+
+```bash
+python tools/prepare_dsec.py \
+  --root /path/to/DSEC \
+  --layout dsec-det-extra \
+  --split train \
+  --sequences \
+    zurich_city_16_a zurich_city_17_a zurich_city_18_a \
+    zurich_city_19_a zurich_city_20_a zurich_city_21_a \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb
+```
+
+EventState backboneをsequence先頭からstreaming実行し、projection前の`z`/`h`を一度だけcacheします。
+これ以降のdetector学習ではbackboneを読み込まないため、frozen probeを高速かつ再現可能に比較できます。
+
+```bash
+python tools/cache_dsec_detection_features.py \
+  --checkpoint /path/to/event_state_best.pt \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --output-dir /path/to/DSEC_cache/detection_features/E4 \
+  --role train \
+  --features z h \
+  --state-policy continuous \
+  --device cuda \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth
+
+python tools/cache_dsec_detection_features.py \
+  --checkpoint /path/to/event_state_best.pt \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --output-dir /path/to/DSEC_cache/detection_features/E4 \
+  --role val \
+  --features z h \
+  --state-policy continuous \
+  --device cuda \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth
+```
+
+3 GPUでfeature cacheを作る場合は、同じroleについて`--num-shards 3`を全processへ与え、
+`--shard-index 0`、`1`、`2`を一つずつ割り当てます。sequence単位で分割するためrecurrent stateは
+各sequence内で保たれ、同じoutput directoryへ安全に書き込めます。
+
+YOLOX型headはstride 16のtoken mapからstride 8/16/32 pyramidを作り、decoupled headと
+dynamic-k assignmentで学習します。DSEC-Det bboxはdistorted event座標なので、loaderが公式
+`rectify_map.h5`でEventStateと同じrectified event座標へ変換します。
+
+```bash
+uv sync --active --extra detection
+
+CUDA_VISIBLE_DEVICES=0 python tools/train_dsec_detection.py \
+  --feature-cache-dir /path/to/DSEC_cache/detection_features/E4 \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --feature h \
+  --output-dir outputs/dsec_detection/E4_h \
+  --batch-size 16 \
+  --epochs 50 \
+  --device cuda
+```
+
+`z`と`concat`も同じcommandの`--feature`と出力先だけ変えて別headを学習します。state効果は、
+同じE4 checkpointから`--state-policy frame`で別feature cacheを作り、continuous h用に学習した
+`best.pt`を`tools/evaluate_dsec_detection.py`でそのcacheへ適用して測ります。headを再学習しないため、
+差はstate利用によるものです。
+
+3 GPUで`z`、`h`、`concat`を同時に学習する場合は次を使います。
+
+```bash
+bash tools/run_dsec_detection_probes.sh \
+  --feature-cache-dir /path/to/DSEC_cache/detection_features/E4 \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --output-dir outputs/dsec_detection/E4 \
+  --batch-size 16 \
+  --epochs 50
+```
+
+最良checkpointを公式validationまたはtestへ適用し、COCO mAPをJSONで保存できます。test評価の前には、
+上と同じfeature-cache commandを`--role test`でも実行してください。
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python tools/evaluate_dsec_detection.py \
+  --checkpoint outputs/dsec_detection/E4/h/best.pt \
+  --feature-cache-dir /path/to/DSEC_cache/detection_features/E4 \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --role val \
+  --feature h \
+  --output outputs/dsec_detection/E4/h/val_metrics.json \
+  --device cuda
+```
+
+YOLOXの設計はApache-2.0の公開方式を参照していますが、本実装はEventState内で独立実装しており、
+GPL-3.0のDAGR/RVT sourceをimportまたはcopyしません。
+
 ## テスト
 
 ```bash

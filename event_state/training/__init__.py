@@ -15,6 +15,7 @@ from .factory import (
     EvaluationComponents,
     RuntimeComponents,
     build_evaluation_runtime,
+    build_model,
     build_runtime,
 )
 from .optim import WarmupCosineScheduler, build_optimizer
@@ -29,6 +30,7 @@ __all__ = [
     "assert_checkpoint_config_compatible",
     "assert_checkpoint_signature_compatible",
     "build_evaluation_runtime",
+    "build_model",
     "build_optimizer",
     "build_runtime",
     "load_checkpoint",

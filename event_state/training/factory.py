@@ -283,6 +283,12 @@ def _build_model(config: Any) -> nn.Module:
     )
 
 
+def build_model(config: Any, *, device: torch.device | str = "cpu") -> nn.Module:
+    """Build only EventState, without constructing data loaders or a teacher."""
+
+    return _build_model(config).to(torch.device(device))
+
+
 def _build_teacher(config: Any) -> nn.Module | None:
     teacher_config = _value(config, "teacher")
     if bool(_value(teacher_config, "cache_features", True)):

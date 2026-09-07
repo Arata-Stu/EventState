@@ -121,3 +121,17 @@ internal validationへhold outし、残り33件だけをoptimizationに使う。
 
 DINOv3初期値を含む学習済みcheckpointを第三者へ配布する前には、weight取得時に同意したlicenseを
 改めて確認し、必要なagreementとattributionを配布物へ同梱する。論文ではDINOv3利用を明記・引用する。
+
+## 12. DSEC-Detection downstream評価は公式splitを変更しない
+
+33 train / 8 internal validationはEventState事前学習の設計選択専用とする。物体検出headの
+学習・選択・最終評価には、DSEC-DetおよびDAGRの公開manifestと同一の41 train / 6 validation /
+13 testを使い、独自splitを導入しない。
+
+最初の比較はprojection headを捨てたfrozen `z` / `h` / `concat[z,h]`に、共通のYOLOX型headを
+学習する。DSEC-Det labelはdistorted event座標である一方、EventStateはrectified event座標で
+事前学習されているため、bboxをsequence固有の`rectify_map.h5`で変換する。主metricはDAGRと
+同じ`car` / `pedestrian` mappingでのCOCO mAP@[.50:.95]とする。
+
+DAGRとRVTはデータ契約、filter、評価方式、head設計の参考に限定する。GPL sourceをimportまたは
+copyせず、YOLOX型headとCOCO adapterは本repository内で独立実装する。
