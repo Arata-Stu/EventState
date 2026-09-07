@@ -59,13 +59,20 @@ def joint_pca_rgb(*feature_sets: Tensor) -> list[Tensor]:
     _, _, basis = torch.pca_lowrank(centered, q=3, center=False)
     projected = centered @ basis[:, :3]
 
-    outputs: list[Tensor] = []
+    raw_outputs: list[Tensor] = []
     offset = 0
     for source, length in zip(feature_sets, lengths):
         value = projected[offset : offset + length].reshape(*source.shape[:-1], 3)
-        outputs.append(_robust_rgb(value))
+        raw_outputs.append(value)
         offset += length
-    return outputs
+    # A shared PCA basis is only visually comparable when every source also
+    # uses the same RGB range. Per-source percentile scaling can make unrelated
+    # representations appear deceptively similar.
+    merged_rgb = torch.cat([value.reshape(-1, 3) for value in raw_outputs])
+    lower = torch.quantile(merged_rgb, 0.01, dim=0)
+    upper = torch.quantile(merged_rgb, 0.99, dim=0)
+    scale = (upper - lower).clamp_min(torch.finfo(merged_rgb.dtype).eps)
+    return [((value - lower) / scale).clamp(0, 1) for value in raw_outputs]
 
 
 def cosine_similarity_by_event_level(
@@ -93,12 +100,3 @@ def cosine_similarity_by_event_level(
         name: flat_similarity[mask].mean() if torch.any(mask) else nan
         for name, mask in masks.items()
     }
-
-
-def _robust_rgb(value: Tensor) -> Tensor:
-    flattened = value.reshape(-1, 3)
-    lower = torch.quantile(flattened, 0.01, dim=0)
-    upper = torch.quantile(flattened, 0.99, dim=0)
-    scale = (upper - lower).clamp_min(torch.finfo(value.dtype).eps)
-    return ((value - lower) / scale).clamp(0, 1)
-

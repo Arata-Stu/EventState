@@ -382,6 +382,38 @@ validationでは少なくとも次を記録します。
 
 TensorBoard log、JSON metrics、checkpointはHydra run directory以下へ保存されます。
 
+## 5. E0/E1/E2 feature可視化
+
+可視化用依存を追加した後、学習完了後の3実験の`best.pt`から同一validation clipを
+順番にexportして比較します。学習中のGPUと競合させないため、原則として3本の学習が
+終了してから実行してください。
+
+```bash
+uv sync --active --extra prepare --extra visualize
+
+CUDA_VISIBLE_DEVICES=0 bash tools/visualize_v100_baselines.sh \
+  --run-dir outputs/v100_baselines_YYYYMMDD_HHMMSS \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --sequence interlaken_00_c \
+  --clip-index 0
+```
+
+出力先は既定で
+`RUN_DIR/feature_visualization/SEQUENCE_clipN/`です。
+
+- `projected_alignment.png`: 学習対象の`Pz`/`Ph`とDINOv3を同一PCA基底・色範囲で比較
+- `projected_alignment_raw.png`: projector前の`z`/`h`を個別PCAで確認
+- `projected_alignment_inputs.png`: 8 frameのevent/RGB入力とevent count
+- `projected_alignment_stability.png`: temporal lag別のfeature安定性
+- `projected_alignment.json`: frame別alignment cosineと安定性の数値
+
+main画像の下段は中央patch（`--query-index`で変更可能）に対するtoken cosine mapです。
+`Pz`/`Ph`はlossが有効なbranchだけを表示し、未学習projectorを結果として誤読しないように
+しています。複数clipを見る場合は`--clip-index`を変更します。
+
 ## テスト
 
 ```bash
