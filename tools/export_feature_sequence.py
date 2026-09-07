@@ -51,6 +51,31 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--drop-length",
+        type=int,
+        default=0,
+        help="Number of consecutive event frames to replace with an empty event frame",
+    )
+    parser.add_argument(
+        "--drop-start",
+        type=int,
+        default=32,
+        help="Zero-based sequence frame at which the first drop window starts",
+    )
+    parser.add_argument(
+        "--drop-stride",
+        type=int,
+        default=64,
+        help="Distance in frames between repeated drop-window starts",
+    )
+    parser.add_argument(
+        "--feature",
+        action="append",
+        choices=("Pz", "Ph"),
+        default=None,
+        help="Projected feature to export; repeat as needed (defaults to active objectives)",
+    )
+    parser.add_argument(
         "--context-dir",
         type=Path,
         default=None,
@@ -72,6 +97,8 @@ def _valid_existing(
     artifact_kind: str,
     checkpoint_step: int | None = None,
     state_policy: str | None = None,
+    event_drop: dict[str, int] | None = None,
+    required_features: list[str] | None = None,
 ) -> bool:
     if not path.is_file():
         return False
@@ -91,6 +118,14 @@ def _valid_existing(
                 or int(value.get("checkpoint_step", -1)) == checkpoint_step
             )
             and (state_policy is None or value.get("state_policy") == state_policy)
+            and (event_drop is None or value.get("event_drop") == event_drop)
+            and (
+                required_features is None
+                or (
+                    isinstance(value.get("features"), dict)
+                    and set(required_features) <= set(value["features"])
+                )
+            )
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         return False
@@ -107,6 +142,7 @@ def _write_metadata(
     frame_count: int,
     feature_names: list[str],
     state_policy: str,
+    event_drop: dict[str, int],
 ) -> None:
     metadata = {
         "format_version": SEQUENCE_FEATURE_FORMAT_VERSION,
@@ -118,14 +154,68 @@ def _write_metadata(
         "frame_count": frame_count,
         "feature_names": feature_names,
         "state_policy": state_policy,
+        "event_drop": event_drop,
     }
     (directory / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
     )
 
 
+def _drop_mask(
+    *,
+    sequence_offset: int,
+    frame_count: int,
+    start: int,
+    stride: int,
+    length: int,
+    device: torch.device,
+) -> torch.Tensor:
+    indices = torch.arange(
+        sequence_offset,
+        sequence_offset + frame_count,
+        device=device,
+    )
+    if length == 0:
+        return torch.zeros(frame_count, dtype=torch.bool, device=device)
+    relative = indices - start
+    return (relative >= 0) & (torch.remainder(relative, stride) < length)
+
+
+def _empty_event_value(events: torch.Tensor, config: Any) -> torch.Tensor:
+    representation = config.dataset.representation
+    if str(representation.type) == "gep_rgb":
+        means = events.new_tensor(list(representation.normalize_mean))
+        stds = events.new_tensor(list(representation.normalize_std))
+        return ((1.0 - means) / stds).view(1, 1, -1, 1, 1)
+    return events.new_zeros((1, 1, events.shape[2], 1, 1))
+
+
+def _mask_events(
+    events: torch.Tensor,
+    mask: torch.Tensor,
+    config: Any,
+) -> torch.Tensor:
+    if not bool(mask.any()):
+        return events
+    expanded_mask = mask.view(1, -1, 1, 1, 1)
+    return torch.where(expanded_mask, _empty_event_value(events, config), events)
+
+
 def main() -> None:
     args = parse_args()
+    if args.drop_length < 0:
+        raise ValueError("--drop-length must be non-negative")
+    if args.drop_start < 0:
+        raise ValueError("--drop-start must be non-negative")
+    if args.drop_stride <= 0:
+        raise ValueError("--drop-stride must be positive")
+    if args.drop_length > args.drop_stride:
+        raise ValueError("--drop-length must not exceed --drop-stride")
+    event_drop = {
+        "length": int(args.drop_length),
+        "start": int(args.drop_start),
+        "stride": int(args.drop_stride),
+    }
     args.output_dir = args.output_dir.expanduser()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if args.context_dir is not None:
@@ -134,8 +224,8 @@ def main() -> None:
 
     config, _ = _prepare_config(args)
     print(
-        "Building validation runtime; recurrent state will remain continuous "
-        f"through {args.sequence}...",
+        f"Building validation runtime for {args.sequence}; "
+        f"state_policy={args.state_policy}, event_drop={event_drop}...",
         flush=True,
     )
     runtime = build_evaluation_runtime(config)
@@ -149,7 +239,18 @@ def main() -> None:
     )
     runtime.model.eval()
     objectives = _objective_metadata(config)
-    feature_names = [name for name, active in objectives.items() if active]
+    active_features = {
+        "Pz": objectives["z"],
+        "Ph": objectives["h"],
+    }
+    feature_names = args.feature or [
+        name for name, active in active_features.items() if active
+    ]
+    unavailable = [name for name in feature_names if not active_features[name]]
+    if unavailable:
+        raise ValueError(
+            "Requested features do not have trained objectives: " + ", ".join(unavailable)
+        )
     if not feature_names:
         raise RuntimeError("The checkpoint has no active projected objective")
 
@@ -172,6 +273,15 @@ def main() -> None:
             if _batch_bool(batch, "is_sequence_start") or args.state_policy == "clip":
                 recurrent_state = None
             events = _move(batch["events"], runtime.device)
+            event_dropped = _drop_mask(
+                sequence_offset=frame_count,
+                frame_count=int(events.shape[1]),
+                start=args.drop_start,
+                stride=args.drop_stride,
+                length=args.drop_length,
+                device=runtime.device,
+            )
+            events = _mask_events(events, event_dropped, config)
             if args.state_policy == "frame":
                 frame_outputs = [
                     runtime.model(events[:, index : index + 1], state=None)
@@ -188,11 +298,11 @@ def main() -> None:
                 recurrent_state = outputs.get("state")
             timestamps = batch["timestamps"][0].detach().cpu()
             features: dict[str, torch.Tensor] = {}
-            if objectives["z"]:
+            if "Pz" in feature_names:
                 features["Pz"] = (
                     runtime.model.project_z(outputs["z"])[0].detach().cpu().to(torch.float16)
                 )
-            if objectives["h"]:
+            if "Ph" in feature_names:
                 features["Ph"] = (
                     runtime.model.project_h(outputs["h"])[0].detach().cpu().to(torch.float16)
                 )
@@ -204,6 +314,8 @@ def main() -> None:
                 "clip_index": clip_count,
                 "checkpoint_step": int(state.global_step),
                 "state_policy": args.state_policy,
+                "event_drop": event_drop,
+                "event_dropped": event_dropped.detach().cpu(),
                 "timestamps": timestamps,
                 "frame_indices": batch["frame_indices"][0].detach().cpu(),
                 "grid_size": [grid_height, grid_width],
@@ -216,6 +328,8 @@ def main() -> None:
                 artifact_kind="model_features",
                 checkpoint_step=int(state.global_step),
                 state_policy=args.state_policy,
+                event_drop=event_drop,
+                required_features=feature_names,
             ):
                 atomic_torch_save(payload, clip_path)
 
@@ -231,9 +345,20 @@ def main() -> None:
                     "clip_index": clip_count,
                     "timestamps": timestamps,
                     "frame_indices": batch["frame_indices"][0].detach().cpu(),
-                    "event_counts": batch["event_counts"][0].detach().cpu(),
+                    "event_counts": torch.where(
+                        event_dropped.detach().cpu(),
+                        torch.zeros_like(batch["event_counts"][0]),
+                        batch["event_counts"][0],
+                    ),
+                    "original_event_counts": batch["event_counts"][0].detach().cpu(),
+                    "event_dropped": event_dropped.detach().cpu(),
+                    "event_drop": event_drop,
                     "grid_size": [grid_height, grid_width],
-                    "event_rgb": _event_preview(batch["events"], config),
+                    "event_rgb": _event_preview(events, config),
+                    "empty_event_rgb": _event_preview(
+                        _empty_event_value(events, config).expand_as(events[:, :1]),
+                        config,
+                    )[0],
                     "rgb": _rgb_preview(dataset, sequence_name, timestamps),
                     "teacher": teacher[0].detach().cpu().to(torch.float16),
                 }
@@ -242,6 +367,7 @@ def main() -> None:
                     sequence=sequence_name,
                     clip_index=clip_count,
                     artifact_kind="shared_context",
+                    event_drop=event_drop,
                 ):
                     atomic_torch_save(context, context_path)
 
@@ -263,8 +389,9 @@ def main() -> None:
         checkpoint_step=int(state.global_step),
         clip_count=clip_count,
         frame_count=frame_count,
-        feature_names=[f"P{name}" for name in feature_names],
+        feature_names=feature_names,
         state_policy=args.state_policy,
+        event_drop=event_drop,
     )
     if args.context_dir is not None:
         _write_metadata(
@@ -277,6 +404,7 @@ def main() -> None:
             frame_count=frame_count,
             feature_names=["teacher", "event_rgb", "rgb"],
             state_policy="state_independent",
+            event_drop=event_drop,
         )
     print(
         f"Exported {frame_count} frames in {clip_count} clips to {args.output_dir}",

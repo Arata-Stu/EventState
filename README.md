@@ -460,6 +460,28 @@ teacher cosineの平均・標準偏差・frame間変動量・event数三分位�
 `continuous > clip reset > frame reset`なら8 frameを越える履歴、`clip reset > frame reset`なら
 clip内の短期履歴が寄与しています。ほぼ同値ならLSTMは主に平滑化器として働いています。
 
+### Event-drop ablation
+
+再学習せず、一定間隔でevent入力をwhite-backgroundの空GEP frameへ置換し、履歴が欠落を
+補完できるかを調べます。既定ではE2について、欠落なしと1/2/4/8 frame連続欠落を64 frame
+間隔で挿入し、continuous `Ph`、毎frame resetした`Ph`、現在入力だけの`Pz`を比較します。
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash tools/visualize_event_drop_ablation.sh \
+  --run-dir outputs/v100_baselines_YYYYMMDD_HHMMSS \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --sequence interlaken_00_c \
+  --model E2
+```
+
+E1も含める場合は`--model both`を使います。`MODEL_gapN.mp4`では欠落frameを
+`Event input [DROPPED]`と表示します。各JSONは欠落中／観測中のteacher cosineと条件間差を、
+`event_drop_summary.csv`は全gap長・全条件を一覧で保存します。欠落中に
+`continuous Ph - frame reset Ph`または`continuous Ph - current Pz`が正なら、履歴による補完です。
+
 ## テスト
 
 ```bash

@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -280,6 +281,21 @@ def main() -> None:
             _feature(payload, source, source_paths[index][clip_index])
             for index, (payload, source) in enumerate(zip(source_payloads, sources))
         ]
+        drop_flags = source_payloads[0].get("event_dropped")
+        if not isinstance(drop_flags, torch.Tensor):
+            drop_flags = context.get(
+                "event_dropped",
+                torch.zeros_like(context["event_counts"], dtype=torch.bool),
+            )
+        for payload in source_payloads[1:]:
+            candidate = payload.get("event_dropped")
+            if isinstance(candidate, torch.Tensor) and not torch.equal(
+                candidate.bool(), drop_flags.bool()
+            ):
+                raise ValueError("Feature sources use different event-drop masks")
+        original_counts = context.get(
+            "original_event_counts", context["event_counts"]
+        )
         for local_index in range(time_steps):
             alignment = {
                 source.label: float(
@@ -292,7 +308,11 @@ def main() -> None:
             record = {
                 "frame": global_index,
                 "timestamp": int(context["timestamps"][local_index]),
-                "event_count": int(context["event_counts"][local_index]),
+                "event_count": 0
+                if bool(drop_flags[local_index])
+                else int(original_counts[local_index]),
+                "original_event_count": int(original_counts[local_index]),
+                "event_dropped": bool(drop_flags[local_index]),
                 **alignment,
             }
             records.append(record)
@@ -303,6 +323,21 @@ def main() -> None:
             break
     if not records:
         raise RuntimeError("The sequence export contains no frames")
+
+    drop_position = -1
+    frames_since_drop = -1
+    for record in records:
+        if record["event_dropped"]:
+            drop_position = drop_position + 1 if drop_position >= 0 else 0
+            frames_since_drop = 0
+            record["drop_position"] = drop_position
+            record["frames_since_drop"] = -1
+        else:
+            record["drop_position"] = -1
+            if frames_since_drop >= 0:
+                frames_since_drop += 1
+            record["frames_since_drop"] = frames_since_drop
+            drop_position = -1
 
     output = args.output.expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -318,8 +353,19 @@ def main() -> None:
         "high": event_order[2 * len(event_order) // 3 :],
     }
     source_summaries: dict[str, Any] = {}
+    dropped_mask = np.asarray(
+        [record["event_dropped"] for record in records], dtype=bool
+    )
     for source in sources:
         values = np.asarray([record[source.label] for record in records])
+        gap_positions = sorted(
+            {
+                int(record["drop_position"])
+                for record in records
+                if int(record["drop_position"]) >= 0
+            }
+        )
+        recovery_offsets = range(1, 9)
         source_summaries[source.label] = {
             "feature": source.feature_name,
             "mean_teacher_cosine": float(values.mean()),
@@ -332,11 +378,60 @@ def main() -> None:
                 for name, indices in event_groups.items()
                 if len(indices)
             },
+            "mean_teacher_cosine_dropped": float(values[dropped_mask].mean())
+            if dropped_mask.any()
+            else None,
+            "mean_teacher_cosine_observed": float(values[~dropped_mask].mean())
+            if (~dropped_mask).any()
+            else None,
+            "teacher_cosine_by_drop_position": {
+                str(position): float(
+                    np.mean(
+                        [
+                            values[index]
+                            for index, record in enumerate(records)
+                            if record["drop_position"] == position
+                        ]
+                    )
+                )
+                for position in gap_positions
+            },
+            "teacher_cosine_after_drop": {
+                str(offset): float(
+                    np.mean(
+                        [
+                            values[index]
+                            for index, record in enumerate(records)
+                            if record["frames_since_drop"] == offset
+                        ]
+                    )
+                )
+                for offset in recovery_offsets
+                if any(record["frames_since_drop"] == offset for record in records)
+            },
+        }
+    comparisons: dict[str, Any] = {}
+    for first, second in combinations(sources, 2):
+        first_values = np.asarray([record[first.label] for record in records])
+        second_values = np.asarray([record[second.label] for record in records])
+        difference = first_values - second_values
+        comparisons[f"{first.label} minus {second.label}"] = {
+            "mean": float(difference.mean()),
+            "dropped_frames": float(difference[dropped_mask].mean())
+            if dropped_mask.any()
+            else None,
+            "observed_frames": float(difference[~dropped_mask].mean())
+            if (~dropped_mask).any()
+            else None,
+            "positive_fraction": float((difference > 0).mean()),
         }
     summary = {
         "frame_count": len(records),
         "fps": args.fps,
+        "event_drop": _load(source_paths[0][0]).get("event_drop"),
+        "dropped_frame_count": int(dropped_mask.sum()),
         "sources": source_summaries,
+        "comparisons": comparisons,
     }
     output.with_suffix(".json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
@@ -397,11 +492,21 @@ def main() -> None:
                 canvas = Image.new(
                     "RGB", (canvas_width, canvas_height), (238, 238, 238)
                 )
+                event_image = context["event_rgb"][local_index]
+                if records[frame_index]["event_dropped"]:
+                    event_image = context.get(
+                        "empty_event_rgb", torch.full_like(event_image, 255)
+                    )
                 input_images = [
-                    _chw_image(context["event_rgb"][local_index]),
+                    _chw_image(event_image),
                     _chw_image(context["rgb"][local_index]),
                 ]
-                input_titles = ["Event input", "Aligned RGB"]
+                event_title = (
+                    "Event input [DROPPED]"
+                    if records[frame_index]["event_dropped"]
+                    else "Event input"
+                )
+                input_titles = [event_title, "Aligned RGB"]
                 for column, (image, title) in enumerate(zip(input_images, input_titles)):
                     canvas.paste(
                         _panel(
@@ -462,9 +567,11 @@ def main() -> None:
                     "RGB", (2 * args.panel_width + gap, panel_full_height), "white"
                 )
                 note_draw = ImageDraw.Draw(note)
+                event_drop = source_payloads[0].get("event_drop") or {}
                 note_draw.multiline_text(
                     (12, 14),
-                    "Continuous recurrent state\nacross the complete sequence\n\n"
+                    "State policy is shown per panel\n"
+                    f"event-drop length: {int(event_drop.get('length', 0))}\n\n"
                     f"query patch: {query_index}\n"
                     f"timestamp: {records[frame_index]['timestamp']}",
                     fill="black",
