@@ -52,6 +52,12 @@ def parse_args() -> argparse.Namespace:
         help="Zero-based, non-overlapping clip index within the selected sequence",
     )
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--event-window-fraction",
+        type=float,
+        default=1.0,
+        help="Causal RGB-interval tail fraction used by the selected event cache",
+    )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -83,6 +89,7 @@ def _prepare_config(args: argparse.Namespace) -> tuple[Any, Any]:
     if args.sequence is not None:
         _set(config, "dataset.val_sequences", [args.sequence])
     _set(config, "device", args.device)
+    _set(config, "dataset.event_window_fraction", args.event_window_fraction)
     _set(config, "training.num_workers", 0)
     _set(config, "training.pin_memory", False)
     _set(config, "training.persistent_workers", False)
@@ -232,6 +239,7 @@ def main() -> None:
         "timestamps": timestamps,
         "frame_indices": selected_batch["frame_indices"][0].detach().cpu(),
         "event_counts": selected_batch["event_counts"][0].detach().cpu(),
+        "event_window_fraction": float(args.event_window_fraction),
         "grid_size": [grid_height, grid_width],
         "input_size": [int(config.dataset.input_height), int(config.dataset.input_width)],
         "active_objectives": _objective_metadata(config),

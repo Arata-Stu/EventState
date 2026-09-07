@@ -214,6 +214,27 @@ event cacheを省略すると、学習時にraw HDF5から同じ表現を生成�
 既存outputがあるのに対応する`metadata.json`がない場合、その生成条件を確認できないため
 自動では再利用しません。内容を置き換えてよいことを確認して`--overwrite`を指定してください。
 
+### 短時間event蓄積cache
+
+再学習なしの疎event評価では、各RGB intervalの末尾50%、25%、12.5%だけを使ったGEP cacheを
+raw eventから生成します。windowは常に現在のRGB timestampで終わるため因果的です。既存cacheとは
+別directoryへ保存され、中断後に同じcommandを実行すると既存frameを検証して続きから再開します。
+
+```bash
+bash tools/prepare_dsec_event_windows.sh \
+  --root /path/to/DSEC \
+  --output-root /path/to/DSEC_cache/events/sparse_windows \
+  --split train \
+  --sequences \
+    interlaken_00_c interlaken_00_d interlaken_00_e interlaken_00_f \
+    interlaken_00_g zurich_city_11_a zurich_city_11_b zurich_city_11_c
+```
+
+生成先は`gep_rgb_tail_0p5`、`gep_rgb_tail_0p25`、`gep_rgb_tail_0p125`です。
+各frameには短縮前のraw event数、短縮後かつrectify前のevent数、実際に表現へ入ったrectify後の
+event数を記録します。単一条件だけなら`prepare_dsec.py --event-window-fraction 0.25`も使えます。
+既存GEP画像の値を薄める処理ではなく、短縮したtimestamp区間からpercentile正規化をやり直します。
+
 ## 2. Frozen teacher featureのcache
 
 ```bash

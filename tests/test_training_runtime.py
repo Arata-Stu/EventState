@@ -262,6 +262,13 @@ def test_event_dropout_must_fit_inside_training_clip() -> None:
         validate_config(config)
 
 
+def test_event_window_fraction_must_be_a_valid_causal_fraction() -> None:
+    config = _valid_config()
+    config["dataset"]["event_window_fraction"] = 0.0
+    with pytest.raises(ValueError, match="event_window_fraction"):
+        validate_config(config)
+
+
 def test_voxel_grid_requires_matching_event_encoder_channels() -> None:
     config = _valid_config()
     config["dataset"]["representation"]["type"] = "voxel_grid"

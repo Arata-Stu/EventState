@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -99,6 +100,9 @@ def validate_config(config: Any) -> None:
         raise ValueError("Phase 0/1 alignment requires DINOv3 x_norm_patchtokens")
     if str(_value(dataset, "event_window", "rgb_interval")) != "rgb_interval":
         raise ValueError("Phase 0/1 requires event_window=rgb_interval")
+    event_window_fraction = float(_value(dataset, "event_window_fraction", 1.0))
+    if not math.isfinite(event_window_fraction) or not 0.0 < event_window_fraction <= 1.0:
+        raise ValueError("dataset.event_window_fraction must be finite and in (0,1]")
     if not bool(_value(dataset, "rectify_events", True)):
         raise ValueError("Phase 0/1 requires rectified events for RGB patch alignment")
     if str(_value(dataset, "image_directory", "aligned_event")) == "rectified":

@@ -280,6 +280,9 @@ def _dataset_options(
         "image_directory": str(_value(dataset_config, "image_directory", "aligned_event")),
         "rectify_events": bool(_value(dataset_config, "rectify_events", True)),
         "event_cache_dir": _value(dataset_config, "event_cache_dir"),
+        "event_window_fraction": float(
+            _value(dataset_config, "event_window_fraction", 1.0)
+        ),
         "feature_cache_dir": (
             _value(teacher_config, "cache_dir") if cache_features else None
         ),

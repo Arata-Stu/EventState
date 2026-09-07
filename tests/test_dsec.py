@@ -15,7 +15,12 @@ from event_state.data.cache_metadata import (
     frame_manifest_sha256,
     success_marker_payload,
 )
-from event_state.data.dsec import DSECEventReader, DSECSequenceDataset
+from event_state.data.dsec import (
+    DSECEventReader,
+    DSECSequenceDataset,
+    event_window_contract,
+    event_window_start_timestamp,
+)
 from event_state.data.event_representation import GEPEventFrame
 from event_state.data.transforms import PairedSequenceTransform
 
@@ -151,6 +156,35 @@ def test_timestamp_alignment_includes_exact_end_and_handles_stream_edges(
     assert reader.slice(13_000, 14_000)["t"].size == 0
 
 
+def test_causal_tail_event_window_uses_the_end_of_rgb_interval() -> None:
+    assert event_window_start_timestamp(10_000, 11_000, 1.0) == 10_000
+    assert event_window_start_timestamp(10_000, 11_000, 0.5) == 10_500
+    assert event_window_start_timestamp(10_000, 11_001, 0.25) == 10_750
+    assert event_window_contract(0.25)["event_window"] == (
+        "rgb_interval_tail_fraction"
+    )
+
+
+def test_event_reader_counts_without_loading_event_payload(tmp_path: Path) -> None:
+    _write_sequence(tmp_path, "zurich_city_00_a")
+    event_path = (
+        tmp_path
+        / "train_events"
+        / "zurich_city_00_a"
+        / "events"
+        / "left"
+    )
+    reader = DSECEventReader(
+        event_path / "events.h5",
+        rectify_map_path=event_path / "rectify_map.h5",
+        output_height=4,
+        output_width=5,
+    )
+
+    assert reader.count(10_000, 11_000) == 3
+    assert reader.count(10_500, 11_000) == 2
+
+
 def test_rectification_quantizes_before_bounds_and_event_count(tmp_path: Path) -> None:
     _write_sequence(tmp_path, "zurich_city_00_a")
     event_path = (
@@ -195,6 +229,24 @@ def test_sequence_dataset_never_crosses_sequence_boundary(tmp_path: Path) -> Non
         assert sample["images"].shape == (2, 3, 4, 5)
         assert torch.all(torch.diff(sample["frame_indices"]) == 1)
         assert sample["sequence_name"] in {"sequence_a", "sequence_b"}
+
+
+def test_sequence_dataset_can_use_causal_tail_event_windows(tmp_path: Path) -> None:
+    _write_sequence(tmp_path, "sequence_a")
+    dataset = DSECSequenceDataset(
+        tmp_path,
+        split="train",
+        sequences=["sequence_a"],
+        sequence_length=2,
+        clip_stride=2,
+        image_directory="aligned_event",
+        rectify_events=True,
+        event_representation=GEPEventFrame(height=4, width=5),
+        event_window_fraction=0.5,
+        transform=PairedSequenceTransform(height=4, width=5),
+    )
+
+    assert dataset[0]["event_counts"].tolist() == [2, 1]
 
 
 def test_evaluation_clips_cover_each_frame_once_with_boundary_flags(

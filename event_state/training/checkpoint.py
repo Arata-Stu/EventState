@@ -29,6 +29,7 @@ _EVALUATION_DATASET_RUNTIME_FIELDS = {
     "train_sequences",
     "val_sequences",
     "augmentation",
+    "event_window_fraction",
 }
 _TEACHER_RUNTIME_FIELDS = {"cache_dir"}
 _TRAINING_RUNTIME_FIELDS = {

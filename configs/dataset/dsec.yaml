@@ -15,6 +15,7 @@ clip_stride: 1
 # DSEC's RGB camera is approximately 20 Hz. Each event tensor uses
 # (previous RGB timestamp, current RGB timestamp].
 event_window: rgb_interval
+event_window_fraction: 1.0
 sensor_height: 480
 sensor_width: 640
 rectify_events: true

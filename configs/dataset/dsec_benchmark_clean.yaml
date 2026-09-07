@@ -1,5 +1,7 @@
 name: dsec
 root: null
+event_window: rgb_interval
+event_window_fraction: 1.0
 
 # Benchmark-clean pretraining protocol. Both subsets come only from the
 # canonical 41 DSEC-Detection training sequences. The two held-out recording

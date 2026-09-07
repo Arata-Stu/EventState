@@ -40,6 +40,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher-checkpoint", type=Path, default=None)
     parser.add_argument("--sequence", required=True)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--event-window-fraction",
+        type=float,
+        default=1.0,
+        help="Causal RGB-interval tail fraction used by the selected event cache",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--state-policy",
@@ -98,6 +104,7 @@ def _valid_existing(
     checkpoint_step: int | None = None,
     state_policy: str | None = None,
     event_drop: dict[str, int] | None = None,
+    event_window_fraction: float | None = None,
     required_features: list[str] | None = None,
 ) -> bool:
     if not path.is_file():
@@ -119,6 +126,11 @@ def _valid_existing(
             )
             and (state_policy is None or value.get("state_policy") == state_policy)
             and (event_drop is None or value.get("event_drop") == event_drop)
+            and (
+                event_window_fraction is None
+                or float(value.get("event_window_fraction", -1.0))
+                == event_window_fraction
+            )
             and (
                 required_features is None
                 or (
@@ -143,6 +155,7 @@ def _write_metadata(
     feature_names: list[str],
     state_policy: str,
     event_drop: dict[str, int],
+    event_window_fraction: float,
 ) -> None:
     metadata = {
         "format_version": SEQUENCE_FEATURE_FORMAT_VERSION,
@@ -155,6 +168,7 @@ def _write_metadata(
         "feature_names": feature_names,
         "state_policy": state_policy,
         "event_drop": event_drop,
+        "event_window_fraction": event_window_fraction,
     }
     (directory / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
@@ -315,6 +329,7 @@ def main() -> None:
                 "checkpoint_step": int(state.global_step),
                 "state_policy": args.state_policy,
                 "event_drop": event_drop,
+                "event_window_fraction": float(args.event_window_fraction),
                 "event_dropped": event_dropped.detach().cpu(),
                 "timestamps": timestamps,
                 "frame_indices": batch["frame_indices"][0].detach().cpu(),
@@ -329,6 +344,7 @@ def main() -> None:
                 checkpoint_step=int(state.global_step),
                 state_policy=args.state_policy,
                 event_drop=event_drop,
+                event_window_fraction=float(args.event_window_fraction),
                 required_features=feature_names,
             ):
                 atomic_torch_save(payload, clip_path)
@@ -353,6 +369,7 @@ def main() -> None:
                     "original_event_counts": batch["event_counts"][0].detach().cpu(),
                     "event_dropped": event_dropped.detach().cpu(),
                     "event_drop": event_drop,
+                    "event_window_fraction": float(args.event_window_fraction),
                     "grid_size": [grid_height, grid_width],
                     "event_rgb": _event_preview(events, config),
                     "empty_event_rgb": _event_preview(
@@ -368,6 +385,7 @@ def main() -> None:
                     clip_index=clip_count,
                     artifact_kind="shared_context",
                     event_drop=event_drop,
+                    event_window_fraction=float(args.event_window_fraction),
                 ):
                     atomic_torch_save(context, context_path)
 
@@ -392,6 +410,7 @@ def main() -> None:
         feature_names=feature_names,
         state_policy=args.state_policy,
         event_drop=event_drop,
+        event_window_fraction=float(args.event_window_fraction),
     )
     if args.context_dir is not None:
         _write_metadata(
@@ -405,6 +424,7 @@ def main() -> None:
             feature_names=["teacher", "event_rgb", "rgb"],
             state_policy="state_independent",
             event_drop=event_drop,
+            event_window_fraction=float(args.event_window_fraction),
         )
     print(
         f"Exported {frame_count} frames in {clip_count} clips to {args.output_dir}",

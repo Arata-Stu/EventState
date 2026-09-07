@@ -33,6 +33,56 @@ from .transforms import PairedSequenceTransform
 
 EVENT_WINDOW_NAME = "rgb_interval"
 EVENT_WINDOW_BOUNDARY = "previous_timestamp < event_timestamp <= timestamp"
+TAIL_EVENT_WINDOW_NAME = "rgb_interval_tail_fraction"
+TAIL_EVENT_WINDOW_BOUNDARY = (
+    "window_start_timestamp < event_timestamp <= timestamp"
+)
+
+
+def normalize_event_window_fraction(value: float) -> float:
+    """Validate and normalize the causal RGB-interval tail fraction."""
+
+    fraction = float(value)
+    if not math.isfinite(fraction) or not 0.0 < fraction <= 1.0:
+        raise ValueError("event_window_fraction must be finite and in (0, 1]")
+    return fraction
+
+
+def event_window_start_timestamp(
+    previous_timestamp: int,
+    timestamp: int,
+    fraction: float,
+) -> int:
+    """Return the exclusive start of a causal tail window ending at timestamp."""
+
+    fraction = normalize_event_window_fraction(fraction)
+    interval = int(timestamp) - int(previous_timestamp)
+    if interval <= 0:
+        raise ValueError("timestamp must be greater than previous_timestamp")
+    if fraction == 1.0:
+        return int(previous_timestamp)
+    retained_duration = max(1, math.ceil(interval * fraction))
+    return int(timestamp) - retained_duration
+
+
+def event_window_contract(fraction: float) -> dict[str, Any]:
+    """Return manifest fields identifying the exact event accumulation window."""
+
+    fraction = normalize_event_window_fraction(fraction)
+    if fraction == 1.0:
+        return {
+            "event_window": EVENT_WINDOW_NAME,
+            "event_window_boundary": EVENT_WINDOW_BOUNDARY,
+        }
+    return {
+        "event_window": TAIL_EVENT_WINDOW_NAME,
+        "event_window_boundary": TAIL_EVENT_WINDOW_BOUNDARY,
+        "event_window_fraction": fraction,
+        "event_window_start_rule": (
+            "timestamp - ceil((timestamp - previous_timestamp) * "
+            "event_window_fraction)"
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -84,12 +134,15 @@ def validate_event_cache_payload(
     rectified: bool,
     input_fingerprint_digest: str,
     manifest_digest: str,
+    event_window_fraction: float = 1.0,
 ) -> tuple[Tensor, int]:
     """Validate one event-cache item against its frame and sequence manifest."""
 
     path = Path(cache_path)
+    event_window_fraction = normalize_event_window_fraction(event_window_fraction)
     if not isinstance(payload, dict):
         raise TypeError(f"Event cache payload must be a mapping: {path}")
+    window_contract = event_window_contract(event_window_fraction)
     expected_fields = {
         "format_version": EVENT_CACHE_FORMAT_VERSION,
         "dataset": "DSEC",
@@ -101,11 +154,23 @@ def validate_event_cache_payload(
         "height": int(height),
         "width": int(width),
         "representation": dict(representation),
-        "event_window_boundary": EVENT_WINDOW_BOUNDARY,
+        "event_window_boundary": window_contract["event_window_boundary"],
         "rectified": bool(rectified),
         "input_fingerprint_digest": input_fingerprint_digest,
         "manifest_digest": manifest_digest,
     }
+    if event_window_fraction != 1.0:
+        expected_fields.update(
+            {
+                "event_window": window_contract["event_window"],
+                "event_window_fraction": float(event_window_fraction),
+                "window_start_timestamp": event_window_start_timestamp(
+                    previous_timestamp,
+                    timestamp,
+                    event_window_fraction,
+                ),
+            }
+        )
     for field, expected in expected_fields.items():
         if payload.get(field) != expected:
             raise ValueError(
@@ -120,6 +185,19 @@ def validate_event_cache_payload(
         or event_count < 0
     ):
         raise ValueError(f"Event cache event_count must be a non-negative integer: {path}")
+    if event_window_fraction != 1.0:
+        selected_count = payload.get("selected_event_count_before_rectification")
+        source_count = payload.get("source_event_count")
+        for name, value in (
+            ("selected_event_count_before_rectification", selected_count),
+            ("source_event_count", source_count),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(
+                    f"Event cache {name} must be a non-negative integer: {path}"
+                )
+        if event_count > selected_count or selected_count > source_count:
+            raise ValueError(f"Event cache count provenance is inconsistent: {path}")
     tensor = payload.get("events")
     if not isinstance(tensor, Tensor):
         raise TypeError(f"Event cache does not contain an events tensor: {path}")
@@ -219,8 +297,12 @@ class DSECEventReader:
 
         start_ms = max(0, math.floor(local_start / 1000))
         end_ms = max(0, math.floor(local_end / 1000) + 1)
-        start_index = int(ms_to_idx[start_ms]) if start_ms < len(ms_to_idx) else len(timestamps)
-        end_index = int(ms_to_idx[end_ms]) if end_ms < len(ms_to_idx) else len(timestamps)
+        start_index = (
+            int(ms_to_idx[start_ms]) if start_ms < len(ms_to_idx) else len(timestamps)
+        )
+        end_index = (
+            int(ms_to_idx[end_ms]) if end_ms < len(ms_to_idx) else len(timestamps)
+        )
         if start_index >= end_index:
             return self._empty()
 
@@ -241,6 +323,27 @@ class DSECEventReader:
         if self.rectify_map_path is not None:
             result = self._rectify(result)
         return result
+
+    def count(self, start_time: int, end_time: int) -> int:
+        """Count raw events in ``start_time < t <= end_time`` without loading x/y/p."""
+
+        if end_time <= start_time:
+            raise ValueError("end_time must be greater than start_time")
+        h5_file = self._open()
+        local_start = int(start_time) - self.timestamp_offset
+        local_end = int(end_time) - self.timestamp_offset
+        timestamps = h5_file["events/t"]
+        ms_to_idx = h5_file["ms_to_idx"]
+        start_ms = max(0, math.floor(local_start / 1000))
+        end_ms = max(0, math.floor(local_end / 1000) + 1)
+        start_index = int(ms_to_idx[start_ms]) if start_ms < len(ms_to_idx) else len(timestamps)
+        end_index = int(ms_to_idx[end_ms]) if end_ms < len(ms_to_idx) else len(timestamps)
+        if start_index >= end_index:
+            return 0
+        local_t = np.asarray(timestamps[start_index:end_index], dtype=np.int64)
+        relative_start = int(np.searchsorted(local_t, local_start, side="right"))
+        relative_end = int(np.searchsorted(local_t, local_end, side="right"))
+        return max(0, relative_end - relative_start)
 
     def _rectify(self, events: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         if self._rectify_map is None:
@@ -325,6 +428,7 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         feature_cache_dir: str | Path | None = None,
         load_events: bool = True,
         load_images: bool = True,
+        event_window_fraction: float = 1.0,
     ) -> None:
         if sequence_length <= 0:
             raise ValueError("sequence_length must be positive")
@@ -357,6 +461,9 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         )
         self.load_events = load_events
         self.load_images = load_images
+        self.event_window_fraction = normalize_event_window_fraction(
+            event_window_fraction
+        )
         self.sequence_names = discover_dsec_sequences(self.root, split, sequences)
         self._readers: dict[str, DSECEventReader] = {}
         self._frames_by_sequence: dict[str, list[DSECFrame]] = {}
@@ -443,8 +550,6 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
             ),
             "height": int(self.event_representation.height),
             "width": int(self.event_representation.width),
-            "event_window": EVENT_WINDOW_NAME,
-            "event_window_boundary": EVENT_WINDOW_BOUNDARY,
             "first_frame_cached": False,
             "frame_count": len(frames) - 1,
             "timestamp_manifest_sha256": frame_manifest_sha256(
@@ -452,6 +557,7 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
                 for frame in frames[1:]
             ),
         }
+        expected_common.update(event_window_contract(self.event_window_fraction))
         for field, expected in expected_common.items():
             if metadata.get(field) != expected:
                 raise ValueError(
@@ -881,15 +987,18 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
                 rectified=self.rectify_events,
                 input_fingerprint_digest=manifest["input_fingerprint"]["digest"],
                 manifest_digest=canonical_json_sha256(manifest),
+                event_window_fraction=self.event_window_fraction,
             )
 
-        events = self._reader(record.sequence_name).slice(
+        window_start = event_window_start_timestamp(
             record.previous_timestamp,
             record.timestamp,
+            self.event_window_fraction,
         )
+        events = self._reader(record.sequence_name).slice(window_start, record.timestamp)
         tensor = self.event_representation(
             *(torch.from_numpy(events[key]) for key in ("x", "y", "t", "p")),
-            start_time=record.previous_timestamp,
+            start_time=window_start,
             end_time=record.timestamp,
         )
         return tensor, len(events["t"])

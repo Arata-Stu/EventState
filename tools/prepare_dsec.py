@@ -37,11 +37,11 @@ from event_state.data.cache_metadata import (  # noqa: E402
     success_marker_payload,
 )
 from event_state.data.dsec import (  # noqa: E402
-    EVENT_WINDOW_BOUNDARY,
-    EVENT_WINDOW_NAME,
     DSECEventReader,
     discover_dsec_sequences,
     event_representation_metadata,
+    event_window_contract,
+    event_window_start_timestamp,
     validate_event_cache_payload,
 )
 from event_state.data.event_representation import EventVoxelizer, GEPEventFrame  # noqa: E402
@@ -85,6 +85,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Event representation to cache (default: GEP-compatible 3-channel RGB)",
     )
     parser.add_argument("--percentile", type=float, default=90.0)
+    parser.add_argument(
+        "--event-window-fraction",
+        type=float,
+        default=1.0,
+        help=(
+            "Causal tail fraction of each RGB interval used for events; "
+            "for example 0.25 keeps only the final quarter (default: 1.0)"
+        ),
+    )
     parser.add_argument("--event-bins", type=int, default=10)
     parser.add_argument(
         "--voxel-normalization",
@@ -126,6 +135,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 percentile=args.percentile,
                 event_bins=args.event_bins,
                 voxel_normalization=args.voxel_normalization,
+                event_window_fraction=args.event_window_fraction,
                 rectify_events=args.rectify_events,
                 overwrite=args.overwrite,
             )
@@ -150,6 +160,7 @@ def prepare_sequence(
     percentile: float,
     event_bins: int,
     voxel_normalization: str,
+    event_window_fraction: float,
     rectify_events: bool,
     overwrite: bool,
 ) -> dict[str, int]:
@@ -159,6 +170,7 @@ def prepare_sequence(
         percentile=percentile,
         event_bins=event_bins,
         voxel_normalization=voxel_normalization,
+        event_window_fraction=event_window_fraction,
     )
     require_opencv()
     image_sequence_root = root / f"{split}_images" / sequence_name / "images"
@@ -300,6 +312,7 @@ def prepare_sequence(
         for frame_index, (_, timestamp) in enumerate(frame_pairs)
         if frame_index > 0
     ]
+    window_contract = event_window_contract(event_window_fraction)
     cache_metadata = {
         "format_version": EVENT_CACHE_FORMAT_VERSION,
         "dataset": "DSEC",
@@ -311,14 +324,13 @@ def prepare_sequence(
         ),
         "height": alignment.height,
         "width": alignment.width,
-        "event_window": EVENT_WINDOW_NAME,
-        "event_window_boundary": EVENT_WINDOW_BOUNDARY,
         "first_frame_cached": False,
         "frame_count": len(event_frames),
         "timestamp_manifest_sha256": frame_manifest_sha256(event_frames),
         "input_fingerprint": input_fingerprint,
         "representation": representation_metadata,
     }
+    cache_metadata.update(window_contract)
     event_marker = sequence_cache_dir / SUCCESS_MARKER_NAME
     if overwrite:
         event_marker.unlink(missing_ok=True)
@@ -368,13 +380,24 @@ def prepare_sequence(
                     rectified=rectify_events,
                     input_fingerprint_digest=input_fingerprint["digest"],
                     manifest_digest=canonical_json_sha256(cache_metadata),
+                    event_window_fraction=event_window_fraction,
                 )
                 counts["events_skipped"] += 1
                 continue
-            events = reader.slice(previous_timestamp, timestamp)
+            window_start = event_window_start_timestamp(
+                previous_timestamp,
+                timestamp,
+                event_window_fraction,
+            )
+            selected_event_count = 0
+            source_event_count = 0
+            if event_window_fraction != 1.0:
+                selected_event_count = reader.count(window_start, timestamp)
+                source_event_count = reader.count(previous_timestamp, timestamp)
+            events = reader.slice(window_start, timestamp)
             tensor = representation(
                 *(torch.from_numpy(events[key]) for key in ("x", "y", "t", "p")),
-                start_time=previous_timestamp,
+                start_time=window_start,
                 end_time=timestamp,
             )
             payload = {
@@ -390,11 +413,23 @@ def prepare_sequence(
                 "height": alignment.height,
                 "width": alignment.width,
                 "representation": representation_metadata,
-                "event_window_boundary": EVENT_WINDOW_BOUNDARY,
+                "event_window_boundary": window_contract["event_window_boundary"],
                 "rectified": rectify_events,
                 "input_fingerprint_digest": input_fingerprint["digest"],
                 "manifest_digest": canonical_json_sha256(cache_metadata),
             }
+            if event_window_fraction != 1.0:
+                payload.update(
+                    {
+                        "event_window": window_contract["event_window"],
+                        "event_window_fraction": float(event_window_fraction),
+                        "window_start_timestamp": int(window_start),
+                        "selected_event_count_before_rectification": int(
+                            selected_event_count
+                        ),
+                        "source_event_count": int(source_event_count),
+                    }
+                )
             atomic_torch_save(output_path, payload, overwrite=overwrite)
             counts["events_written"] += 1
     finally:
@@ -423,6 +458,7 @@ def validate_args(args: argparse.Namespace) -> None:
         percentile=args.percentile,
         event_bins=args.event_bins,
         voxel_normalization=args.voxel_normalization,
+        event_window_fraction=args.event_window_fraction,
     )
 
 
@@ -433,11 +469,13 @@ def validate_preparation_options(
     percentile: float,
     event_bins: int,
     voxel_normalization: str,
+    event_window_fraction: float,
 ) -> None:
     if not 0 < percentile <= 100:
         raise ValueError("percentile must be in (0, 100]")
     if event_bins <= 0:
         raise ValueError("event bins must be positive")
+    event_window_contract(event_window_fraction)
     if representation_name not in {"gep_rgb", "voxel_grid"}:
         raise ValueError(f"Unknown event representation: {representation_name}")
     if voxel_normalization not in {"none", "nonzero_standardize", "log1p"}:
