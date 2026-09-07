@@ -27,11 +27,13 @@ Usage:
     --event-cache-dir PATH \
     --teacher-cache-dir PATH \
     --teacher-checkpoint PATH \
-    [--sequence NAME] [--model E1|E2|both] [--drop-start N] [--drop-stride N] \
+    [--sequence NAME] [--model E1|E2|E3|E4|both|dropout] \
+    [--drop-start N] [--drop-stride N] \
     [--device DEVICE] [--fps N] [--output-dir PATH] [--overwrite]
 
 The default E2 run compares continuous Ph, frame-reset Ph, and continuous Pz
 under repeated 0/1/2/4/8-frame event gaps. Use --model both to include E1.
+Use --model E4 (or dropout for E3+E4) to evaluate event-drop-trained runs.
 Every condition runs sequentially on one GPU and can resume artifact export.
 EOF
 }
@@ -71,7 +73,10 @@ done
 [ -d "$EVENT_CACHE_DIR" ] || fail "event cache not found: $EVENT_CACHE_DIR"
 [ -d "$TEACHER_CACHE_DIR" ] || fail "teacher cache not found: $TEACHER_CACHE_DIR"
 [ -f "$TEACHER_CHECKPOINT" ] || fail "teacher checkpoint not found: $TEACHER_CHECKPOINT"
-case "$MODEL_SELECTION" in E1|E2|both) ;; *) fail "--model must be E1, E2, or both" ;; esac
+case "$MODEL_SELECTION" in
+  E1|E2|E3|E4|both|dropout) ;;
+  *) fail "--model must be E1, E2, E3, E4, both, or dropout" ;;
+esac
 case "$DROP_START" in *[!0-9]*|'') fail "--drop-start must be non-negative" ;; esac
 case "$DROP_STRIDE" in *[!0-9]*|'') fail "--drop-stride must be positive" ;; esac
 [ "$DROP_STRIDE" -gt 0 ] || fail "--drop-stride must be positive"
@@ -88,6 +93,8 @@ cd "$PROJECT_ROOT"
 
 if [ "$MODEL_SELECTION" = "both" ]; then
   MODELS=(E1 E2)
+elif [ "$MODEL_SELECTION" = "dropout" ]; then
+  MODELS=(E3 E4)
 else
   MODELS=("$MODEL_SELECTION")
 fi
@@ -103,6 +110,8 @@ for GAP in "${GAPS[@]}"; do
     case "$MODEL" in
       E1) NAME=e1_h_distill_lstm ;;
       E2) NAME=e2_dual_distill_lstm ;;
+      E3) NAME=e3_h_distill_lstm_event_dropout ;;
+      E4) NAME=e4_dual_distill_lstm_event_dropout ;;
     esac
     CHECKPOINT="$RUN_DIR/$NAME/checkpoints/best.pt"
     [ -f "$CHECKPOINT" ] || fail "best checkpoint not found: $CHECKPOINT"
@@ -112,7 +121,7 @@ for GAP in "${GAPS[@]}"; do
       if [ "$GAP" -eq 0 ] && [ "$MODEL_INDEX" -eq 0 ] && [ "$POLICY" = "continuous" ]; then
         EXTRA_ARGS+=(--context-dir "$CONTEXT_DIR")
       fi
-      if [ "$POLICY" = "frame" ] || [ "$MODEL" = "E1" ]; then
+      if [ "$POLICY" = "frame" ] || [ "$MODEL" = "E1" ] || [ "$MODEL" = "E3" ]; then
         EXTRA_ARGS+=(--feature Ph)
       fi
       if [ "$OVERWRITE" -eq 1 ]; then
@@ -140,7 +149,7 @@ for GAP in "${GAPS[@]}"; do
       --source "continuous Ph:$OUTPUT_DIR/${MODEL}_gap${GAP}_continuous:Ph"
       --source "frame reset Ph:$OUTPUT_DIR/${MODEL}_gap${GAP}_frame:Ph"
     )
-    if [ "$MODEL" = "E2" ]; then
+    if [ "$MODEL" = "E2" ] || [ "$MODEL" = "E4" ]; then
       RENDER_ARGS+=(
         --source "current Pz:$OUTPUT_DIR/${MODEL}_gap${GAP}_continuous:Pz"
       )

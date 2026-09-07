@@ -62,6 +62,27 @@ class RecordingTeacher(nn.Module):
         return features
 
 
+class RecordingDistillationLoss(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mask: torch.Tensor | None = None
+
+    def components(
+        self,
+        prediction: torch.Tensor,
+        target: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        self.mask = None if mask is None else mask.detach().clone()
+        values = (prediction - target).square().mean(dim=-1)
+        if mask is None:
+            loss = values.mean()
+        else:
+            weights = torch.broadcast_to(mask, values.shape).to(values.dtype)
+            loss = (values * weights).sum() / weights.sum()
+        return {"loss": loss, "cosine": loss, "mse": loss}
+
+
 def _trainer_config(*, h_enabled: bool = True, z_type: str = "none") -> dict:
     return {
         "training": {"precision": "fp32"},
@@ -226,6 +247,21 @@ def test_cached_teacher_requires_cache_directory() -> None:
         validate_config(config)
 
 
+def test_event_dropout_must_fit_inside_training_clip() -> None:
+    config = _valid_config()
+    config["training"]["event_dropout"] = {
+        "enabled": True,
+        "probability": 0.5,
+        "lengths": [4],
+        "min_context_frames": 3,
+        "min_recovery_frames": 2,
+        "h_dropped_weight": 1.0,
+        "mask_z_loss": True,
+    }
+    with pytest.raises(ValueError, match="do not fit"):
+        validate_config(config)
+
+
 def test_voxel_grid_requires_matching_event_encoder_channels() -> None:
     config = _valid_config()
     config["dataset"]["representation"]["type"] = "voxel_grid"
@@ -270,6 +306,38 @@ def test_disabled_distillation_projector_stays_out_of_training_graph(
             "z_projected_frame_cosine",
             "h_projected_frame_cosine",
         )
+    )
+
+
+def test_event_dropout_keeps_h_loss_and_masks_z_loss() -> None:
+    model = TinySequenceModel()
+    config = _trainer_config(h_enabled=True, z_type="direct_dino")
+    config["training"]["event_dropout"] = {
+        "enabled": True,
+        "h_dropped_weight": 2.0,
+        "mask_z_loss": True,
+    }
+    trainer = _make_trainer(model, config)
+    h_loss = RecordingDistillationLoss()
+    z_loss = RecordingDistillationLoss()
+    trainer.h_distillation_loss = h_loss
+    trainer.z_distillation_loss = z_loss
+    batch = {
+        "events": torch.randn(1, 5, 3, 2, 2),
+        "teacher_features": torch.randn(1, 5, 1, 4),
+    }
+    dropped = torch.tensor([[False, False, True, True, False]])
+
+    result = trainer._forward_objectives(batch, event_dropout_mask=dropped)
+    result["loss"].backward()
+
+    assert torch.equal(
+        h_loss.mask,
+        torch.tensor([[[1.0], [1.0], [2.0], [2.0], [1.0]]]),
+    )
+    assert torch.equal(
+        z_loss.mask,
+        torch.tensor([[[True], [True], [False], [False], [True]]]),
     )
 
 

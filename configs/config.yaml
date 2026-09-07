@@ -48,6 +48,16 @@ training:
   checkpoint_every: 1000
   validation_batches: 100
   resume: null
+  event_dropout:
+    enabled: false
+    probability: 0.5
+    lengths: [1, 2, 4]
+    min_context_frames: 2
+    min_recovery_frames: 1
+    h_dropped_weight: 1.0
+    # Direct z-to-teacher reconstruction is undefined when the current event
+    # observation is deliberately removed. h remains supervised on these frames.
+    mask_z_loss: true
 
 evaluation:
   checkpoint: null

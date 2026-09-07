@@ -482,6 +482,31 @@ E1も含める場合は`--model both`を使います。`MODEL_gapN.mp4`では欠
 `event_drop_summary.csv`は全gap長・全条件を一覧で保存します。欠落中に
 `continuous Ph - frame reset Ph`または`continuous Ph - current Pz`が正なら、履歴による補完です。
 
+### Event-drop学習
+
+E3/E4では学習clipの50%に1/2/4 frameの連続event欠落を1区間挿入します。先頭2 frameを
+context、末尾1 frameをrecoveryとして必ず観測し、欠落中も`h`は同時刻DINOv3 tokenで
+教師します。E4の`z` lossは欠落frameだけmaskし、空入力から平均的な教師特徴を学ぶことを
+防ぎます。validationにはdropoutを適用しません。
+
+```bash
+bash tools/run_v100_event_dropout.sh \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --batch-size 8 \
+  --max-steps 2000
+```
+
+- GPU 0: E3（E1 + event dropout）
+- GPU 1: E4（E2 + event dropout、欠落中の`z` lossをmask）
+
+通常条件のE1/E2と公平に比較するため、既存checkpointからfine-tuneせず同じDINOv3初期値から
+学習します。学習ログには`event_dropout_fraction`、欠落／観測frame別の`h` cosineも出力します。
+学習後は、生成された`v100_event_dropout_*`を`--run-dir`に指定し、`--model E4`または
+`--model dropout`で上記のevent-drop ablationを実行できます。
+
 ## テスト
 
 ```bash

@@ -15,6 +15,7 @@ from torch import Tensor, nn
 
 from .checkpoint import load_checkpoint, save_checkpoint
 from .data import CyclingDataIterator
+from .event_dropout import apply_temporal_event_dropout
 from .logging import TrainingLogger
 from .metrics import EventCountAnalysis, WeightedMean, frame_cosine, global_gradient_norm
 from .optim import WarmupCosineScheduler
@@ -184,18 +185,55 @@ class EventStateTrainer:
 
     @staticmethod
     def _loss_components(
-        loss_module: nn.Module, prediction: Tensor, target: Tensor
+        loss_module: nn.Module,
+        prediction: Tensor,
+        target: Tensor,
+        mask: Tensor | None = None,
     ) -> dict[str, Tensor]:
         prediction = prediction.float()
         target = target.detach().float()
         if hasattr(loss_module, "components"):
-            components = loss_module.components(prediction, target)
+            components = loss_module.components(prediction, target, mask=mask)
             if not isinstance(components, Mapping) or "loss" not in components:
                 raise TypeError(
                     "DistillationLoss.components() must return a mapping containing loss"
                 )
             return dict(components)
+        if mask is not None:
+            raise TypeError("Masked training requires a loss module with components()")
         return {"loss": loss_module(prediction, target)}
+
+    def _apply_training_event_dropout(
+        self, batch: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], Tensor | None]:
+        dropout_config = _value(self.training_config, "event_dropout", {})
+        if not bool(_value(dropout_config, "enabled", False)):
+            return dict(batch), None
+        events = batch.get("events")
+        if not isinstance(events, Tensor) or events.ndim != 5:
+            raise ValueError("events must have shape [B,T,C,H,W]")
+        representation = _value(_value(self.config, "dataset"), "representation")
+        representation_type = str(_value(representation, "type", "gep_rgb"))
+        means = _value(representation, "normalize_mean", None)
+        stds = _value(representation, "normalize_std", None)
+        dropped_events, mask = apply_temporal_event_dropout(
+            events,
+            probability=float(_value(dropout_config, "probability", 0.5)),
+            lengths=tuple(
+                int(value) for value in _value(dropout_config, "lengths", (1,))
+            ),
+            min_context_frames=int(_value(dropout_config, "min_context_frames", 1)),
+            min_recovery_frames=int(_value(dropout_config, "min_recovery_frames", 1)),
+            representation_type=representation_type,
+            normalize_mean=(
+                None if means is None else tuple(float(value) for value in means)
+            ),
+            normalize_std=None if stds is None else tuple(float(value) for value in stds),
+        )
+        result = dict(batch)
+        result["events"] = dropped_events
+        result["event_dropout_mask"] = mask
+        return result, mask
 
     @staticmethod
     def _detach_state(state: Any) -> Any:
@@ -243,6 +281,7 @@ class EventStateTrainer:
         batch: Mapping[str, Any],
         *,
         state: Any = None,
+        event_dropout_mask: Tensor | None = None,
     ) -> dict[str, Any]:
         events = batch.get("events")
         if not isinstance(events, Tensor) or events.ndim != 5:
@@ -259,6 +298,27 @@ class EventStateTrainer:
             )
         if not h_enabled and not z_enabled:
             raise ValueError("At least one distillation branch must be enabled")
+        if event_dropout_mask is not None:
+            if (
+                event_dropout_mask.dtype != torch.bool
+                or event_dropout_mask.device != events.device
+                or tuple(event_dropout_mask.shape) != tuple(events.shape[:2])
+            ):
+                raise ValueError("event_dropout_mask must be bool with shape [B,T]")
+
+        dropout_config = _value(self.training_config, "event_dropout", {})
+        h_loss_mask = None
+        z_loss_mask = None
+        if event_dropout_mask is not None:
+            dropped_weight = float(_value(dropout_config, "h_dropped_weight", 1.0))
+            if dropped_weight != 1.0:
+                h_loss_mask = torch.where(
+                    event_dropout_mask,
+                    events.new_full(event_dropout_mask.shape, dropped_weight),
+                    events.new_ones(event_dropout_mask.shape),
+                ).unsqueeze(-1)
+            if bool(_value(dropout_config, "mask_z_loss", True)):
+                z_loss_mask = (~event_dropout_mask).unsqueeze(-1)
 
         with self._autocast():
             # Every randomly sampled clip starts from an empty state. Since every sample in
@@ -298,7 +358,10 @@ class EventStateTrainer:
 
         if h_enabled:
             h_components = self._loss_components(
-                self.h_distillation_loss, h_prediction, teacher_features
+                self.h_distillation_loss,
+                h_prediction,
+                teacher_features,
+                mask=h_loss_mask,
             )
         else:
             with torch.no_grad():
@@ -307,7 +370,10 @@ class EventStateTrainer:
                 )
         if z_enabled:
             z_components = self._loss_components(
-                self.z_distillation_loss, z_prediction, teacher_features
+                self.z_distillation_loss,
+                z_prediction,
+                teacher_features,
+                mask=z_loss_mask,
             )
         else:
             with torch.no_grad():
@@ -349,6 +415,7 @@ class EventStateTrainer:
             "h_frame_cosine": h_frame_cosine,
             "z_projected_frame_cosine": z_projected_frame_cosine,
             "h_projected_frame_cosine": h_projected_frame_cosine,
+            "event_dropout_mask": event_dropout_mask,
         }
 
     def _component_gradient_norms(self) -> dict[str, float]:
@@ -383,7 +450,10 @@ class EventStateTrainer:
 
         for _ in range(accumulation):
             batch = self._move_batch(next(iterator))
-            result = self._forward_objectives(batch)
+            batch, event_dropout_mask = self._apply_training_event_dropout(batch)
+            result = self._forward_objectives(
+                batch, event_dropout_mask=event_dropout_mask
+            )
             scaled_loss = result["loss"] / accumulation
             if self.scaler is None:
                 scaled_loss.backward()
@@ -402,6 +472,19 @@ class EventStateTrainer:
                 "h_projected_cosine": result["h_projected_frame_cosine"].mean(),
                 "z_projected_cosine": result["z_projected_frame_cosine"].mean(),
             }
+            if event_dropout_mask is not None:
+                batch_metrics["event_dropout_fraction"] = (
+                    event_dropout_mask.float().mean()
+                )
+                if bool(event_dropout_mask.any()):
+                    batch_metrics["h_projected_cosine_dropped"] = result[
+                        "h_projected_frame_cosine"
+                    ][event_dropout_mask].mean()
+                observed_mask = ~event_dropout_mask
+                if bool(observed_mask.any()):
+                    batch_metrics["h_projected_cosine_observed"] = result[
+                        "h_projected_frame_cosine"
+                    ][observed_mask].mean()
             for branch in ("h", "z"):
                 for name, value in result[f"{branch}_components"].items():
                     if name != "loss":

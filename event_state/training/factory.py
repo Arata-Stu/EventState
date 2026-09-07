@@ -170,6 +170,31 @@ def validate_config(config: Any) -> None:
     validation_batches = _value(training, "validation_batches", None)
     if validation_batches is not None and int(validation_batches) <= 0:
         raise ValueError("training.validation_batches must be positive or null")
+    event_dropout = _value(training, "event_dropout", {})
+    if bool(_value(event_dropout, "enabled", False)):
+        probability = float(_value(event_dropout, "probability", 0.5))
+        if not 0.0 < probability <= 1.0:
+            raise ValueError("training.event_dropout.probability must be in (0,1]")
+        lengths = tuple(
+            int(value) for value in _value(event_dropout, "lengths", ())
+        )
+        if not lengths or any(value <= 0 for value in lengths):
+            raise ValueError("training.event_dropout.lengths must contain positive integers")
+        min_context = int(_value(event_dropout, "min_context_frames", 1))
+        min_recovery = int(_value(event_dropout, "min_recovery_frames", 1))
+        if min_context < 1:
+            raise ValueError("training.event_dropout.min_context_frames must be positive")
+        if min_recovery < 1:
+            raise ValueError("training.event_dropout.min_recovery_frames must be positive")
+        if max(lengths) + min_context + min_recovery > positive_fields[
+            "dataset.sequence_length"
+        ]:
+            raise ValueError(
+                "training.event_dropout block, context, and recovery do not fit "
+                "dataset.sequence_length"
+            )
+        if float(_value(event_dropout, "h_dropped_weight", 1.0)) <= 0:
+            raise ValueError("training.event_dropout.h_dropped_weight must be positive")
     evaluation = _value(config, "evaluation", {})
     evaluation_batches = _value(evaluation, "max_batches", None)
     if evaluation_batches is not None and int(evaluation_batches) <= 0:

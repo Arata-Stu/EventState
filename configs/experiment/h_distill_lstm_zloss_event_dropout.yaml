@@ -1,0 +1,24 @@
+# @package _global_
+experiment:
+  name: e4_dual_distill_lstm_event_dropout
+
+loss:
+  h_distill:
+    enabled: true
+    cosine_weight: 1.0
+    mse_weight: 1.0
+  z_objective:
+    type: direct_dino
+    weight: 1.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
+
+training:
+  event_dropout:
+    enabled: true
+    probability: 0.5
+    lengths: [1, 2, 4]
+    min_context_frames: 2
+    min_recovery_frames: 1
+    h_dropped_weight: 1.0
+    mask_z_loss: true
