@@ -404,7 +404,7 @@ CUDA_VISIBLE_DEVICES=0 bash tools/visualize_v100_baselines.sh \
 出力先は既定で
 `RUN_DIR/feature_visualization/SEQUENCE_clipN/`です。
 
-- `projected_alignment.png`: 学習対象の`Pz`/`Ph`とDINOv3を同一PCA基底・色範囲で比較
+- `projected_alignment.png`: L2正規化した`Pz`/`Ph`とDINOv3を同一PCA基底・色範囲で比較
 - `projected_alignment_raw.png`: projector前の`z`/`h`を個別PCAで確認
 - `projected_alignment_inputs.png`: 8 frameのevent/RGB入力とevent count
 - `projected_alignment_stability.png`: temporal lag別のfeature安定性

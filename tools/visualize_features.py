@@ -107,10 +107,14 @@ def _plot_feature_grid(
     output: Path,
     shared_pca: bool,
 ) -> None:
+    # Training aligns token directions (cosine and normalized MSE), leaving
+    # feature magnitudes unconstrained. PCA must therefore see L2-normalized
+    # tokens; otherwise projector norm/offset differences dominate the colors.
+    pca_inputs = [F.normalize(feature.float(), dim=-1) for feature in features]
     if shared_pca:
-        pca_values = joint_pca_rgb(*features)
+        pca_values = joint_pca_rgb(*pca_inputs)
     else:
-        pca_values = [joint_pca_rgb(feature)[0] for feature in features]
+        pca_values = [joint_pca_rgb(feature)[0] for feature in pca_inputs]
     figure, axes = plt.subplots(
         2,
         len(features),
@@ -123,7 +127,7 @@ def _plot_feature_grid(
         axes[0, column].imshow(
             pca_value[frame_index].reshape(grid_height, grid_width, 3).numpy()
         )
-        axes[0, column].set_title(f"{title}\nPCA")
+        axes[0, column].set_title(f"{title}\nnormalized PCA")
         similarity = token_similarity_map(feature[frame_index], query_index)
         axes[1, column].imshow(
             similarity.reshape(grid_height, grid_width).numpy(),
