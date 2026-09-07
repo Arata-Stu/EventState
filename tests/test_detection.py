@@ -58,6 +58,21 @@ def test_yolox_probe_returns_losses_and_detections() -> None:
     assert set(detections[0]) == {"boxes", "scores", "labels"}
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_yolox_assignment_is_safe_under_cuda_autocast() -> None:
+    model = EventStateYOLOX(in_channels=16, num_classes=2, width=32).cuda()
+    features = torch.randn(1, 16, 6, 8, device="cuda")
+    targets = [
+        {
+            "boxes": torch.tensor([[12.0, 10.0, 35.0, 42.0]], device="cuda"),
+            "labels": torch.tensor([0], device="cuda"),
+        }
+    ]
+    with torch.autocast(device_type="cuda", dtype=torch.float16):
+        losses = model(features, targets)
+    assert losses["loss"].isfinite()
+
+
 def test_split_loader_rejects_noncanonical_counts(tmp_path: Path) -> None:
     path = tmp_path / "split.yaml"
     path.write_text("train: [a]\nval: [b]\ntest: [c]\n", encoding="utf-8")

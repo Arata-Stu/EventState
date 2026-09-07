@@ -231,11 +231,15 @@ class EventStateYOLOX(nn.Module):
         joint_probability = (
             class_logits.sigmoid()[None] * objectness_logits.sigmoid()[None]
         ).sqrt()
-        cls_cost = F.binary_cross_entropy(
-            joint_probability.expand(len(gt_boxes), -1, -1),
-            gt_one_hot[:, None, :].expand(-1, anchor_count, -1),
-            reduction="none",
-        ).sum(dim=-1)
+        # Assignment is a non-differentiable FP32 calculation.  PyTorch rejects
+        # probability-space BCE whenever an outer autocast context is active,
+        # even after its inputs have explicitly been converted to float32.
+        with torch.autocast(device_type=boxes.device.type, enabled=False):
+            cls_cost = F.binary_cross_entropy(
+                joint_probability.expand(len(gt_boxes), -1, -1),
+                gt_one_hot[:, None, :].expand(-1, anchor_count, -1),
+                reduction="none",
+            ).sum(dim=-1)
         centers = (grid[0] + 0.5) * strides[0]
         gt_centers = (gt_boxes[:, :2] + gt_boxes[:, 2:]) / 2
         center_radius = 2.5 * strides[0, :, 0]
