@@ -13,3 +13,7 @@ tqdm>=4.66
 
 # Dataset preparation only:
 # opencv-python>=4.8
+
+# Feature visualization only:
+# matplotlib>=3.8
+# imageio-ffmpeg>=0.5

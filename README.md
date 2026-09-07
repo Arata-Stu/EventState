@@ -414,6 +414,32 @@ main画像の下段は中央patch（`--query-index`で変更可能）に対す�
 `Pz`/`Ph`はlossが有効なbranchだけを表示し、未学習projectorを結果として誤読しないように
 しています。複数clipを見る場合は`--clip-index`を変更します。
 
+### シーケンス全体の動画
+
+LSTM stateをclip間で維持したまま1シーケンスを最後まで流し、E0/E1/E2と教師を
+同期した動画にできます。3モデルはGPUメモリを共有しないよう順番に推論します。
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash tools/visualize_v100_sequence.sh \
+  --run-dir outputs/v100_baselines_YYYYMMDD_HHMMSS \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --sequence interlaken_00_c
+```
+
+`RUN_DIR/feature_visualization/SEQUENCE_sequence/`に次を保存します。
+
+- `alignment.mp4`: event/RGB、共通PCA、query cosine、全区間のteacher cosine推移
+- `alignment.csv`: frameごとのevent数と各branchのteacher cosine
+- `alignment.json`: シーケンス平均
+- `context/`と`E0/`〜`E2/`: 再描画用のclip artifact
+
+exportが中断しても同じコマンドで再開できます。時系列stateを正しく復元するため先頭から
+forwardは再実行しますが、検証済みartifactの書き込みは省略します。別シーンは
+`--sequence`だけを変えて実行してください。
+
 ## テスト
 
 ```bash
