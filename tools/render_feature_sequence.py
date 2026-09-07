@@ -311,18 +311,32 @@ def main() -> None:
         writer = csv.DictWriter(handle, fieldnames=list(records[0]))
         writer.writeheader()
         writer.writerows(records)
+    event_order = np.argsort([record["event_count"] for record in records])
+    event_groups = {
+        "low": event_order[: len(event_order) // 3],
+        "medium": event_order[len(event_order) // 3 : 2 * len(event_order) // 3],
+        "high": event_order[2 * len(event_order) // 3 :],
+    }
+    source_summaries: dict[str, Any] = {}
+    for source in sources:
+        values = np.asarray([record[source.label] for record in records])
+        source_summaries[source.label] = {
+            "feature": source.feature_name,
+            "mean_teacher_cosine": float(values.mean()),
+            "std_teacher_cosine": float(values.std()),
+            "mean_absolute_frame_delta": float(np.abs(np.diff(values)).mean())
+            if len(values) > 1
+            else 0.0,
+            "teacher_cosine_by_event_tertile": {
+                name: float(values[indices].mean())
+                for name, indices in event_groups.items()
+                if len(indices)
+            },
+        }
     summary = {
         "frame_count": len(records),
         "fps": args.fps,
-        "sources": {
-            source.label: {
-                "feature": source.feature_name,
-                "mean_teacher_cosine": float(
-                    np.mean([record[source.label] for record in records])
-                ),
-            }
-            for source in sources
-        },
+        "sources": source_summaries,
     }
     output.with_suffix(".json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"

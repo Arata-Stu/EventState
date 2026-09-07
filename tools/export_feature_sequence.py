@@ -23,7 +23,7 @@ from export_features import (
 )
 
 
-SEQUENCE_FEATURE_FORMAT_VERSION = 1
+SEQUENCE_FEATURE_FORMAT_VERSION = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,6 +41,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sequence", required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--state-policy",
+        choices=("continuous", "clip", "frame"),
+        default="continuous",
+        help=(
+            "continuous keeps state for the complete sequence, clip resets at each "
+            "validation clip, and frame resets before every frame"
+        ),
+    )
     parser.add_argument(
         "--context-dir",
         type=Path,
@@ -62,6 +71,7 @@ def _valid_existing(
     clip_index: int,
     artifact_kind: str,
     checkpoint_step: int | None = None,
+    state_policy: str | None = None,
 ) -> bool:
     if not path.is_file():
         return False
@@ -80,6 +90,7 @@ def _valid_existing(
                 checkpoint_step is None
                 or int(value.get("checkpoint_step", -1)) == checkpoint_step
             )
+            and (state_policy is None or value.get("state_policy") == state_policy)
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         return False
@@ -95,6 +106,7 @@ def _write_metadata(
     clip_count: int,
     frame_count: int,
     feature_names: list[str],
+    state_policy: str,
 ) -> None:
     metadata = {
         "format_version": SEQUENCE_FEATURE_FORMAT_VERSION,
@@ -105,7 +117,7 @@ def _write_metadata(
         "clip_count": clip_count,
         "frame_count": frame_count,
         "feature_names": feature_names,
-        "state_policy": "continuous_across_clips_reset_at_sequence_start",
+        "state_policy": state_policy,
     }
     (directory / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
@@ -157,11 +169,23 @@ def main() -> None:
             sequence_name = str(batch["sequence_name"][0])
             if sequence_name != args.sequence:
                 continue
-            if _batch_bool(batch, "is_sequence_start"):
+            if _batch_bool(batch, "is_sequence_start") or args.state_policy == "clip":
                 recurrent_state = None
             events = _move(batch["events"], runtime.device)
-            outputs = runtime.model(events, state=recurrent_state)
-            recurrent_state = outputs.get("state")
+            if args.state_policy == "frame":
+                frame_outputs = [
+                    runtime.model(events[:, index : index + 1], state=None)
+                    for index in range(int(events.shape[1]))
+                ]
+                outputs = {
+                    "z": torch.cat([value["z"] for value in frame_outputs], dim=1),
+                    "h": torch.cat([value["h"] for value in frame_outputs], dim=1),
+                    "state": None,
+                }
+                recurrent_state = None
+            else:
+                outputs = runtime.model(events, state=recurrent_state)
+                recurrent_state = outputs.get("state")
             timestamps = batch["timestamps"][0].detach().cpu()
             features: dict[str, torch.Tensor] = {}
             if objectives["z"]:
@@ -179,6 +203,7 @@ def main() -> None:
                 "sequence_name": sequence_name,
                 "clip_index": clip_count,
                 "checkpoint_step": int(state.global_step),
+                "state_policy": args.state_policy,
                 "timestamps": timestamps,
                 "frame_indices": batch["frame_indices"][0].detach().cpu(),
                 "grid_size": [grid_height, grid_width],
@@ -190,6 +215,7 @@ def main() -> None:
                 clip_index=clip_count,
                 artifact_kind="model_features",
                 checkpoint_step=int(state.global_step),
+                state_policy=args.state_policy,
             ):
                 atomic_torch_save(payload, clip_path)
 
@@ -238,6 +264,7 @@ def main() -> None:
         clip_count=clip_count,
         frame_count=frame_count,
         feature_names=[f"P{name}" for name in feature_names],
+        state_policy=args.state_policy,
     )
     if args.context_dir is not None:
         _write_metadata(
@@ -249,6 +276,7 @@ def main() -> None:
             clip_count=clip_count,
             frame_count=frame_count,
             feature_names=["teacher", "event_rgb", "rgb"],
+            state_policy="state_independent",
         )
     print(
         f"Exported {frame_count} frames in {clip_count} clips to {args.output_dir}",

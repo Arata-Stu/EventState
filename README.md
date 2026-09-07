@@ -440,6 +440,26 @@ exportが中断しても同じコマンドで再開できます。時系列state
 forwardは再実行しますが、検証済みartifactの書き込みは省略します。別シーンは
 `--sequence`だけを変えて実行してください。
 
+### State reset ablation
+
+同じE1/E2 checkpointを、stateをシーケンス全体で保持する条件、8-frame validation clipごとに
+resetする条件、毎frame resetする条件で比較します。
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash tools/visualize_state_reset_ablation.sh \
+  --run-dir outputs/v100_baselines_YYYYMMDD_HHMMSS \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --sequence interlaken_00_c
+```
+
+`SEQUENCE_state_reset/`以下のE1/E2別MP4で3条件を同期表示します。CSVとJSONには
+teacher cosineの平均・標準偏差・frame間変動量・event数三分位別の値も保存します。
+`continuous > clip reset > frame reset`なら8 frameを越える履歴、`clip reset > frame reset`なら
+clip内の短期履歴が寄与しています。ほぼ同値ならLSTMは主に平滑化器として働いています。
+
 ## テスト
 
 ```bash
