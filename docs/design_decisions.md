@@ -134,9 +134,11 @@ DINOv3初期値を含む学習済みcheckpointを第三者へ配布する前に�
 最初の比較はprojection headを捨てたfrozen `z` / `h` / `concat[z,h]`に、共通のYOLOX型headを
 学習する。DSEC-Det labelはdistorted event座標である一方、EventStateはrectified event座標で
 事前学習されている。内部`probe`ではbboxをrectified座標へ移すが、公表benchmarkでは逆に
-EventState特徴mapをsequence固有の`rectify_map.h5`でdistorted座標へwarpする。DAGRと同じ
-320×215 geometry、bbox filter、連続valid-frame条件を適用し、主metricを`car` / `pedestrian`
-mappingでのCOCO mAP@[.50:.95]とする。
+EventState特徴mapをsequence固有の`rectify_map.h5`でdistorted座標へwarpする。nativeに近い
+640×430 geometry、DAGRと同じ物理bbox filter、連続valid-frame条件を適用し、主metricを
+`car` / `pedestrian` mappingでのCOCO mAP@[.50:.95]とする。DAGRの1/2 event downsamplingはgraph
+node数を抑えるためのmodel固有preprocessingなので主条件には強制しない。320×215は計算条件を近づける
+補助ablationとしてのみ残し、DAGR固有のsigned-event間引きを再現していないことを明記する。
 
 DAGRとRVTはデータ契約、filter、評価方式、head設計の参考に限定する。GPL sourceをimportまたは
 copyせず、YOLOX型headとCOCO adapterは本repository内で独立実装する。

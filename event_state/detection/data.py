@@ -14,6 +14,8 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from event_state.data.transforms import PairedSequenceTransform
+
 
 DSEC_DETECTION_CLASSES = (
     "pedestrian",
@@ -250,16 +252,23 @@ def load_dagr_sequence_targets(
     labels_root: str | Path,
     dataset_root: str | Path,
     sequence: str,
-    scale: int = 2,
+    scale: int = 1,
     cropped_height: int = 430,
     sensor_width: int = 640,
-    min_box_side: float = 10.0,
-    min_box_diagonal: float = 15.0,
+    min_box_side: float | None = None,
+    min_box_diagonal: float | None = None,
 ) -> dict[int, dict[str, Tensor]]:
-    """Load the exact frame subset and distorted coordinates used by DAGR."""
+    """Load DSEC-Det targets with DAGR's frame and physical box filters."""
 
     if scale <= 0 or cropped_height <= 0 or sensor_width <= 0:
         raise ValueError("DAGR geometry values must be positive")
+    # DAGR applies >10 px side and >15 px diagonal after 2x downsampling.
+    # Scale these thresholds with the output coordinates so scale=1 selects
+    # exactly the same physical objects at native DSEC-Det resolution.
+    min_box_side = 20.0 / scale if min_box_side is None else float(min_box_side)
+    min_box_diagonal = (
+        30.0 / scale if min_box_diagonal is None else float(min_box_diagonal)
+    )
     tracks_path = find_tracks_file(labels_root, sequence)
     tracks = np.load(tracks_path, allow_pickle=False)
     required = {"t", "x", "y", "w", "h", "class_id"}
@@ -324,7 +333,7 @@ def build_dagr_sampling_grid(
     *,
     source_input_size: tuple[int, int],
     source_stride: int,
-    scale: int = 2,
+    scale: int = 1,
     cropped_height: int = 430,
     sensor_width: int = 640,
 ) -> Tensor:
@@ -388,6 +397,7 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
         self.feature_cache_dir = Path(feature_cache_dir).expanduser()
         self.feature = feature
         self.protocol = protocol
+        self.detection_scale: int | None = None
         self.input_size: tuple[int, int] | None = None
         self.patch_size: int | None = None
         self.sampling_grids: dict[str, Tensor] = {}
@@ -429,14 +439,37 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
                     f"{metadata_path} does not contain {sorted(required_features)}"
                 )
             if protocol == "dsec-det":
+                protocol_metadata = metadata.get(
+                    "dsec_det_protocol", metadata.get("dagr_protocol", {})
+                )
+                coordinate_space = metadata.get("coordinate_space", "rectified_event")
+                current_scale = (
+                    int(protocol_metadata.get("scale", 1))
+                    if coordinate_space == "dsec_det_distorted"
+                    else 1
+                )
+                if current_scale not in {1, 2}:
+                    raise ValueError(f"Unsupported DSEC-Det scale: {metadata_path}")
+                if self.detection_scale is None:
+                    self.detection_scale = current_scale
+                elif self.detection_scale != current_scale:
+                    raise ValueError("Detection feature sequences use different scales")
                 targets = load_dagr_sequence_targets(
                     labels_root=labels_root,
                     dataset_root=dataset_root,
                     sequence=sequence,
+                    scale=current_scale,
                 )
-                coordinate_space = metadata.get("coordinate_space", "rectified_event")
                 if coordinate_space == "dsec_det_distorted":
-                    if current_input_size != (215, 320) or patch_size != 8:
+                    expected_input_size = (430 // current_scale, 640 // current_scale)
+                    original_stride = int(
+                        metadata.get("source_patch_size", patch_size * current_scale)
+                    )
+                    expected_patch_size = original_stride // current_scale
+                    if (
+                        current_input_size != expected_input_size
+                        or patch_size != expected_patch_size
+                    ):
                         raise ValueError(
                             f"Invalid prewarped DSEC-Det geometry: {metadata_path}"
                         )
@@ -447,6 +480,7 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
                         rectify_map,
                         source_input_size=current_input_size,
                         source_stride=patch_size,
+                        scale=current_scale,
                     )
                 else:
                     raise ValueError(
@@ -471,8 +505,10 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
         if source_input_size is None or source_patch_size is None:
             raise RuntimeError("Detection feature geometry was not initialized")
         if protocol == "dsec-det":
-            self.input_size = (430 // 2, 640 // 2)
-            self.patch_size = 8
+            if self.detection_scale is None:
+                raise RuntimeError("DSEC-Det scale was not initialized")
+            self.input_size = (430 // self.detection_scale, 640 // self.detection_scale)
+            self.patch_size = source_patch_size
         else:
             self.input_size = source_input_size
             self.patch_size = source_patch_size
@@ -532,6 +568,182 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
         }
 
 
+class DSECDetectionEventDataset(Dataset[dict[str, Any]]):
+    """DSEC-Detection samples backed by prepared event frames.
+
+    Training items are fixed-length clips ending at an evaluated DAGR frame.
+    Continuous evaluation items contain every frame in chronological order so
+    recurrent state is updated even when the frame itself has no annotation.
+    """
+
+    def __init__(
+        self,
+        *,
+        event_cache_dir: str | Path,
+        labels_root: str | Path,
+        dataset_root: str | Path,
+        sequences: Sequence[str],
+        sequence_length: int,
+        input_size: tuple[int, int] = (448, 640),
+        source_stride: int = 16,
+        event_mean: Sequence[float] | None = None,
+        event_std: Sequence[float] | None = None,
+        continuous: bool = False,
+        horizontal_flip_probability: float = 0.0,
+    ) -> None:
+        if sequence_length <= 0:
+            raise ValueError("sequence_length must be positive")
+        if source_stride <= 0 or source_stride % 2:
+            raise ValueError("source_stride must be positive and divisible by 2")
+        if not 0.0 <= horizontal_flip_probability <= 1.0:
+            raise ValueError("horizontal_flip_probability must be in [0, 1]")
+        if (event_mean is None) != (event_std is None):
+            raise ValueError("event_mean and event_std must be set together")
+
+        self.event_cache_dir = Path(event_cache_dir).expanduser()
+        self.sequence_length = int(sequence_length)
+        self.input_size = (int(input_size[0]), int(input_size[1]))
+        self.source_stride = int(source_stride)
+        self.detector_input_size = (430, 640)
+        self.detector_stride = self.source_stride
+        self.continuous = bool(continuous)
+        self.horizontal_flip_probability = float(horizontal_flip_probability)
+        self.transform = PairedSequenceTransform(
+            height=self.input_size[0],
+            width=self.input_size[1],
+            training=False,
+            event_mean=(tuple(float(value) for value in event_mean) if event_mean else None),
+            event_std=(tuple(float(value) for value in event_std) if event_std else None),
+        )
+        self.sampling_grids: dict[str, Tensor] = {}
+        self.samples: list[dict[str, Any]] = []
+
+        for sequence in sequences:
+            sequence_dir = self.event_cache_dir / sequence
+            metadata_path = sequence_dir / "metadata.json"
+            if not metadata_path.is_file():
+                raise FileNotFoundError(f"Event cache metadata not found: {metadata_path}")
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata.get("coordinate_space") != "rectified_event":
+                raise ValueError(f"Detection training requires rectified events: {metadata_path}")
+            if metadata.get("event_window") != "rgb_interval":
+                raise ValueError(
+                    f"Detection fine-tuning requires the full RGB event interval: {metadata_path}"
+                )
+            if (metadata.get("height"), metadata.get("width")) != (480, 640):
+                raise ValueError(f"Unexpected DSEC event-cache geometry: {metadata_path}")
+            representation = metadata.get("representation", {})
+            channels = representation.get("channels")
+            if not isinstance(channels, int) or channels <= 0:
+                raise ValueError(f"Invalid event representation metadata: {metadata_path}")
+            if event_mean is not None and len(event_mean) != channels:
+                raise ValueError(
+                    f"Event normalization has {len(event_mean)} channels, cache has {channels}: "
+                    f"{metadata_path}"
+                )
+            frame_paths = sorted(
+                (path for path in sequence_dir.glob("*.pt") if path.stem.isdecimal()),
+                key=lambda path: int(path.stem),
+            )
+            if not frame_paths:
+                raise ValueError(f"No prepared event frames found: {sequence_dir}")
+            targets = load_dagr_sequence_targets(
+                labels_root=labels_root,
+                dataset_root=dataset_root,
+                sequence=sequence,
+            )
+            with h5py.File(find_rectify_map(dataset_root, sequence), "r") as handle:
+                rectify_map = np.asarray(handle["rectify_map"], dtype=np.float32)
+            self.sampling_grids[sequence] = build_dagr_sampling_grid(
+                rectify_map,
+                source_input_size=self.input_size,
+                source_stride=self.source_stride,
+            )
+
+            if self.continuous:
+                for frame_index, path in enumerate(frame_paths):
+                    timestamp = int(path.stem)
+                    self.samples.append(
+                        {
+                            "sequence_name": sequence,
+                            "timestamp": timestamp,
+                            "paths": (path,),
+                            "target": targets.get(timestamp),
+                            "is_sequence_start": frame_index == 0,
+                        }
+                    )
+            else:
+                for end_index, path in enumerate(frame_paths):
+                    timestamp = int(path.stem)
+                    if timestamp not in targets or end_index + 1 < self.sequence_length:
+                        continue
+                    start_index = end_index + 1 - self.sequence_length
+                    self.samples.append(
+                        {
+                            "sequence_name": sequence,
+                            "timestamp": timestamp,
+                            "paths": tuple(frame_paths[start_index : end_index + 1]),
+                            "target": targets[timestamp],
+                            "is_sequence_start": start_index == 0,
+                        }
+                    )
+        if not self.samples:
+            mode = "continuous frames" if self.continuous else "labeled clips"
+            raise ValueError(f"No DSEC-Detection {mode} were found")
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        sample = self.samples[index]
+        events: list[Tensor] = []
+        for path in sample["paths"]:
+            payload = _safe_torch_load(path)
+            tensor = payload.get("events") if isinstance(payload, dict) else None
+            if not isinstance(tensor, Tensor) or tensor.ndim != 3:
+                raise ValueError(f"Invalid prepared event payload: {path}")
+            if payload.get("sequence_name") != sample["sequence_name"]:
+                raise ValueError(f"Prepared event sequence mismatch: {path}")
+            if int(payload.get("timestamp", -1)) != int(path.stem):
+                raise ValueError(f"Prepared event timestamp mismatch: {path}")
+            events.append(tensor.float())
+        event_clip, _ = self.transform(torch.stack(events), None)
+        if event_clip is None:
+            raise RuntimeError("Event transform unexpectedly returned no tensor")
+
+        target = sample["target"]
+        should_evaluate = target is not None
+        output_target = (
+            {key: value.clone() for key, value in target.items()}
+            if should_evaluate
+            else {
+                "boxes": torch.empty((0, 4), dtype=torch.float32),
+                "labels": torch.empty((0,), dtype=torch.int64),
+            }
+        )
+        flip = (
+            not self.continuous
+            and bool(torch.rand(()) < self.horizontal_flip_probability)
+        )
+        if flip:
+            image_width = float(self.detector_input_size[1])
+            boxes = output_target["boxes"]
+            old_x1 = boxes[:, 0].clone()
+            old_x2 = boxes[:, 2].clone()
+            boxes[:, 0] = image_width - old_x2
+            boxes[:, 2] = image_width - old_x1
+        return {
+            "events": event_clip,
+            "target": output_target,
+            "sequence_name": sample["sequence_name"],
+            "timestamp": sample["timestamp"],
+            "sampling_grid": self.sampling_grids[sample["sequence_name"]],
+            "flip": flip,
+            "evaluate": should_evaluate,
+            "is_sequence_start": sample["is_sequence_start"],
+        }
+
+
 def detection_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "features": torch.stack([sample["feature"] for sample in batch]),
@@ -541,12 +753,31 @@ def detection_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def detection_event_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "events": torch.stack([sample["events"] for sample in batch]),
+        "targets": [sample["target"] for sample in batch],
+        "sequence_names": [sample["sequence_name"] for sample in batch],
+        "timestamps": [sample["timestamp"] for sample in batch],
+        "sampling_grids": torch.stack([sample["sampling_grid"] for sample in batch]),
+        "flip": torch.tensor([sample["flip"] for sample in batch], dtype=torch.bool),
+        "evaluate": torch.tensor(
+            [sample["evaluate"] for sample in batch], dtype=torch.bool
+        ),
+        "is_sequence_start": torch.tensor(
+            [sample["is_sequence_start"] for sample in batch], dtype=torch.bool
+        ),
+    }
+
+
 __all__ = [
     "DAGR_CLASSES",
     "DAGR_CLASS_ID_MAP",
     "DSEC_DETECTION_CLASSES",
     "DSECDetectionFeatureDataset",
+    "DSECDetectionEventDataset",
     "detection_collate",
+    "detection_event_collate",
     "find_rectify_map",
     "find_image_timestamps",
     "find_tracks_file",

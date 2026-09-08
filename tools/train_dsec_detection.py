@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
         "--protocol",
         choices=("probe", "dsec-det"),
         default="probe",
-        help="Internal rectified probe or DAGR-compatible DSEC-Det benchmark",
+        help="Internal rectified probe or native-coordinate DSEC-Det benchmark",
     )
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=16)

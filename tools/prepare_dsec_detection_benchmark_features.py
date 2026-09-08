@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Warp cached EventState maps into the official DSEC-Det event coordinates."""
+"""Warp cached EventState maps into distorted DSEC-Det event coordinates."""
 
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ from event_state.detection.split import load_dsec_detection_split
 
 
 DEFAULT_SPLIT = Path(__file__).parent / "manifests" / "dsec_det_official_split.yaml"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Prepare reusable DAGR-coordinate EventState feature caches"
+        description="Prepare reusable native or half-scale DSEC-Det feature caches"
     )
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -34,6 +34,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--role", choices=("train", "val", "test"), required=True)
     parser.add_argument("--features", nargs="+", choices=("z", "h"), default=("z", "h"))
+    parser.add_argument(
+        "--scale",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="1 keeps native 640x430 coordinates; 2 reproduces DAGR's half scale",
+    )
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--num-shards", type=int, default=1)
@@ -62,7 +69,7 @@ def _atomic_save(payload: dict[str, Any], destination: Path) -> None:
 
 
 def _valid_existing(
-    path: Path, features: set[str], source_payload: dict[str, Any]
+    path: Path, features: set[str], source_payload: dict[str, Any], scale: int
 ) -> bool:
     if not path.is_file():
         return False
@@ -71,6 +78,7 @@ def _valid_existing(
         isinstance(payload, dict)
         and payload.get("benchmark_format_version") == FORMAT_VERSION
         and payload.get("coordinate_space") == "dsec_det_distorted"
+        and payload.get("detection_scale") == scale
         and payload.get("checkpoint_sha256") == source_payload.get("checkpoint_sha256")
         and payload.get("timestamp") == source_payload.get("timestamp")
         and payload.get("frame_index") == source_payload.get("frame_index")
@@ -122,6 +130,7 @@ def main() -> None:
             rectify_map,
             source_input_size=(int(input_size[0]), int(input_size[1])),
             source_stride=source_stride,
+            scale=args.scale,
         ).to(device)
         paths = sorted(
             (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
@@ -147,7 +156,9 @@ def main() -> None:
                 index
                 for index, path in enumerate(batch_paths)
                 if args.overwrite
-                or not _valid_existing(destination_dir / path.name, features, payloads[index])
+                or not _valid_existing(
+                    destination_dir / path.name, features, payloads[index], args.scale
+                )
             ]
             preserved += len(batch_paths) - len(pending)
             if not pending:
@@ -174,6 +185,7 @@ def main() -> None:
                     if key not in {"features", "coordinate_space"}
                 }
                 output["coordinate_space"] = "dsec_det_distorted"
+                output["detection_scale"] = args.scale
                 output["benchmark_format_version"] = FORMAT_VERSION
                 output["features"] = {
                     feature: warped[feature][output_index].contiguous() for feature in features
@@ -184,17 +196,17 @@ def main() -> None:
             **metadata,
             "coordinate_space": "dsec_det_distorted",
             "benchmark_format_version": FORMAT_VERSION,
-            "input_size": [215, 320],
-            "patch_size": 8,
+            "input_size": [430 // args.scale, 640 // args.scale],
+            "patch_size": source_stride // args.scale,
             "features": sorted(features),
             "source_feature_cache": str(source_dir),
             "source_input_size": input_size,
             "source_patch_size": source_stride,
-            "dagr_protocol": {
-                "scale": 2,
+            "dsec_det_protocol": {
+                "scale": args.scale,
                 "cropped_height": 430,
-                "min_box_side": 10,
-                "min_box_diagonal": 15,
+                "physical_min_box_side": 20,
+                "physical_min_box_diagonal": 30,
             },
         }
         (destination_dir / "metadata.json").write_text(

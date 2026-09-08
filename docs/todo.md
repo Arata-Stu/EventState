@@ -15,6 +15,11 @@
   step数で、event encoder・LSTM・headをランダム初期化して学習する。E2/E4は同一architecture
   なので、Scratchはnon-recurrent版と1層LSTM版の2条件とする。
 - [ ] Frozen / Fine-tune / Scratchの各protocolで3 seedを実行し、mAPの平均と標準偏差を報告する。
+- [x] E0/E2/E4 frozen cache・head学習の一括runnerを用意する。
+- [x] 公式splitのevent-only end-to-end Fine-tune / matched Scratch loaderとtrainerを用意する。
+- [ ] Linux V100上の少数batch smoke testでFine-tune / ScratchのVRAM、loss、validationを確認する。
+- [ ] state reset、event gap、短縮event窓を同一検出headへ適用するstate-sensitive evaluatorを実装する。
+- [ ] DINOとvideo-JEPAを共通化するteacher token contractと、teacher別projector/alignmentを実装する。
 - [ ] E1（1層LSTMの`h`のみをDINOv3へ蒸留）の100,000 step学習と検出評価を追加する。
 - [ ] 1層で時系列効果を確認した後、2層LSTMをdepth ablationとして比較する。
 

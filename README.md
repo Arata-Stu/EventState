@@ -563,7 +563,7 @@ bash tools/run_v100_event_dropout.sh \
 検出評価はDAGRと同じ公式41 train / 6 validation / 13 test splitをそのまま使います。
 独自33/8 pretraining splitはcheckpoint開発だけのもので、検出headのsplitには流用しません。
 `probe` protocolはrectified 448×640座標で`z` / `h`の診断を行う内部比較です。公開benchmarkの
-主結果には、後述する`dsec-det` protocolの`car` / `pedestrian` 2 classとCOCO
+主結果には、後述するnative-resolution `dsec-det` protocolの`car` / `pedestrian` 2 classとCOCO
 mAP@[.50:.95]を使います。
 
 DSEC-Det labelはraw dataへmergeせず、resume可能なdownload scriptで別directoryへ取得します。
@@ -674,10 +674,15 @@ GPL-3.0のDAGR/RVT sourceをimportまたはcopyしません。
 
 ### DSEC-Det event-only benchmark protocol
 
-公表値にはDAGRと同じdistorted event viewを使います。公式処理に合わせ、上端430 pxを保持して
-1/2へ縮小した320×215座標、縮小後の最小辺`>10`・対角`>15`、連続する有効label frame対、
-公式41/6/13 splitを固定します。EventState cacheはrectified座標なので、sequence固有の
-`rectify_map.h5`を使って特徴mapを一度だけdistorted座標へwarpします。
+公表値にはDSEC-Detのdistorted event viewをnativeに近い640×430座標で使います。DAGRがgraph数を
+抑えるために採用した1/2 event downsamplingはEventStateの必須条件ではありません。物理的なbox選択は
+DAGRと揃え、native座標で最小辺`>20`・対角`>30`、連続する有効label frame対、公式41/6/13 splitを
+固定します。EventState cacheはrectified座標なので、sequence固有の`rectify_map.h5`を使って特徴mapを
+一度だけdistorted座標へwarpします。
+
+`tools/prepare_dsec_detection_benchmark_features.py`の既定は`--scale 1`です。計算条件をDAGRへ近づける
+補助実験だけ`--scale 2`を指定し、320×215座標と縮小後の最小辺`>10`・対角`>15`を使います。ただし、
+これはfeature座標を縮小する条件であり、DAGR固有のsigned-event間引きを完全には再現しません。
 
 trainとvalidationのbenchmark feature cacheは、roleごとに3 GPUで準備できます。
 
@@ -721,6 +726,60 @@ bash tools/run_dsec_detection_probes.sh \
   --protocol dsec-det \
   --batch-size 16 \
   --epochs 50
+```
+
+E0/E2/E4の100,000 step最終重みが揃った後は、cache作成と主比較を次のrunnerで固定できます。
+E0は`z`、E2/E4は`h`を使い、各seedで3モデルをGPU 0/1/2へ一つずつ割り当てます。
+
+```bash
+bash tools/prepare_frozen_dsec_detection_e0_e2_e4.sh \
+  --run-dir outputs/v100_e0_e2_e4_YYYYMMDD_HHMMSS \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --dataset-root /path/to/DSEC \
+  --output-root /path/to/DSEC_cache/detection_features/final \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth
+
+bash tools/run_frozen_dsec_detection_e0_e2_e4.sh \
+  --feature-root /path/to/DSEC_cache/detection_features/final/dsec_det \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --output-dir outputs/dsec_detection_frozen \
+  --seeds 0,1,2 \
+  --batch-size 16 \
+  --epochs 50
+```
+
+Frozenの次は、同じ公式splitとYOLOX recipeでend-to-end Fine-tuneとScratchを実行します。
+Fine-tuneはRGB画像・DINO teacher weight/cacheを読まず、event encoder・1層LSTM・headを更新します。
+Scratchは最終checkpointを
+architecture定義としてだけ読み、event encoder、LSTM、headをランダム初期化します。学習loaderは
+label frameで終わる固定長clip、validation loaderは未ラベルframeを含む連続streamです。
+
+```bash
+bash tools/run_dsec_detection_finetune_scratch.sh \
+  --run-dir outputs/v100_e0_e2_e4_YYYYMMDD_HHMMSS \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --output-dir outputs/dsec_detection_end_to_end \
+  --seeds 0,1,2 \
+  --batch-size 4 \
+  --epochs 50 \
+  --validate-every 5
+```
+
+最初は`--seeds 0 --epochs 1 --validate-every 1`で実データsmoke testを行い、V100のVRAM使用量と
+validation完走を確認してから本実行へ進みます。研究上の評価順とJEPA接続前に固定する契約は
+[downstream roadmap](docs/downstream_roadmap.md)にまとめています。
+
+各epochのログを直接読む代わりに、全seedのbest validation値を集約できます。このツールは
+Python標準ライブラリだけで動作します。
+
+```bash
+python tools/summarize_detection_runs.py \
+  outputs/dsec_detection_frozen \
+  outputs/dsec_detection_end_to_end \
+  --output outputs/dsec_detection_summary.json
 ```
 
 最終testでは、まず元のfeature cacheを`--role test`で生成し、benchmark feature変換も
