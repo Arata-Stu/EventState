@@ -147,3 +147,17 @@ E2/E4の本学習では、各patch位置に共有するLSTMを1層とする。2�
 初期値であり、時系列状態そのものの寄与を測る最小baselineとしては1層の方が解釈しやすい。
 2層版は必要に応じてdepth ablationとして別実験にする。旧E1/E2/E4の2,000 step checkpointは
 2層pilotとして保持するが、1層モデルとはstate dict形状が異なるため本学習へresumeしない。
+
+## 14. Detection評価をFrozen / Fine-tune / Scratchへ分離する
+
+Frozen detectionでは100,000 stepの表現最終重みを固定し、共通のYOLOX型headだけを学習して
+表現の線形可用性を測る。Fine-tune detectionでは事前学習済みevent encoderとtemporal modelを
+headと同時に更新し、事前学習を使った最終到達性能を測る。Scratch detectionでは同一architectureを
+ランダム初期化し、同一の検出学習recipeで事前学習そのものの利得を測る。
+E2とE4の差は事前学習recipeであってarchitecture差ではないため、Scratchでは両者に共通する1層
+LSTM baselineを一つだけ置く。別途、LSTMなしのE0対応Scratch baselineも置く。
+
+3条件とも公式41 train / 6 validation / 13 test split、event-only入力、同一box filter、同一評価器を
+使う。Fine-tune中にRGB画像、DINOv3 teacher、teacher feature cacheは使用しない。E2/E4ではsequence
+境界を越えてstateを混ぜず、同じclip長とtruncated BPTT条件をScratchにも適用する。公式testは
+設計判断に使わず、条件とseedを固定した後に評価する。

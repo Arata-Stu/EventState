@@ -348,6 +348,18 @@ GPU 0/1/2をそれぞれE0/E2/E4へ割り当てます。E2/E4のtemporal model�
 `best.pt`生成は無効で、既定runでは`checkpoints/step_00100000.pt`を採用します。公式validation/test
 は表現学習やcheckpoint選択へ使用しません。E1の本学習は[実験TODO](docs/todo.md)に記録しています。
 
+長時間runのconsole logは、全行を表示せず次の集約コマンドで比較できます。既定では直近10,000
+stepについて、初期区間からのloss変化、直近区間内の変化、h/z loss、projected cosine、勾配の
+中央値・95 percentile、速度、optimizer skipや非有限値の有無をE0/E2/E4横並びで表示します。
+
+```bash
+RUN_DIR="$(ls -dt outputs/v100_dsec_det_e0_e2_e4_* | head -n 1)"
+python tools/summarize_training_logs.py "$RUN_DIR"/logs/*.log --window-steps 10000
+```
+
+この41-sequence final fitではvalidationを意図的に無効化しているため、表示される
+`VALIDATION: なし`は異常ではありません。
+
 上の短い例ではcache pathを環境変数`EVENT_STATE_CACHE`または追加overrideで与えてください。
 Hydraの最終設定は各run directoryへ保存され、checkpointにはstudent model、optimizer、
 scheduler、step、data iteration位置、乱数状態、解決済みconfigが含まれます。Frozen teacher
