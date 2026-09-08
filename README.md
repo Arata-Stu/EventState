@@ -527,6 +527,24 @@ tail -n 20 -F \
   "$VIS_DIR/logs/export_E4.log"
 ```
 
+export完了後に動画生成だけ失敗した場合は、可視化依存関係を追加して`--render-only`で再開できます。
+このモードではE0/E2/E4のGPU推論を繰り返しません。
+
+```bash
+uv sync --active --extra prepare --extra detection --extra visualize
+
+bash tools/visualize_v100_e0_e2_e4_scenes.sh \
+  --run-dir "$RUN_DIR" \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --gpus 0,1,2 \
+  --step 100000 \
+  --sequences zurich_city_13_b \
+  --render-only
+```
+
 ### State reset ablation
 
 同じE1/E2 checkpointを、stateをシーケンス全体で保持する条件、8-frame validation clipごとに

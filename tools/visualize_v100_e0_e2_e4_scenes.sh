@@ -14,6 +14,7 @@ FPS=20
 STEP=100000
 GPUS="0,1,2"
 OVERWRITE=0
+RENDER_ONLY=0
 SEQUENCES="thun_01_a,thun_01_b,interlaken_00_a,interlaken_00_b,interlaken_01_a"
 SEQUENCES="$SEQUENCES,zurich_city_12_a,zurich_city_13_a,zurich_city_13_b"
 SEQUENCES="$SEQUENCES,zurich_city_14_a,zurich_city_14_b,zurich_city_14_c,zurich_city_15_a"
@@ -25,7 +26,7 @@ Usage:
     --run-dir PATH --root PATH --event-cache-dir PATH \
     --teacher-cache-dir PATH --teacher-checkpoint PATH \
     [--output-dir PATH] [--sequences a,b,c] [--gpus 0,1,2] \
-    [--step 100000] [--fps 20] [--overwrite]
+    [--step 100000] [--fps 20] [--overwrite] [--render-only]
 
 The default set contains all 12 original DSEC test sequences and therefore was
 not used by dsec_det_train41 pretraining. GPU 0/1/2 load E0/E2/E4 once and each
@@ -51,6 +52,7 @@ while [ "$#" -gt 0 ]; do
     --step) STEP=${2:?}; shift 2 ;;
     --fps) FPS=${2:?}; shift 2 ;;
     --overwrite) OVERWRITE=1; shift ;;
+    --render-only) RENDER_ONLY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -64,6 +66,8 @@ done
 case "$STEP" in *[!0-9]*|'') fail "--step must be a positive integer" ;; esac
 [ "$STEP" -gt 0 ] || fail "--step must be positive"
 command -v python >/dev/null 2>&1 || fail "python not found; activate the EventState env"
+python -c 'import imageio_ffmpeg, matplotlib' >/dev/null 2>&1 || \
+  fail "visualization dependencies are missing; run: uv sync --active --extra prepare --extra detection --extra visualize"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd -P)
@@ -85,7 +89,9 @@ E0_CHECKPOINT="$RUN_DIR/e0_gep_like_dinov3/checkpoints/step_${STEP_PADDED}.pt"
 E2_CHECKPOINT="$RUN_DIR/e2_dual_distill_lstm/checkpoints/step_${STEP_PADDED}.pt"
 E4_CHECKPOINT="$RUN_DIR/e4_dual_distill_lstm_event_dropout/checkpoints/step_${STEP_PADDED}.pt"
 for checkpoint in "$E0_CHECKPOINT" "$E2_CHECKPOINT" "$E4_CHECKPOINT"; do
-  [ -f "$checkpoint" ] || fail "checkpoint not found: $checkpoint"
+  if [ "$RENDER_ONLY" -eq 0 ]; then
+    [ -f "$checkpoint" ] || fail "checkpoint not found: $checkpoint"
+  fi
 done
 
 IFS=',' read -r -a GPU_VALUES <<< "$GPUS"
@@ -118,47 +124,51 @@ render_sequence() {
 }
 
 STATUS=0
-OVERWRITE_ARGS=()
-if [ "$OVERWRITE" -eq 1 ]; then OVERWRITE_ARGS+=(--overwrite); fi
-COMMON_EXPORT_ARGS=(
-  --root "$ROOT"
-  --event-cache-dir "$EVENT_CACHE_DIR"
-  --teacher-cache-dir "$TEACHER_CACHE_DIR"
-  --teacher-checkpoint "$TEACHER_CHECKPOINT"
-  --split test
-  --sequences "${SEQUENCE_VALUES[@]}"
-  --output-root "$OUTPUT_DIR"
-  --device cuda
-)
+if [ "$RENDER_ONLY" -eq 0 ]; then
+  OVERWRITE_ARGS=()
+  if [ "$OVERWRITE" -eq 1 ]; then OVERWRITE_ARGS+=(--overwrite); fi
+  COMMON_EXPORT_ARGS=(
+    --root "$ROOT"
+    --event-cache-dir "$EVENT_CACHE_DIR"
+    --teacher-cache-dir "$TEACHER_CACHE_DIR"
+    --teacher-checkpoint "$TEACHER_CHECKPOINT"
+    --split test
+    --sequences "${SEQUENCE_VALUES[@]}"
+    --output-root "$OUTPUT_DIR"
+    --device cuda
+  )
 
-CUDA_VISIBLE_DEVICES="${GPU_VALUES[0]}" python tools/export_feature_sequences.py \
-  "${COMMON_EXPORT_ARGS[@]}" --checkpoint "$E0_CHECKPOINT" --label E0 \
-  --feature Pz --write-context "${OVERWRITE_ARGS[@]}" \
-  >"$OUTPUT_DIR/logs/export_E0.log" 2>&1 &
-PIDS=("$!")
-printf '[multi-scene] GPU %s: exporting E0 pid=%s\n' "${GPU_VALUES[0]}" "$!"
-CUDA_VISIBLE_DEVICES="${GPU_VALUES[1]}" python tools/export_feature_sequences.py \
-  "${COMMON_EXPORT_ARGS[@]}" --checkpoint "$E2_CHECKPOINT" --label E2 \
-  --feature Pz --feature Ph "${OVERWRITE_ARGS[@]}" \
-  >"$OUTPUT_DIR/logs/export_E2.log" 2>&1 &
-PIDS+=("$!")
-printf '[multi-scene] GPU %s: exporting E2 pid=%s\n' "${GPU_VALUES[1]}" "$!"
-CUDA_VISIBLE_DEVICES="${GPU_VALUES[2]}" python tools/export_feature_sequences.py \
-  "${COMMON_EXPORT_ARGS[@]}" --checkpoint "$E4_CHECKPOINT" --label E4 \
-  --feature Pz --feature Ph "${OVERWRITE_ARGS[@]}" \
-  >"$OUTPUT_DIR/logs/export_E4.log" 2>&1 &
-PIDS+=("$!")
-printf '[multi-scene] GPU %s: exporting E4 pid=%s\n' "${GPU_VALUES[2]}" "$!"
-LABELS=(E0 E2 E4)
-for index in "${!PIDS[@]}"; do
-  if wait "${PIDS[$index]}"; then
-    printf '[multi-scene] export complete: %s\n' "${LABELS[$index]}"
-  else
-    printf '[multi-scene] export failed: %s\n' "${LABELS[$index]}" >&2
-    STATUS=1
-  fi
-done
-[ "$STATUS" -eq 0 ] || fail "feature export failed: $OUTPUT_DIR/logs"
+  CUDA_VISIBLE_DEVICES="${GPU_VALUES[0]}" python tools/export_feature_sequences.py \
+    "${COMMON_EXPORT_ARGS[@]}" --checkpoint "$E0_CHECKPOINT" --label E0 \
+    --feature Pz --write-context "${OVERWRITE_ARGS[@]}" \
+    >"$OUTPUT_DIR/logs/export_E0.log" 2>&1 &
+  PIDS=("$!")
+  printf '[multi-scene] GPU %s: exporting E0 pid=%s\n' "${GPU_VALUES[0]}" "$!"
+  CUDA_VISIBLE_DEVICES="${GPU_VALUES[1]}" python tools/export_feature_sequences.py \
+    "${COMMON_EXPORT_ARGS[@]}" --checkpoint "$E2_CHECKPOINT" --label E2 \
+    --feature Pz --feature Ph "${OVERWRITE_ARGS[@]}" \
+    >"$OUTPUT_DIR/logs/export_E2.log" 2>&1 &
+  PIDS+=("$!")
+  printf '[multi-scene] GPU %s: exporting E2 pid=%s\n' "${GPU_VALUES[1]}" "$!"
+  CUDA_VISIBLE_DEVICES="${GPU_VALUES[2]}" python tools/export_feature_sequences.py \
+    "${COMMON_EXPORT_ARGS[@]}" --checkpoint "$E4_CHECKPOINT" --label E4 \
+    --feature Pz --feature Ph "${OVERWRITE_ARGS[@]}" \
+    >"$OUTPUT_DIR/logs/export_E4.log" 2>&1 &
+  PIDS+=("$!")
+  printf '[multi-scene] GPU %s: exporting E4 pid=%s\n' "${GPU_VALUES[2]}" "$!"
+  LABELS=(E0 E2 E4)
+  for index in "${!PIDS[@]}"; do
+    if wait "${PIDS[$index]}"; then
+      printf '[multi-scene] export complete: %s\n' "${LABELS[$index]}"
+    else
+      printf '[multi-scene] export failed: %s\n' "${LABELS[$index]}" >&2
+      STATUS=1
+    fi
+  done
+  [ "$STATUS" -eq 0 ] || fail "feature export failed: $OUTPUT_DIR/logs"
+else
+  printf '[multi-scene] render-only: reusing exported feature artifacts\n'
+fi
 
 sequence_index=0
 while [ "$sequence_index" -lt "${#SEQUENCE_VALUES[@]}" ]; do
