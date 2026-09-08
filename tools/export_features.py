@@ -46,6 +46,12 @@ def parse_args() -> argparse.Namespace:
         help="Validation sequence to export (defaults to the first configured sequence)",
     )
     parser.add_argument(
+        "--split",
+        choices=("train", "test"),
+        default=None,
+        help="Evaluation split override; final train41 checkpoints should use test",
+    )
+    parser.add_argument(
         "--clip-index",
         type=int,
         default=0,
@@ -86,8 +92,14 @@ def _prepare_config(args: argparse.Namespace) -> tuple[Any, Any]:
             "teacher.checkpoint",
             str(args.teacher_checkpoint.expanduser().resolve()),
         )
-    if args.sequence is not None:
-        _set(config, "dataset.val_sequences", [args.sequence])
+    selected_sequence = getattr(args, "sequence", None)
+    if selected_sequence is not None:
+        _set(config, "dataset.val_sequences", [selected_sequence])
+    requested_split = getattr(args, "split", None)
+    if requested_split is not None:
+        _set(config, "dataset.val_split", requested_split)
+    elif OmegaConf.select(config, "dataset.val_split") is None:
+        _set(config, "dataset.val_split", "test")
     _set(config, "device", args.device)
     _set(config, "dataset.event_window_fraction", args.event_window_fraction)
     _set(config, "training.num_workers", 0)

@@ -491,6 +491,42 @@ exportが中断しても同じコマンドで再開できます。時系列state
 forwardは再実行しますが、検証済みartifactの書き込みは省略します。別シーンは
 `--sequence`だけを変えて実行してください。
 
+### E0/E2/E4最終重みの複数scene動画
+
+`dsec_det_train41`の100,000 step最終重みではcheckpoint選択用validationを持たないため、
+`--split test`を明示して未使用sceneを可視化します。次のrunnerは、既定で事前学習に使っていない
+original DSEC test 12本を対象に、E0/E2/E4を1 GPUずつに割り当てます。各checkpointは一度だけ読み込み、
+12本を順に処理します。各動画にはE0 `Pz`、E2 `Ph/Pz`、E4 `Ph/Pz`、DINOv3 teacher、
+event/RGB入力と全区間のcosine推移が入ります。
+
+```bash
+bash tools/visualize_v100_e0_e2_e4_scenes.sh \
+  --run-dir outputs/v100_dsec_det_e0_e2_e4_YYYYMMDD_HHMMSS \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --teacher-checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --gpus 0,1,2 \
+  --step 100000
+```
+
+最初は`--sequences zurich_city_13_b`を追加して1本だけ完走確認するのが安全です。その後同じcommandを
+既定scene集合で再実行します。出力は
+`RUN_DIR/feature_visualization/test_scenes_step100000/SEQUENCE/alignment.mp4`、scene別JSON/CSV、
+全sceneをまとめた`summary.csv`です。`summary_comparisons.csv`にはE2/E4それぞれの`Ph - Pz`を含む
+差分をscene別と全scene集約（`__overall__`）で保存します。各sequenceではstateを先頭だけでresetし、
+最後まで連続させます。
+
+feature export中の進捗は、別terminalで次のようにモデル別ログを確認できます。
+
+```bash
+VIS_DIR=outputs/v100_dsec_det_e0_e2_e4_YYYYMMDD_HHMMSS/feature_visualization/test_scenes_step100000
+tail -n 20 -F \
+  "$VIS_DIR/logs/export_E0.log" \
+  "$VIS_DIR/logs/export_E2.log" \
+  "$VIS_DIR/logs/export_E4.log"
+```
+
 ### State reset ablation
 
 同じE1/E2 checkpointを、stateをシーケンス全体で保持する条件、8-frame validation clipごとに

@@ -39,6 +39,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher-cache-dir", type=Path, required=True)
     parser.add_argument("--teacher-checkpoint", type=Path, default=None)
     parser.add_argument("--sequence", required=True)
+    parser.add_argument(
+        "--split",
+        choices=("train", "test"),
+        default=None,
+        help="Evaluation split override; final train41 checkpoints should use test",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--event-window-fraction",
