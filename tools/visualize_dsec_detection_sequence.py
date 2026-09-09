@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm import tqdm
 
 from event_state.data.transforms import PairedSequenceTransform
@@ -45,6 +46,84 @@ class DetectionSource:
     feature: str
 
 
+class SequenceFeatureDataset(Dataset[dict[str, Any]]):
+    """All cached sequence frames, with GT attached only where evaluable."""
+
+    def __init__(
+        self,
+        source: DetectionSource,
+        sequence: str,
+        evaluation_dataset: DSECDetectionFeatureDataset,
+        *,
+        frame_mode: str,
+    ) -> None:
+        self.source = source
+        self.sequence = sequence
+        self.input_size = evaluation_dataset.input_size
+        self.patch_size = evaluation_dataset.patch_size
+        if self.input_size is None or self.patch_size is None:
+            raise RuntimeError("Detection feature geometry was not initialized")
+        targets = {
+            int(timestamp): {key: value.clone() for key, value in target.items()}
+            for _, timestamp, _, target in evaluation_dataset.samples
+        }
+        directory = source.feature_cache_dir / sequence
+        paths = sorted(
+            (path for path in directory.glob("*.pt") if path.stem.isdecimal()),
+            key=lambda path: int(path.stem),
+        )
+        if frame_mode == "evaluated":
+            paths = [path for path in paths if int(path.stem) in targets]
+        if not paths:
+            raise ValueError(f"No visualization frames found: {directory}")
+        empty_target = {
+            "boxes": torch.empty((0, 4), dtype=torch.float32),
+            "labels": torch.empty((0,), dtype=torch.int64),
+        }
+        self.samples: list[tuple[str, int, Path, dict[str, torch.Tensor], bool]] = [
+            (
+                sequence,
+                int(path.stem),
+                path,
+                targets.get(int(path.stem), empty_target),
+                int(path.stem) in targets,
+            )
+            for path in paths
+        ]
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        sequence, timestamp, path, target, evaluated = self.samples[index]
+        payload = _safe_load(path)
+        features = payload.get("features") if isinstance(payload, dict) else None
+        if not isinstance(features, dict):
+            raise ValueError(f"feature payload lacks features: {path}")
+        if self.source.feature == "concat":
+            value = torch.cat((features["z"], features["h"]), dim=0)
+        else:
+            value = features.get(self.source.feature)
+        if not isinstance(value, torch.Tensor) or value.ndim != 3:
+            raise ValueError(f"invalid {self.source.feature} feature map: {path}")
+        expected_grid = (
+            math.ceil(self.input_size[0] / self.patch_size),
+            math.ceil(self.input_size[1] / self.patch_size),
+        )
+        if tuple(value.shape[-2:]) != expected_grid:
+            raise ValueError(
+                f"Feature grid {tuple(value.shape[-2:])} does not match "
+                f"{expected_grid}: {path}"
+            )
+        return {
+            "feature": value.float(),
+            "target": {key: tensor.clone() for key, tensor in target.items()},
+            "sequence_name": sequence,
+            "timestamp": timestamp,
+            "evaluated": evaluated,
+        }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -68,6 +147,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--role", choices=("train", "val", "test"), default="test")
     parser.add_argument("--sequence", required=True)
+    parser.add_argument(
+        "--frame-mode",
+        choices=("all", "evaluated"),
+        default="all",
+        help="Render every cached frame or only official evaluated frames",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--precision", choices=("fp32", "fp16"), default="fp16")
@@ -122,14 +207,20 @@ def _font(size: int) -> ImageFont.ImageFont:
 def _dataset(
     source: DetectionSource,
     args: argparse.Namespace,
-) -> DSECDetectionFeatureDataset:
-    return DSECDetectionFeatureDataset(
+) -> SequenceFeatureDataset:
+    evaluation_dataset = DSECDetectionFeatureDataset(
         feature_cache_dir=source.feature_cache_dir,
         labels_root=args.labels_root,
         dataset_root=args.dataset_root,
         sequences=(args.sequence,),
         feature=source.feature,
         protocol="dsec-det",
+    )
+    return SequenceFeatureDataset(
+        source,
+        args.sequence,
+        evaluation_dataset,
+        frame_mode=args.frame_mode,
     )
 
 
@@ -143,14 +234,14 @@ def _selected_indices(length: int, start: int, maximum: int | None) -> list[int]
 
 
 def _sample_keys(
-    dataset: DSECDetectionFeatureDataset, indices: list[int]
+    dataset: SequenceFeatureDataset, indices: list[int]
 ) -> list[tuple[str, int]]:
     return [(dataset.samples[index][0], dataset.samples[index][1]) for index in indices]
 
 
 def _load_detector(
     source: DetectionSource,
-    dataset: DSECDetectionFeatureDataset,
+    dataset: SequenceFeatureDataset,
     device: torch.device,
     score_threshold: float,
 ) -> EventStateYOLOX:
@@ -181,7 +272,7 @@ def _load_detector(
 @torch.inference_mode()
 def _infer(
     source: DetectionSource,
-    dataset: DSECDetectionFeatureDataset,
+    dataset: SequenceFeatureDataset,
     indices: list[int],
     args: argparse.Namespace,
     device: torch.device,
@@ -505,6 +596,8 @@ def main() -> None:
     indices = _selected_indices(len(datasets[0]), args.start_frame, args.max_frames)
     keys = _sample_keys(datasets[0], indices)
     for source, dataset in zip(sources[1:], datasets[1:]):
+        if len(dataset) != len(datasets[0]):
+            raise ValueError(f"{source.label} frame count differs")
         if dataset.input_size != datasets[0].input_size:
             raise ValueError(f"{source.label} input geometry differs")
         if _sample_keys(dataset, indices) != keys:
@@ -525,6 +618,7 @@ def main() -> None:
             raise ValueError(f"{source.label} targets differ from the first source")
     if targets is None:
         raise RuntimeError("No detection frames selected")
+    evaluated = [bool(datasets[0].samples[index][4]) for index in indices]
 
     mean, basis, lower, upper = _fit_shared_pca(
         sources,
@@ -561,11 +655,14 @@ def main() -> None:
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
-    for frame_index, ((_, timestamp), target) in enumerate(zip(keys, targets)):
+    for frame_index, ((_, timestamp), target, is_evaluated) in enumerate(
+        zip(keys, targets, evaluated)
+    ):
         row: dict[str, Any] = {
             "frame": frame_index,
             "timestamp": timestamp,
-            "gt_count": len(target["boxes"]),
+            "evaluated": is_evaluated,
+            "gt_count": len(target["boxes"]) if is_evaluated else "",
         }
         for source, predictions in zip(sources, all_predictions):
             prediction = predictions[frame_index]
@@ -583,7 +680,9 @@ def main() -> None:
             {
                 "sequence": args.sequence,
                 "role": args.role,
-                "evaluated_frame_count": len(keys),
+                "frame_mode": args.frame_mode,
+                "frame_count": len(keys),
+                "evaluated_frame_count": sum(evaluated),
                 "score_threshold": args.score_threshold,
                 "fps": args.fps,
                 "sources": [
@@ -613,7 +712,9 @@ def main() -> None:
     )
     writer.send(None)
     try:
-        for frame_index, ((sequence, timestamp), target) in enumerate(zip(keys, targets)):
+        for frame_index, ((sequence, timestamp), target, is_evaluated) in enumerate(
+            zip(keys, targets, evaluated)
+        ):
             event_image = _event_image(
                 args.event_cache_dir.expanduser().resolve(),
                 sequence,
@@ -635,8 +736,10 @@ def main() -> None:
             canvas_draw = ImageDraw.Draw(canvas)
             canvas_draw.text(
                 (canvas_width // 2, 7),
-                f"{sequence} | evaluated frame {frame_index + 1}/{len(keys)} | "
-                f"timestamp {timestamp} | GT dashed white; car orange; pedestrian cyan",
+                f"{sequence} | sequence frame {frame_index + 1}/{len(keys)} | "
+                f"timestamp {timestamp} | "
+                f"GT {'available' if is_evaluated else 'unavailable'} | "
+                "GT dashed white; car orange; pedestrian cyan",
                 fill="black",
                 font=small_font,
                 anchor="ma",
@@ -675,7 +778,8 @@ def main() -> None:
                     f"{source.label} detection",
                     f"{source.feature} | predictions={len(prediction['boxes'])} | "
                     f"threshold={args.score_threshold:.2f} | "
-                    f"background={args.detection_background}",
+                    f"background={args.detection_background} | "
+                    f"GT={'shown' if is_evaluated else 'unavailable'}",
                     width=panel_width,
                     height=panel_height,
                     font=title_font,

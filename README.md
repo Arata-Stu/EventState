@@ -848,13 +848,15 @@ python tools/summarize_detection_runs.py \
 
 ### Frozen detectionの動画可視化
 
-公式validation/testの評価対象frameについて、左列にDSEC-Det座標へwarpしたaligned RGBと
-GEP 3-channel event入力、上段にGT boxとE0/E2/E4の予測、下段に各detectorが使った
+公式validation/test sequenceの全frameについて、左列にDSEC-Det座標へwarpしたaligned RGBと
+GEP 3-channel event入力、上段にE0/E2/E4の予測、下段に各detectorが使った
 `E0-z` / `E2-h` / `E4-h`特徴を表示できます。検出背景は既定でRGB、`--detection-background event`
 でeventへ切り替えられます。特徴の色はsequence内の
 全model・全表示frameから求めた共通のL2-normalized PCAなので、model間で直接比較できます。
 GTは白い破線、car予測は橙、pedestrian予測は水色です。動画と同時にframe別の予測数・最大scoreを
-CSVへ、使用checkpointなどをJSONへ保存します。
+CSVへ、使用checkpointなどをJSONへ保存します。GTは公式mAP評価対象frameだけに表示し、それ以外は
+`GT unavailable`と明記します。既定の`--frame-mode all`はfeature cache内の全frameを飛ばさず描画し、
+従来の評価frameだけを確認するときのみ`--frame-mode evaluated`を指定します。
 
 ```bash
 uv sync --active --extra detection --extra visualize

@@ -16,6 +16,7 @@ GPU=0
 FPS=20
 SCORE_THRESHOLD=0.25
 DETECTION_BACKGROUND="rgb"
+FRAME_MODE="all"
 MAX_FRAMES=""
 SEQUENCES=()
 
@@ -27,11 +28,14 @@ Usage:
     --labels-root PATH --dataset-root PATH --output-dir PATH \
     [--role val|test] [--seed 0] [--gpu 0] [--fps 20] \
     [--score-threshold 0.25] [--detection-background rgb|event] \
+    [--frame-mode all|evaluated] \
     [--max-frames N] \
     [--sequences SEQUENCE ...]
 
 Without --sequences, all official sequences in the selected role are rendered.
 Each MP4 shows E0/E2/E4 detections above their shared-PCA feature maps.
+The default all-frame mode preserves the complete sequence timeline; GT boxes
+are shown only on official evaluation frames.
 EOF
 }
 
@@ -54,6 +58,7 @@ while [ "$#" -gt 0 ]; do
     --fps) FPS=${2:?}; shift 2 ;;
     --score-threshold) SCORE_THRESHOLD=${2:?}; shift 2 ;;
     --detection-background) DETECTION_BACKGROUND=${2:?}; shift 2 ;;
+    --frame-mode) FRAME_MODE=${2:?}; shift 2 ;;
     --max-frames) MAX_FRAMES=${2:?}; shift 2 ;;
     --sequences)
       shift
@@ -69,6 +74,7 @@ done
 
 case "$ROLE" in val|test) ;; *) fail "--role must be val or test" ;; esac
 case "$DETECTION_BACKGROUND" in rgb|event) ;; *) fail "invalid detection background" ;; esac
+case "$FRAME_MODE" in all|evaluated) ;; *) fail "invalid frame mode" ;; esac
 case "$SEED" in *[!0-9]*|'') fail "--seed must be a non-negative integer" ;; esac
 case "$GPU" in *[!0-9]*|'') fail "--gpu must be a non-negative integer" ;; esac
 [ -d "$DET_DIR" ] || fail "detector output directory not found: $DET_DIR"
@@ -133,6 +139,7 @@ for sequence in "${SEQUENCES[@]}"; do
     --output "$OUTPUT_DIR/$sequence.mp4" \
     --score-threshold "$SCORE_THRESHOLD" \
     --detection-background "$DETECTION_BACKGROUND" \
+    --frame-mode "$FRAME_MODE" \
     --fps "$FPS" \
     --device cuda \
     "${extra_args[@]}" \
