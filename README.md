@@ -846,6 +846,38 @@ python tools/summarize_detection_runs.py \
 `--role test`で実行します。その後`tools/evaluate_dsec_detection.py`へbenchmarkの`best.pt`を
 渡します。checkpointに記録された`dsec-det` protocolは評価時にも強制されます。
 
+### Frozen detectionの動画可視化
+
+公式validation/testの評価対象frameについて、上段にevent入力上のGT boxとE0/E2/E4の予測、
+下段に各detectorが使った`E0-z` / `E2-h` / `E4-h`特徴を表示できます。特徴の色はsequence内の
+全model・全表示frameから求めた共通のL2-normalized PCAなので、model間で直接比較できます。
+GTは白い破線、car予測は橙、pedestrian予測は水色です。動画と同時にframe別の予測数・最大scoreを
+CSVへ、使用checkpointなどをJSONへ保存します。
+
+```bash
+uv sync --active --extra detection --extra visualize
+
+DET_DIR=outputs/dsec_detection_frozen_step100000
+FEATURE_ROOT=/path/to/DSEC_cache/detection_features/e0_e2_e4_step100000/dsec_det
+
+bash tools/visualize_frozen_dsec_detection_e0_e2_e4.sh \
+  --det-dir "$DET_DIR" \
+  --feature-root "$FEATURE_ROOT" \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --output-dir outputs/dsec_detection_visualization/seed_0 \
+  --role test \
+  --seed 0 \
+  --gpu 0 \
+  --score-threshold 0.25 \
+  --sequences zurich_city_13_b
+```
+
+`--sequences`を省略すると選択したroleの全sequenceを順番に処理します。最初の動作確認には
+`--max-frames 100`を追加します。比較図のseedをtest結果から選ぶと恣意性が入るため、seed 0または
+validation mAPの中央値に最も近いseedをtest評価前に固定します。
+
 ## テスト
 
 ```bash
