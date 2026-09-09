@@ -305,7 +305,10 @@ def _event_sampling_grid(
     grid = build_dagr_sampling_grid(
         rectify_map,
         source_input_size=source_size,
-        source_stride=1,
+        # At half scale, adjacent visualization pixels are two sensor pixels
+        # apart. This keeps the generated event backdrop aligned with boxes and
+        # feature maps for both supported benchmark scales.
+        source_stride=scale,
         scale=scale,
     )
     return grid, PairedSequenceTransform(
