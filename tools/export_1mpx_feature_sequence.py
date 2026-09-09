@@ -269,6 +269,12 @@ def main() -> None:
                     name: all_features[name][valid].detach().cpu().to(torch.float16)
                     for name in requested_features
                 }
+                event_preview = F.interpolate(
+                    event_image.unsqueeze(0),
+                    size=(224, 320),
+                    mode="bilinear",
+                    align_corners=False,
+                )[0]
                 artifact = {
                     "format_version": FORMAT_VERSION,
                     "frame_index": saved_frame_index,
@@ -280,6 +286,9 @@ def main() -> None:
                     "patch_mask": patch_mask_cpu,
                     "patch_valid_fraction": patch_fraction,
                     "features_are_mask_compacted": True,
+                    "event_rgb": (event_preview.clamp(0, 1) * 255)
+                    .round()
+                    .to(torch.uint8),
                     "features": selected_features,
                 }
                 atomic_torch_save(

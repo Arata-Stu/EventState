@@ -454,6 +454,10 @@ CUDA_VISIBLE_DEVICES=0 python tools/export_1mpx_feature_sequence.py \
   --end 30 \
   --device cuda \
   --output-dir outputs/1mpx/sequence
+
+python tools/render_1mpx_feature_sequence.py \
+  --input-dir outputs/1mpx/sequence \
+  --output outputs/1mpx/sequence/alignment.mp4
 ```
 
 前処理HDF5には640×448のpixel mask、28×40のpatch mask、境界patchの実画素率も保存します。
@@ -462,6 +466,7 @@ CUDA_VISIBLE_DEVICES=0 python tools/export_1mpx_feature_sequence.py \
 有効tokenとして扱います。`--start`を0より後にしても、DAGR filterとEventStateのLSTMは
 sequence先頭からwarm-upし、指定区間より前の状態を引き継ぎます。artifactの保存だけを
 指定時刻から開始します。
+最終動画にはevent入力、各featureのPCA空間map、前frameとのcosine推移を表示します。
 
 ## 5. E0/E1/E2 feature可視化
 
