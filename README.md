@@ -433,6 +433,36 @@ validationでは少なくとも次を記録します。
 
 TensorBoard log、JSON metrics、checkpointはHydra run directory以下へ保存されます。
 
+## Prophesee 1MpxのDAGR downsample推論
+
+1Mpxの1280×720 event streamは、画像化してから縮小せず、DAGRと同じ極性付きの
+状態保持filterでイベントのまま640×360へ縮小できます。filter stateはHDF5 chunk間でも
+維持されます。モデル入力では内容を上詰めし、下88 pxをpaddingして640×448にします。
+
+```bash
+uv sync --active --extra prepare
+
+python tools/prepare_1mpx_dagr.py \
+  /path/to/sequence_td.h5 \
+  /path/to/sequence_dagr_640x360.h5
+
+CUDA_VISIBLE_DEVICES=0 python tools/export_1mpx_feature_sequence.py \
+  --input /path/to/sequence_dagr_640x360.h5 \
+  --checkpoint /path/to/EventState/checkpoints/step_00100000.pt \
+  --window-ms 50 \
+  --start 0 \
+  --end 30 \
+  --device cuda \
+  --output-dir outputs/1mpx/sequence
+```
+
+前処理HDF5には640×448のpixel mask、28×40のpatch mask、境界patchの実画素率も保存します。
+推論時は完全なpadding patchをencoder出力と時系列モデル出力の両方でmaskし、保存featureと
+`metrics.csv`の集計から除外します。360行目をまたぐpatch rowは実画素率0.5として記録し、
+有効tokenとして扱います。`--start`を0より後にしても、DAGR filterとEventStateのLSTMは
+sequence先頭からwarm-upし、指定区間より前の状態を引き継ぎます。artifactの保存だけを
+指定時刻から開始します。
+
 ## 5. E0/E1/E2 feature可視化
 
 可視化用依存を追加した後、学習完了後の3実験の`best.pt`から同一validation clipを
