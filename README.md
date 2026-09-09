@@ -803,6 +803,12 @@ bash tools/run_frozen_dsec_detection_e0_e2_e4.sh \
   --epochs 50
 ```
 
+cache作成を中断して同じcommandを再実行した場合、metadataと全frameが揃った完了済みsequenceは
+model forwardも座標変換も丸ごとskipします。不完全なsequenceだけは、continuous LSTM stateを
+再構築するため先頭からforwardします。`--overwrite`を指定した場合はこのresume判定を無効化します。
+座標変換cache format v3では各frameをbatch tensorから独立したcompact storageへcloneして保存します。
+v2以前のwarped cacheはstorageがbatch全体を保持する可能性があるため再利用せず、作り直します。
+
 Frozenの次は、同じ公式splitとYOLOX recipeでend-to-end Fine-tuneとScratchを実行します。
 Fine-tuneはRGB画像・DINO teacher weight/cacheを読まず、event encoder・1層LSTM・headを更新します。
 Scratchは最終checkpointを

@@ -70,6 +70,21 @@ def _atomic_save(payload: dict[str, Any], destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _atomic_write_json(payload: dict[str, Any], destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=destination.parent, text=True
+    )
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _event_transform(config: Any) -> PairedSequenceTransform:
     means = OmegaConf.select(config, "dataset.representation.normalize_mean")
     stds = OmegaConf.select(config, "dataset.representation.normalize_std")
@@ -93,6 +108,49 @@ def _valid_existing(path: Path, identity: dict[str, Any], features: set[str]) ->
         and all(payload.get(key) == value for key, value in identity.items())
         and isinstance(payload.get("features"), dict)
         and features <= set(payload["features"])
+    )
+
+
+def _completed_sequence(
+    destination_dir: Path,
+    frame_paths: list[Path],
+    expected_metadata: dict[str, Any],
+    features: set[str],
+) -> bool:
+    """Trust only a completion manifest whose full frame set still exists."""
+
+    metadata_path = destination_dir / "metadata.json"
+    if not metadata_path.is_file():
+        return False
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(metadata, dict):
+        return False
+    identity_keys = (
+        "format_version",
+        "sequence_name",
+        "official_role",
+        "state_policy",
+        "checkpoint_sha256",
+        "checkpoint_step",
+        "frame_count",
+        "coordinate_space",
+        "input_size",
+        "patch_size",
+    )
+    if any(metadata.get(key) != expected_metadata.get(key) for key in identity_keys):
+        return False
+    available = metadata.get("features")
+    if not isinstance(available, list) or not features <= set(available):
+        return False
+    if metadata.get("source_event_cache_metadata") != expected_metadata.get(
+        "source_event_cache_metadata"
+    ):
+        return False
+    return all(
+        (destination_dir / frame_path.name).is_file() for frame_path in frame_paths
     )
 
 
@@ -149,6 +207,34 @@ def main() -> None:
                 raise ValueError(f"No cached event frames found: {source_dir}")
             destination_dir = output_root / sequence
             destination_dir.mkdir(parents=True, exist_ok=True)
+            sequence_metadata = {
+                "format_version": FORMAT_VERSION,
+                "sequence_name": sequence,
+                "official_role": args.role,
+                "features": sorted(requested_features),
+                "state_policy": args.state_policy,
+                "checkpoint": str(checkpoint),
+                "checkpoint_sha256": checkpoint_digest,
+                "checkpoint_step": int(state.global_step),
+                "source_event_cache": str(source_dir),
+                "source_event_cache_metadata": source_metadata,
+                "frame_count": len(frame_paths),
+                "coordinate_space": "rectified_event",
+                "input_size": [event_transform.height, event_transform.width],
+                "patch_size": int(model.event_encoder.patch_size),
+            }
+            if not args.overwrite and _completed_sequence(
+                destination_dir,
+                frame_paths,
+                sequence_metadata,
+                requested_features,
+            ):
+                print(
+                    f"{sequence}: complete sequence skipped "
+                    f"({len(frame_paths)} preserved)",
+                    flush=True,
+                )
+                continue
             recurrent_state = None
             written = 0
             preserved = 0
@@ -209,26 +295,7 @@ def main() -> None:
                 else:
                     _atomic_save(payload, destination)
                     written += 1
-            sequence_metadata = {
-                "format_version": FORMAT_VERSION,
-                "sequence_name": sequence,
-                "official_role": args.role,
-                "features": sorted(requested_features),
-                "state_policy": args.state_policy,
-                "checkpoint": str(checkpoint),
-                "checkpoint_sha256": checkpoint_digest,
-                "checkpoint_step": int(state.global_step),
-                "source_event_cache": str(source_dir),
-                "source_event_cache_metadata": source_metadata,
-                "frame_count": len(frame_paths),
-                "coordinate_space": "rectified_event",
-                "input_size": [event_transform.height, event_transform.width],
-                "patch_size": int(model.event_encoder.patch_size),
-            }
-            (destination_dir / "metadata.json").write_text(
-                json.dumps(sequence_metadata, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+            _atomic_write_json(sequence_metadata, destination_dir / "metadata.json")
             print(f"{sequence}: {written} written, {preserved} preserved", flush=True)
 
 

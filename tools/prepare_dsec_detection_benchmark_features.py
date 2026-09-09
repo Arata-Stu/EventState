@@ -21,7 +21,9 @@ from event_state.detection.split import load_dsec_detection_split
 
 
 DEFAULT_SPLIT = Path(__file__).parent / "manifests" / "dsec_det_official_split.yaml"
-FORMAT_VERSION = 2
+# Version 2 could serialize a one-frame view backed by the whole warp batch.
+# Version 3 guarantees that every saved feature owns compact storage.
+FORMAT_VERSION = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,12 +70,34 @@ def _atomic_save(payload: dict[str, Any], destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _atomic_write_json(payload: dict[str, Any], destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=destination.parent, text=True
+    )
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _valid_existing(
     path: Path, features: set[str], source_payload: dict[str, Any], scale: int
 ) -> bool:
     if not path.is_file():
         return False
     payload = _safe_load(path)
+    feature_payload = payload.get("features") if isinstance(payload, dict) else None
+    compact = isinstance(feature_payload, dict) and all(
+        isinstance(feature_payload.get(feature), torch.Tensor)
+        and feature_payload[feature].untyped_storage().nbytes()
+        == feature_payload[feature].numel() * feature_payload[feature].element_size()
+        for feature in features
+    )
     return (
         isinstance(payload, dict)
         and payload.get("benchmark_format_version") == FORMAT_VERSION
@@ -82,8 +106,49 @@ def _valid_existing(
         and payload.get("checkpoint_sha256") == source_payload.get("checkpoint_sha256")
         and payload.get("timestamp") == source_payload.get("timestamp")
         and payload.get("frame_index") == source_payload.get("frame_index")
-        and isinstance(payload.get("features"), dict)
-        and features <= set(payload["features"])
+        and isinstance(feature_payload, dict)
+        and features <= set(feature_payload)
+        and compact
+    )
+
+
+def _completed_sequence(
+    destination_dir: Path,
+    source_paths: list[Path],
+    expected_metadata: dict[str, Any],
+    features: set[str],
+) -> bool:
+    metadata_path = destination_dir / "metadata.json"
+    if not metadata_path.is_file():
+        return False
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(metadata, dict):
+        return False
+    identity_keys = (
+        "benchmark_format_version",
+        "sequence_name",
+        "official_role",
+        "checkpoint_sha256",
+        "checkpoint_step",
+        "frame_count",
+        "coordinate_space",
+        "detection_scale",
+        "input_size",
+        "patch_size",
+        "source_feature_cache",
+        "source_input_size",
+        "source_patch_size",
+    )
+    if any(metadata.get(key) != expected_metadata.get(key) for key in identity_keys):
+        return False
+    available = metadata.get("features")
+    if not isinstance(available, list) or not features <= set(available):
+        return False
+    return all(
+        (destination_dir / source_path.name).is_file() for source_path in source_paths
     )
 
 
@@ -124,6 +189,38 @@ def main() -> None:
         available = set(metadata.get("features", []))
         if not features <= available:
             raise ValueError(f"Source cache lacks {sorted(features - available)}: {metadata_path}")
+        paths = sorted(
+            (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
+            key=lambda path: int(path.stem),
+        )
+        destination_dir = output_root / sequence
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        output_metadata = {
+            **metadata,
+            "coordinate_space": "dsec_det_distorted",
+            "detection_scale": args.scale,
+            "benchmark_format_version": FORMAT_VERSION,
+            "input_size": [430 // args.scale, 640 // args.scale],
+            "patch_size": source_stride // args.scale,
+            "features": sorted(features),
+            "source_feature_cache": str(source_dir),
+            "source_input_size": input_size,
+            "source_patch_size": source_stride,
+            "dsec_det_protocol": {
+                "scale": args.scale,
+                "cropped_height": 430,
+                "physical_min_box_side": 20,
+                "physical_min_box_diagonal": 30,
+            },
+        }
+        if not args.overwrite and _completed_sequence(
+            destination_dir, paths, output_metadata, features
+        ):
+            print(
+                f"{sequence}: complete sequence skipped ({len(paths)} preserved)",
+                flush=True,
+            )
+            continue
         with h5py.File(find_rectify_map(dataset_root, sequence), "r") as handle:
             rectify_map = np.asarray(handle["rectify_map"], dtype=np.float32)
         grid = build_dagr_sampling_grid(
@@ -132,12 +229,6 @@ def main() -> None:
             source_stride=source_stride,
             scale=args.scale,
         ).to(device)
-        paths = sorted(
-            (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
-            key=lambda path: int(path.stem),
-        )
-        destination_dir = output_root / sequence
-        destination_dir.mkdir(parents=True, exist_ok=True)
         written = 0
         preserved = 0
         for start in tqdm(
@@ -188,31 +279,17 @@ def main() -> None:
                 output["detection_scale"] = args.scale
                 output["benchmark_format_version"] = FORMAT_VERSION
                 output["features"] = {
-                    feature: warped[feature][output_index].contiguous() for feature in features
+                    # A contiguous slice can still retain the storage of the
+                    # complete [batch,C,H,W] tensor. Force a new one-frame
+                    # storage so torch.save does not serialize the full batch.
+                    feature: warped[feature][output_index].clone(
+                        memory_format=torch.contiguous_format
+                    )
+                    for feature in features
                 }
                 _atomic_save(output, destination_dir / batch_paths[payload_index].name)
                 written += 1
-        output_metadata = {
-            **metadata,
-            "coordinate_space": "dsec_det_distorted",
-            "benchmark_format_version": FORMAT_VERSION,
-            "input_size": [430 // args.scale, 640 // args.scale],
-            "patch_size": source_stride // args.scale,
-            "features": sorted(features),
-            "source_feature_cache": str(source_dir),
-            "source_input_size": input_size,
-            "source_patch_size": source_stride,
-            "dsec_det_protocol": {
-                "scale": args.scale,
-                "cropped_height": 430,
-                "physical_min_box_side": 20,
-                "physical_min_box_diagonal": 30,
-            },
-        }
-        (destination_dir / "metadata.json").write_text(
-            json.dumps(output_metadata, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        _atomic_write_json(output_metadata, destination_dir / "metadata.json")
         print(f"{sequence}: {written} written, {preserved} preserved", flush=True)
 
 
