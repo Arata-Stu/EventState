@@ -74,6 +74,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--score-threshold", type=float, default=0.25)
+    parser.add_argument(
+        "--detection-background",
+        choices=("rgb", "event"),
+        default="rgb",
+        help="Backdrop used behind GT and predicted boxes (default: rgb)",
+    )
     parser.add_argument("--fps", type=float, default=20.0)
     parser.add_argument("--start-frame", type=int, default=0)
     parser.add_argument("--max-frames", type=int, default=None)
@@ -318,6 +324,33 @@ def _event_sampling_grid(
     )
 
 
+def _warped_image(
+    value: torch.Tensor,
+    transform: PairedSequenceTransform,
+    grid: torch.Tensor,
+) -> Image.Image:
+    if value.ndim != 3:
+        raise ValueError("Visualization image must have shape [C,H,W]")
+    transformed, _ = transform(value.float().unsqueeze(0), None)
+    if transformed is None:
+        raise RuntimeError("Visualization transform returned no tensor")
+    warped = F.grid_sample(
+        transformed,
+        grid.unsqueeze(0),
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=False,
+    )[0]
+    # GEP event tensors are float RGB in [0,1], while prepared RGB files are
+    # represented in [0,255]. Preserve both conventions before uint8 export.
+    if warped.numel() and float(warped.max()) <= 1.5 and float(warped.min()) >= 0.0:
+        warped = warped * 255.0
+    array = warped[:3].clamp(0, 255).round().byte().permute(1, 2, 0).numpy()
+    if array.shape[2] == 1:
+        array = np.repeat(array, 3, axis=2)
+    return Image.fromarray(array, mode="RGB")
+
+
 def _event_image(
     event_cache_dir: Path,
     sequence: str,
@@ -329,20 +362,37 @@ def _event_image(
     events = payload.get("events") if isinstance(payload, dict) else None
     if not isinstance(events, torch.Tensor) or events.ndim != 3:
         raise ValueError(f"invalid event cache at {sequence}/{timestamp}")
-    transformed, _ = transform(events.float().unsqueeze(0), None)
-    if transformed is None:
-        raise RuntimeError("Event transform returned no tensor")
-    warped = F.grid_sample(
-        transformed,
-        grid.unsqueeze(0),
-        mode="bilinear",
-        padding_mode="zeros",
-        align_corners=False,
-    )[0]
-    array = warped[:3].clamp(0, 255).byte().permute(1, 2, 0).numpy()
-    if array.shape[2] == 1:
-        array = np.repeat(array, 3, axis=2)
-    return Image.fromarray(array, mode="RGB")
+    return _warped_image(events, transform, grid)
+
+
+def _find_aligned_rgb(dataset_root: Path, sequence: str, timestamp: int) -> Path:
+    relative = Path(sequence) / "images" / "left" / "aligned_event" / f"{timestamp}.png"
+    candidates = [
+        dataset_root / "train_images" / relative,
+        dataset_root / "test_images" / relative,
+        dataset_root / "dsec_det_extra" / "train" / relative,
+        dataset_root / "dsec_det_extra" / "test" / relative,
+    ]
+    matches = [path for path in candidates if path.is_file()]
+    if len(matches) != 1:
+        detail = "none" if not matches else ", ".join(str(path) for path in matches)
+        raise FileNotFoundError(
+            f"Expected one aligned RGB frame for {sequence}/{timestamp}; found {detail}"
+        )
+    return matches[0]
+
+
+def _rgb_image(
+    dataset_root: Path,
+    sequence: str,
+    timestamp: int,
+    transform: PairedSequenceTransform,
+    grid: torch.Tensor,
+) -> Image.Image:
+    with Image.open(_find_aligned_rgb(dataset_root, sequence, timestamp)) as image:
+        array = np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
+    value = torch.from_numpy(array).permute(2, 0, 1)
+    return _warped_image(value, transform, grid)
 
 
 def _draw_dashed_rectangle(
@@ -496,7 +546,11 @@ def main() -> None:
     gap = 6
     header_height = 38
     panel_full_height = panel_height + 54
-    canvas_width = len(sources) * panel_width + (len(sources) - 1) * gap
+    # One context column (RGB/event) followed by one detection/feature column
+    # per model makes the input, predictions, and representations comparable at
+    # the same timestamp without hiding the event signal behind box overlays.
+    columns = len(sources) + 1
+    canvas_width = columns * panel_width + (columns - 1) * gap
     canvas_height = header_height + 2 * panel_full_height + gap
     canvas_width += canvas_width % 2
     canvas_height += canvas_height % 2
@@ -560,12 +614,22 @@ def main() -> None:
     writer.send(None)
     try:
         for frame_index, ((sequence, timestamp), target) in enumerate(zip(keys, targets)):
-            background = _event_image(
+            event_image = _event_image(
                 args.event_cache_dir.expanduser().resolve(),
                 sequence,
                 timestamp,
                 event_transform,
                 event_grid,
+            )
+            rgb_image = _rgb_image(
+                args.dataset_root.expanduser().resolve(),
+                sequence,
+                timestamp,
+                event_transform,
+                event_grid,
+            )
+            detection_background = (
+                rgb_image if args.detection_background == "rgb" else event_image
             )
             canvas = Image.new("RGB", (canvas_width, canvas_height), (235, 235, 235))
             canvas_draw = ImageDraw.Draw(canvas)
@@ -577,14 +641,41 @@ def main() -> None:
                 font=small_font,
                 anchor="ma",
             )
+            canvas.paste(
+                _panel(
+                    rgb_image,
+                    "Aligned RGB input",
+                    "warped to native DSEC-Det coordinates",
+                    width=panel_width,
+                    height=panel_height,
+                    font=title_font,
+                    small_font=small_font,
+                ),
+                (0, header_height),
+            )
+            canvas.paste(
+                _panel(
+                    event_image,
+                    "GEP 3-channel event input",
+                    "same causal event window used by EventState",
+                    width=panel_width,
+                    height=panel_height,
+                    font=title_font,
+                    small_font=small_font,
+                ),
+                (0, header_height + panel_full_height + gap),
+            )
             for column, (source, predictions) in enumerate(zip(sources, all_predictions)):
                 prediction = predictions[frame_index]
-                detection = _detection_image(background, target, prediction, box_font)
+                detection = _detection_image(
+                    detection_background, target, prediction, box_font
+                )
                 detection_panel = _panel(
                     detection,
                     f"{source.label} detection",
                     f"{source.feature} | predictions={len(prediction['boxes'])} | "
-                    f"threshold={args.score_threshold:.2f}",
+                    f"threshold={args.score_threshold:.2f} | "
+                    f"background={args.detection_background}",
                     width=panel_width,
                     height=panel_height,
                     font=title_font,
@@ -608,7 +699,7 @@ def main() -> None:
                     font=title_font,
                     small_font=small_font,
                 )
-                x = column * (panel_width + gap)
+                x = (column + 1) * (panel_width + gap)
                 canvas.paste(detection_panel, (x, header_height))
                 canvas.paste(feature_panel, (x, header_height + panel_full_height + gap))
             writer.send(np.asarray(canvas, dtype=np.uint8))

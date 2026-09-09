@@ -848,8 +848,10 @@ python tools/summarize_detection_runs.py \
 
 ### Frozen detectionの動画可視化
 
-公式validation/testの評価対象frameについて、上段にevent入力上のGT boxとE0/E2/E4の予測、
-下段に各detectorが使った`E0-z` / `E2-h` / `E4-h`特徴を表示できます。特徴の色はsequence内の
+公式validation/testの評価対象frameについて、左列にDSEC-Det座標へwarpしたaligned RGBと
+GEP 3-channel event入力、上段にGT boxとE0/E2/E4の予測、下段に各detectorが使った
+`E0-z` / `E2-h` / `E4-h`特徴を表示できます。検出背景は既定でRGB、`--detection-background event`
+でeventへ切り替えられます。特徴の色はsequence内の
 全model・全表示frameから求めた共通のL2-normalized PCAなので、model間で直接比較できます。
 GTは白い破線、car予測は橙、pedestrian予測は水色です。動画と同時にframe別の予測数・最大scoreを
 CSVへ、使用checkpointなどをJSONへ保存します。

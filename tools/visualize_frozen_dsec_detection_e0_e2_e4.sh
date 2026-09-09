@@ -15,6 +15,7 @@ SEED=0
 GPU=0
 FPS=20
 SCORE_THRESHOLD=0.25
+DETECTION_BACKGROUND="rgb"
 MAX_FRAMES=""
 SEQUENCES=()
 
@@ -25,7 +26,8 @@ Usage:
     --det-dir PATH --feature-root PATH --event-cache-dir PATH \
     --labels-root PATH --dataset-root PATH --output-dir PATH \
     [--role val|test] [--seed 0] [--gpu 0] [--fps 20] \
-    [--score-threshold 0.25] [--max-frames N] \
+    [--score-threshold 0.25] [--detection-background rgb|event] \
+    [--max-frames N] \
     [--sequences SEQUENCE ...]
 
 Without --sequences, all official sequences in the selected role are rendered.
@@ -51,6 +53,7 @@ while [ "$#" -gt 0 ]; do
     --gpu) GPU=${2:?}; shift 2 ;;
     --fps) FPS=${2:?}; shift 2 ;;
     --score-threshold) SCORE_THRESHOLD=${2:?}; shift 2 ;;
+    --detection-background) DETECTION_BACKGROUND=${2:?}; shift 2 ;;
     --max-frames) MAX_FRAMES=${2:?}; shift 2 ;;
     --sequences)
       shift
@@ -65,6 +68,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$ROLE" in val|test) ;; *) fail "--role must be val or test" ;; esac
+case "$DETECTION_BACKGROUND" in rgb|event) ;; *) fail "invalid detection background" ;; esac
 case "$SEED" in *[!0-9]*|'') fail "--seed must be a non-negative integer" ;; esac
 case "$GPU" in *[!0-9]*|'') fail "--gpu must be a non-negative integer" ;; esac
 [ -d "$DET_DIR" ] || fail "detector output directory not found: $DET_DIR"
@@ -128,6 +132,7 @@ for sequence in "${SEQUENCES[@]}"; do
     --sequence "$sequence" \
     --output "$OUTPUT_DIR/$sequence.mp4" \
     --score-threshold "$SCORE_THRESHOLD" \
+    --detection-background "$DETECTION_BACKGROUND" \
     --fps "$FPS" \
     --device cuda \
     "${extra_args[@]}" \
