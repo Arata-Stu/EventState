@@ -863,6 +863,11 @@ bash tools/run_dsec_detection_finetune_scratch.sh \
   --validate-every 5
 ```
 
+同じ`--output-dir`で再実行すると、各条件に`last.pt`があればepoch単位で自動再開します。
+checkpointは各epoch末にatomic保存されるため、途中停止時に失うのは実行中のepochだけです。
+runnerは開始前に`pycocotools`も検査し、長時間学習後のvalidationで初めて依存不足が判明することを
+防ぎます。
+
 最初は`--seeds 0 --epochs 1 --validate-every 1`で実データsmoke testを行い、V100のVRAM使用量と
 validation完走を確認してから本実行へ進みます。研究上の評価順とJEPA接続前に固定する契約は
 [downstream roadmap](docs/downstream_roadmap.md)にまとめています。

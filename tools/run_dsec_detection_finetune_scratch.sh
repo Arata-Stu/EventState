@@ -55,6 +55,8 @@ done
 [ -d "$DATASET_ROOT" ] || fail "dataset root not found: $DATASET_ROOT"
 [ -n "$OUTPUT_DIR" ] || fail "--output-dir is required"
 command -v python >/dev/null 2>&1 || fail "python not found; activate the EventState env"
+python -c 'from pycocotools.coco import COCO' >/dev/null 2>&1 || \
+  fail "pycocotools missing; run: uv sync --active --extra detection"
 
 RUN_DIR=$(cd "$RUN_DIR" && pwd -P)
 EVENT_CACHE_DIR=$(cd "$EVENT_CACHE_DIR" && pwd -P)
@@ -81,7 +83,14 @@ train_one() {
   local checkpoint=$5
   local seed=$6
   local log_dir="$OUTPUT_DIR/logs/seed_$seed"
+  local run_output="$OUTPUT_DIR/$mode/$label/seed_$seed"
+  local resume_args=()
   mkdir -p "$log_dir"
+  if [ -f "$run_output/last.pt" ]; then
+    resume_args=(--resume "$run_output/last.pt")
+    printf '[detection] resuming %s/%s seed=%s from %s\n' \
+      "$mode" "$label" "$seed" "$run_output/last.pt"
+  fi
   CUDA_VISIBLE_DEVICES="$gpu" python tools/train_dsec_detection_end_to_end.py \
     --mode "$mode" \
     --reference-checkpoint "$checkpoint" \
@@ -89,13 +98,14 @@ train_one() {
     --labels-root "$LABELS_ROOT" \
     --dataset-root "$DATASET_ROOT" \
     --feature "$feature" \
-    --output-dir "$OUTPUT_DIR/$mode/$label/seed_$seed" \
+    --output-dir "$run_output" \
     --batch-size "$BATCH_SIZE" \
     --epochs "$EPOCHS" \
     --validate-every "$VALIDATE_EVERY" \
     --seed "$seed" \
     --device cuda \
-    >"$log_dir/${mode}_${label}.log" 2>&1
+    "${resume_args[@]}" \
+    >>"$log_dir/${mode}_${label}.log" 2>&1
 }
 
 IFS=',' read -r -a SEED_VALUES <<< "$SEEDS"
