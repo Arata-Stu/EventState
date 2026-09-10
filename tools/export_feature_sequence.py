@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stream one complete DSEC sequence and cache compact visualization features."""
+"""Stream one complete dataset sequence and cache compact visualization features."""
 
 from __future__ import annotations
 

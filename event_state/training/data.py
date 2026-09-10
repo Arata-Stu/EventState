@@ -17,6 +17,7 @@ from event_state.data import (
     DSECSequenceDataset,
     EventVoxelizer,
     GEPEventFrame,
+    M3EDSequenceDataset,
     PairedSequenceTransform,
 )
 from event_state.data.cache_metadata import (
@@ -147,7 +148,7 @@ def _expected_teacher_identity(teacher_config: Any) -> dict[str, Any]:
 
 
 def _validate_teacher_cache(
-    dataset: DSECSequenceDataset,
+    dataset: Any,
     *,
     teacher_config: Any,
     dataset_config: Any,
@@ -261,10 +262,19 @@ def _validate_teacher_cache(
 
 
 def _validate_dataset_location(dataset_config: Any) -> None:
-    if str(_value(dataset_config, "name", "dsec")).lower() != "dsec":
-        raise ValueError("The Phase 0/1 runtime currently supports only DSEC")
+    dataset_name = str(_value(dataset_config, "name", "dsec")).lower()
+    if dataset_name not in {"dsec", "m3ed"}:
+        raise ValueError("The Phase 0/1 runtime supports DSEC and M3ED")
     if _value(dataset_config, "root") in (None, ""):
-        raise ValueError("dataset.root must point to the DSEC directory")
+        raise ValueError("dataset.root must point to the dataset directory")
+    if dataset_name == "m3ed" and _value(dataset_config, "prepared_root") in (None, ""):
+        raise ValueError("dataset.prepared_root must point to prepared M3ED data")
+
+
+def _dataset_class(dataset_config: Any) -> type[DSECSequenceDataset] | type[M3EDSequenceDataset]:
+    if str(_value(dataset_config, "name", "dsec")).lower() == "m3ed":
+        return M3EDSequenceDataset
+    return DSECSequenceDataset
 
 
 def _dataset_options(
@@ -288,16 +298,21 @@ def _dataset_options(
         ),
         "load_events": True,
         "load_images": not cache_features,
+        **(
+            {"prepared_root": _value(dataset_config, "prepared_root")}
+            if str(_value(dataset_config, "name", "dsec")).lower() == "m3ed"
+            else {}
+        ),
     }
 
 
 def _build_validation_dataset(
     config: Any,
     event_representation: Any,
-) -> DSECSequenceDataset:
+) -> DSECSequenceDataset | M3EDSequenceDataset:
     dataset_config = _value(config, "dataset")
     teacher_config = _value(config, "teacher")
-    return DSECSequenceDataset(
+    return _dataset_class(dataset_config)(
         split=str(_value(dataset_config, "val_split", "test")),
         sequences=_as_optional_list(_value(dataset_config, "val_sequences")),
         clip_stride=int(_value(dataset_config, "sequence_length")),
@@ -360,11 +375,13 @@ def build_dataloaders(config: Any) -> DataLoaders:
     validation_split = str(_value(dataset_config, "val_split", "test"))
     train_sequences = _as_optional_list(_value(dataset_config, "train_sequences"))
     validation_sequences = _as_optional_list(_value(dataset_config, "val_sequences"))
-    if validation_enabled and train_split == validation_split:
+    dataset_name = str(_value(dataset_config, "name", "dsec")).lower()
+    shared_physical_pool = train_split == validation_split or dataset_name == "m3ed"
+    if validation_enabled and shared_physical_pool:
         if train_sequences is None or validation_sequences is None:
             raise ValueError(
-                "When train_split and val_split are identical, both sequence manifests "
-                "must be explicit to prevent temporal leakage"
+                "Datasets sharing one physical sequence pool require explicit train and "
+                "validation manifests to prevent temporal leakage"
             )
         overlap = sorted(set(train_sequences) & set(validation_sequences))
         if overlap:
@@ -375,7 +392,7 @@ def build_dataloaders(config: Any) -> DataLoaders:
     event_representation = build_event_representation(dataset_config)
     cache_features = bool(_value(teacher_config, "cache_features", True))
     common = _dataset_options(dataset_config, teacher_config, event_representation)
-    train_dataset = DSECSequenceDataset(
+    train_dataset = _dataset_class(dataset_config)(
         split=train_split,
         sequences=train_sequences,
         clip_stride=int(_value(dataset_config, "clip_stride", 1)),

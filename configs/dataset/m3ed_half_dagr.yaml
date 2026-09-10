@@ -1,0 +1,52 @@
+name: m3ed
+root: null
+prepared_root: null
+
+# Logical, sequence-level split. M3ED stores recordings as individual HDF5
+# files rather than physical train/test directories. Keep these lists disjoint.
+train_split: train
+val_split: validation
+train_sequences:
+  - car_urban_day_penno_small_loop
+  - car_urban_day_penno_big_loop
+  - car_urban_day_city_hall
+  - car_urban_day_horse
+val_sequences:
+  - car_urban_day_ucity_big_loop
+
+# At roughly 30 Hz this exposes about half a second of history per random clip.
+# Use 32 or 64 with a smaller batch when specifically studying long stops.
+sequence_length: 16
+clip_stride: 1
+event_window: rgb_interval
+event_window_fraction: 1.0
+
+# Native M3ED is 1280x720. The preparation tool first applies DAGR's stateful
+# signed-event 2x filter, then rectifies into the matching 640x360 RGB view.
+sensor_height: 360
+sensor_width: 640
+rectify_events: true
+image_directory: aligned_rgb
+event_cache_dir: ${dataset.prepared_root}
+
+# 360 is not divisible by DINOv3's patch size 16. Crop four rows from the top
+# and bottom after paired alignment; this keeps 97.8% of the half-scale image.
+input_height: 352
+input_width: 640
+
+representation:
+  type: gep_rgb
+  channels: 3
+  percentile: 90.0
+  event_bins: 10
+  polarity_split: true
+  voxel_normalization: nonzero_standardize
+  # Safe smoke-test defaults. tools/prepare_m3ed.py writes M3ED-specific values
+  # to event_statistics.json; override these six values for a full run.
+  normalize_mean: [0.0, 0.0, 0.0]
+  normalize_std: [1.0, 1.0, 1.0]
+
+augmentation:
+  enabled: false
+  scale: [0.8, 1.0]
+  horizontal_flip_probability: 0.5

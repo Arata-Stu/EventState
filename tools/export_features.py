@@ -81,6 +81,12 @@ def _prepare_config(args: argparse.Namespace) -> tuple[Any, Any]:
         "dataset.event_cache_dir",
         str(args.event_cache_dir.expanduser().resolve()),
     )
+    if str(OmegaConf.select(config, "dataset.name", default="dsec")).lower() == "m3ed":
+        _set(
+            config,
+            "dataset.prepared_root",
+            str(args.event_cache_dir.expanduser().resolve()),
+        )
     _set(
         config,
         "teacher.cache_dir",

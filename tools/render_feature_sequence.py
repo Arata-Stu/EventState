@@ -220,6 +220,24 @@ def _timeline(
         y = y_of(tick)
         draw.line((left, y, right, y), fill=(225, 225, 225))
         draw.text((left - 6, y), f"{tick:.1f}", fill="black", font=font, anchor="rm")
+    log_counts = np.log1p(np.asarray(event_counts, dtype=np.float64))
+    count_range = float(log_counts.max() - log_counts.min())
+    if count_range > 0:
+        normalized_counts = (log_counts - log_counts.min()) / count_range
+    else:
+        normalized_counts = np.zeros_like(log_counts)
+    count_points = [
+        (x_of(index), y_of(float(value)))
+        for index, value in enumerate(normalized_counts)
+    ]
+    if len(count_points) > 1:
+        draw.line(count_points, fill=(130, 130, 130), width=1)
+    draw.text(
+        (left + 8, bottom - 14),
+        "event count (log, normalized)",
+        fill=(105, 105, 105),
+        font=font,
+    )
     for line_index, (label, values) in enumerate(alignments.items()):
         color = colors[line_index % len(colors)]
         points = [(x_of(index), y_of(value)) for index, value in enumerate(values)]
@@ -347,6 +365,9 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(records)
     event_order = np.argsort([record["event_count"] for record in records])
+    event_count_values = np.asarray(
+        [record["event_count"] for record in records], dtype=np.float64
+    )
     event_groups = {
         "low": event_order[: len(event_order) // 3],
         "medium": event_order[len(event_order) // 3 : 2 * len(event_order) // 3],
@@ -428,6 +449,13 @@ def main() -> None:
     summary = {
         "frame_count": len(records),
         "fps": args.fps,
+        "event_count": {
+            "min": int(event_count_values.min()),
+            "p10": float(np.quantile(event_count_values, 0.10)),
+            "median": float(np.median(event_count_values)),
+            "p90": float(np.quantile(event_count_values, 0.90)),
+            "max": int(event_count_values.max()),
+        },
         "event_drop": _load(source_paths[0][0]).get("event_drop"),
         "dropped_frame_count": int(dropped_mask.sum()),
         "sources": source_summaries,

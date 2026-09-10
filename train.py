@@ -42,7 +42,7 @@ def main(config: DictConfig) -> None:
             compatibility_mode="resume",
         )
     print(
-        "Building runtime; validating DSEC inputs and caches before GPU initialization...",
+        "Building runtime; validating dataset inputs and caches before GPU initialization...",
         flush=True,
     )
     runtime = build_runtime(config)

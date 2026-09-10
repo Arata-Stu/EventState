@@ -86,7 +86,7 @@ def validate_config(config: Any) -> None:
     width = int(_value(dataset, "input_width"))
     patch_size = int(_value(teacher, "patch_size", 16))
     if height % patch_size or width % patch_size:
-        raise ValueError("DSEC input height and width must be divisible by the teacher patch size")
+        raise ValueError("Input height and width must be divisible by the teacher patch size")
     teacher_dim = int(_value(teacher, "embedding_dim", 384))
     if int(_value(projector, "output_dim")) != teacher_dim:
         raise ValueError("model.projector.output_dim must match teacher.embedding_dim")

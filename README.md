@@ -42,7 +42,13 @@ Mamba、future prediction、flow probe、CMax、下流segmentation/flow/detectio
 
 最初は **DSEC** を使用します。event/RGB/calibrationが揃い、同じdataset familyで
 flow、semantic segmentation、detectionへ評価を広げられるためです。M3EDはPhase 1の
-比較が安定した後に同じdataset interfaceへ追加します。
+比較が安定した後に同じdataset interfaceへ追加する方針でしたが、現在はpretraining用の
+interfaceを利用できます。
+
+M3EDでは1280×720のraw event streamへDAGR互換のstateful signed-event downsamplingを先に適用し、
+その後でevent/RGBを左event cameraのrectified座標へ揃えます。単純な画像縮小ではありません。
+半解像度の実データは640×360ですが、DINOv3 ViT-S/16のpatch sizeに合わせ、学習時だけ上下4 pixel
+ずつcenter cropして640×352を使います。
 
 既定のevent入力は20chではなく、GEPとの比較を優先した3chです。negative=赤、
 positive=青の白背景event frameを90 percentile clipで作り、GEPで使われるDSEC event
@@ -646,6 +652,135 @@ bash tools/run_v100_event_dropout.sh \
 学習します。学習ログには`event_dropout_fraction`、欠落／観測frame別の`h` cosineも出力します。
 学習後は、生成された`v100_event_dropout_*`を`--run-dir`に指定し、`--model E4`または
 `--model dropout`で上記のevent-drop ablationを実行できます。
+
+## M3ED half-scale DAGR pretraining
+
+M3ED公式の`*_data.h5`をそのまま入力にします。Fast Feature Fieldと同様にHDF5内の
+`/prophesee/left`、`/ovc/rgb`、`/ovc/ts_map_prophesee_left_t`、各cameraのcalibrationを使います。
+ただしEventStateでは将来eventが少ない停止区間のpersistent stateを調べるため、固定20 ms blockでは
+なく、同期RGBの連続timestamp間 `(T_(t-1), T_t]` を1 frameとします。
+
+### 1. 半解像度データの準備
+
+```bash
+python tools/prepare_m3ed.py \
+  --root /path/to/M3ED \
+  --output-root /path/to/M3ED_cache/half_dagr \
+  --sequences \
+    car_urban_day_penno_small_loop \
+    car_urban_day_penno_big_loop \
+    car_urban_day_city_hall \
+    car_urban_day_horse \
+    car_urban_day_ucity_big_loop
+```
+
+処理順は次で固定します。
+
+1. 1280×720 distorted event streamをsequence先頭から時系列順に読む
+2. residual `change_map`をRGB interval間でも保持してDAGR filterを適用する
+3. 残ったeventを640×360の左event rectified座標へ変換する
+4. RGBをcalibrationのrotation-only mappingで同じ640×360座標へwarpする
+5. event frameとRGB interval provenanceをcacheする
+
+`event_statistics.json`に、準備したsequenceだけから求めた3ch event frameのmean/stdが出力されます。
+本学習では`configs/dataset/m3ed_half_dagr.yaml`のidentity値を、このファイルの
+`normalize_mean` / `normalize_std`でoverrideしてください。validation sequenceを統計計算へ含めない
+厳密な実験では、train sequenceだけを別の`output-root`へ準備してその統計を使用します。
+
+### 2. Frozen DINOv3 teacher cache
+
+```bash
+python tools/cache_m3ed_dinov3_features.py \
+  --prepared-root /path/to/M3ED_cache/half_dagr \
+  --output-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
+  --input-width 640 \
+  --input-height 352
+```
+
+### 3. Pretraining
+
+```bash
+python train.py \
+  dataset=m3ed_half_dagr \
+  experiment=h_distill_lstm_zloss \
+  dataset.root=/path/to/M3ED \
+  dataset.prepared_root=/path/to/M3ED_cache/half_dagr \
+  teacher.cache_dir=/path/to/M3ED_cache/dinov3_vits16_640x352
+```
+
+上はidentity normalizationで起動確認するcommandです。本学習では末尾へ
+`dataset.representation.normalize_mean='[実測3値]'`と
+`dataset.representation.normalize_std='[実測3値]'`を追加します。
+
+E3/E4はM3ED用runnerで2 GPUへ同時に割り当てられます。`--event-statistics`はtrain sequenceだけから
+計算したJSONを指定します。
+
+```bash
+bash tools/run_m3ed_event_dropout.sh \
+  --root /path/to/M3ED \
+  --prepared-root /path/to/M3ED_cache/half_dagr \
+  --teacher-cache-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
+  --checkpoint /path/to/dinov3_vits16_weights.pt \
+  --event-statistics /path/to/M3ED_train_cache/event_statistics.json \
+  --batch-size 4 \
+  --sequence-length 16
+```
+
+- GPU 0: E3（`h` distillation + event dropout）
+- GPU 1: E4（`z/h` distillation + event dropout、欠落frameの`z` lossをmask）
+
+信号停止区間を主目的にする場合は、`h`のみのE1と`z+h`のE2を比較します。既定16 frameより長い
+保持を学習させる場合は`dataset.sequence_length=32`または`64`へ伸ばし、GPU memoryに合わせて
+`training.batch_size`を下げます。評価時はcomplete sequenceをchronologicalに流し、LSTM stateを
+clip境界でresetしません。
+
+停止区間を含む1 sequenceのfeatureは既存のstreaming exporterで出力できます。M3EDの場合は
+`--event-cache-dir`へprepared rootを渡します。
+
+```bash
+python tools/export_feature_sequence.py \
+  --checkpoint /path/to/m3ed_run/checkpoints/best.pt \
+  --root /path/to/M3ED \
+  --event-cache-dir /path/to/M3ED_cache/half_dagr \
+  --teacher-cache-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
+  --sequence car_urban_day_city_hall \
+  --output-dir outputs/m3ed_features/city_hall \
+  --state-policy continuous
+```
+
+E3/E4を学習した`run-dir`からは、同じcomplete sequenceを連続stateで流し、比較動画とframe単位の
+CSV/JSONをまとめて生成できます。
+
+```bash
+bash tools/visualize_m3ed_e3_e4.sh \
+  --run-dir /path/to/m3ed_event_dropout_run \
+  --root /path/to/M3ED \
+  --prepared-root /path/to/M3ED_cache/half_dagr \
+  --teacher-cache-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
+  --teacher-checkpoint /path/to/dinov3_vits16_weights.pt \
+  --sequence car_urban_day_city_hall
+```
+
+`alignment.mp4`はRGB、event、DINO teacher、E3 `Ph`、E4 `Ph/Pz`について、共通PCA色と
+query cosine mapを並べます。下段にはteacher cosineとlog正規化したevent countを同一時間軸で表示する
+ため、信号停止でeventが減った間に`Ph`が保持されるか、再発進後に追従が戻るかを確認できます。
+`alignment.csv`にはtimestamp、event count、各featureのteacher cosine、`alignment.json`にはevent countの
+分位点と低・中・高event量別の集計を保存します。checkpointは`best.pt`、なければ最新の`step_*.pt`を
+自動選択します。
+
+### M3ED downstream評価
+
+最初の評価は次の二段階を推奨します。
+
+- M3ED内: traffic stopを含むsequenceで`z`/`h`とDINO teacherのcosine、event count、停止後の
+  state decayを時系列で可視化する
+- cross-dataset: M3EDだけでpretrainしたcheckpointを固定し、既存DSEC-Detection probeを学習する
+
+semantic segmentationはM3EDのsemantic HDF5、depthはleft-event座標の公式LiDAR depthを教師にし、
+同じfrozen `z`/`h`へ軽量decoderを付ける構成にできます。まずはpretrainingと停止区間評価を固定し、
+その後にF3と同じsplit・metricへ合わせたsegmentation/depth probeを追加します。M3ED配布の
+`semantics.h5`にはInternImage由来のlabelが含まれるため、人手GTとしては扱わずpseudo-label評価と
+明記します。
 
 ## DSEC-Detection frozen probe
 
