@@ -12,7 +12,9 @@ train_sequences:
   - car_urban_day_city_hall
   - car_urban_day_horse
 val_sequences:
-  - car_urban_day_ucity_big_loop
+  # ucity_big_loop is an official M3ED test recording. Test HDF5 files omit
+  # RGB, so they cannot provide the frozen DINO teacher used by this pipeline.
+  - car_urban_day_ucity_small_loop
 
 # At roughly 30 Hz this exposes about half a second of history per random clip.
 # Use 32 or 64 with a smaller batch when specifically studying long stops.

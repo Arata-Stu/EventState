@@ -671,8 +671,12 @@ python tools/prepare_m3ed.py \
     car_urban_day_penno_big_loop \
     car_urban_day_city_hall \
     car_urban_day_horse \
-    car_urban_day_ucity_big_loop
+    car_urban_day_ucity_small_loop
 ```
+
+`car_urban_day_ucity_big_loop`はM3ED公式test recordingで、配布HDF5からRGBが除去されています。
+本pipelineはDINO teacher用RGBを必要とするため、RGBを含む`ucity_small_loop`をheld-out validationに
+使います。公式testをevent-only評価へ利用することはできますが、RGB teacher cosineは計算できません。
 
 処理順は次で固定します。
 
@@ -758,7 +762,7 @@ bash tools/visualize_m3ed_e3_e4.sh \
   --prepared-root /path/to/M3ED_cache/half_dagr \
   --teacher-cache-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
   --teacher-checkpoint /path/to/dinov3_vits16_weights.pt \
-  --sequence car_urban_day_city_hall
+  --sequence car_urban_day_ucity_small_loop
 ```
 
 `alignment.mp4`はRGB、event、DINO teacher、E3 `Ph`、E4 `Ph/Pz`について、共通PCA色と

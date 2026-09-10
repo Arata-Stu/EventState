@@ -328,6 +328,15 @@ def prepare_recording(
         )
         missing = [key for key in required if key not in source]
         if missing:
+            if "/ovc/rgb/data" in missing or "/ovc/rgb/calib" in missing:
+                available_ovc = sorted(source["/ovc"].keys()) if "/ovc" in source else []
+                raise ValueError(
+                    f"{source_path} has no OVC RGB stream. Official M3ED test "
+                    "recordings intentionally contain only events, grayscale, and IMU, "
+                    "so they cannot provide this pipeline's DINO RGB teacher. Use a "
+                    "non-test recording such as car_urban_day_ucity_small_loop for "
+                    f"validation. Available /ovc groups: {available_ovc}"
+                )
             raise KeyError(f"{source_path} lacks M3ED datasets: {missing}")
         event_group = source["/prophesee/left"]
         rgb_group = source["/ovc/rgb"]
