@@ -1073,6 +1073,27 @@ bash tools/visualize_frozen_dsec_detection_e0_e2_e4.sh \
   --sequences zurich_city_13_b
 ```
 
+現在学習中または学習済みの end-to-end fine-tune `best.pt` を比較する場合は、
+凍結特徴版とは別の可視化コマンドを使う。E0/E2/E4 の checkpoint は開始時に
+CPU memoryへ読み込まれるため、可視化中にtrainerが `best.pt` を更新しても
+一つの動画内で重みが切り替わることはない。再帰モデルはsequence先頭から
+continuous stateを更新し、既定ではannotationのないframeも省略しない。
+
+```bash
+bash tools/visualize_finetuned_dsec_detection_e0_e2_e4.sh \
+  --detection-dir outputs/dsec_detection_end_to_end \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --output-dir outputs/dsec_detection_visualization/finetune_current_best \
+  --role test \
+  --gpu 0 \
+  --sequences zurich_city_13_b
+```
+
+動画、frameごとのCSV、および使用したepoch/best validation mAPを記録したJSONは
+同じoutput directoryへ保存される。凍結評価の動画とはoutput directoryを分ける。
+
 `--sequences`を省略すると選択したroleの全sequenceを順番に処理します。最初の動作確認には
 `--max-frames 100`を追加します。比較図のseedをtest結果から選ぶと恣意性が入るため、seed 0または
 validation mAPの中央値に最も近いseedをtest評価前に固定します。
