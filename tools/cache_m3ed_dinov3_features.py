@@ -55,7 +55,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="facebookresearch/dinov3:adc254450203739c8149213a7a69d8d905b4fcfa",
     )
     parser.add_argument("--source", choices=("github", "local"), default="github")
-    parser.add_argument("--checkpoint", default=None)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        required=True,
+        help=(
+            "Local, manually downloaded DINOv3 weight file. M3ED cache generation "
+            "never falls back to gated weight download."
+        ),
+    )
     parser.add_argument(
         "--pretrained", action=argparse.BooleanOptionalAction, default=True
     )
@@ -91,6 +99,16 @@ def _load_sequence(prepared_root: Path, sequence_name: str) -> tuple[list[int], 
     return timestamps, paths
 
 
+def _metadata_difference(
+    existing: dict[str, object], expected: dict[str, object]
+) -> list[str]:
+    return [
+        key
+        for key in sorted(set(existing) | set(expected))
+        if existing.get(key) != expected.get(key)
+    ]
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     if args.input_height % args.patch_size or args.input_width % args.patch_size:
@@ -104,7 +122,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     all_sequences = discover_prepared_m3ed_sequences(prepared_root, args.sequences)
     sequences = all_sequences[args.shard_index :: args.num_shards]
-    checkpoint = normalize_checkpoint(args.checkpoint)
+    checkpoint_path = args.checkpoint.expanduser().resolve()
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(
+            f"Local DINOv3 checkpoint not found: {checkpoint_path}"
+        )
+    checkpoint = normalize_checkpoint(str(checkpoint_path))
+    print(f"Using local DINOv3 checkpoint: {checkpoint_path}")
     model_metadata = build_model_metadata(args, checkpoint)
     grid_height = args.input_height // args.patch_size
     grid_width = args.input_width // args.patch_size
@@ -141,11 +165,25 @@ def main(argv: Sequence[str] | None = None) -> None:
             "cache_dtype": args.cache_dtype,
         }
         metadata_path = sequence_output / "metadata.json"
+        write_metadata = args.overwrite or not metadata_path.exists()
         if metadata_path.exists() and not args.overwrite:
-            existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+            try:
+                existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
             if existing != metadata:
-                raise RuntimeError(f"Incompatible teacher cache metadata: {metadata_path}")
-        else:
+                cached_frames = sorted(sequence_output.glob("[0-9]*.pt"))
+                if cached_frames:
+                    differences = ", ".join(_metadata_difference(existing, metadata))
+                    raise RuntimeError(
+                        f"Incompatible teacher cache metadata: {metadata_path}; "
+                        f"different fields: {differences}. Existing feature files are "
+                        "preserved. Use a new --output-dir, or use --overwrite only if "
+                        "replacing this cache is intentional."
+                    )
+                print(f"Replacing stale metadata in empty cache: {metadata_path}")
+                write_metadata = True
+        if write_metadata:
             metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         for index, (timestamp, image_path) in enumerate(zip(timestamps, image_paths)):
             output_path = sequence_output / f"{timestamp}.pt"

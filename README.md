@@ -693,13 +693,28 @@ python tools/prepare_m3ed.py \
 
 ### 2. Frozen DINOv3 teacher cache
 
+DINOv3 weightは利用許可後に手動downloadし、dataset cacheとは分けた永続的なcheckpoint directoryへ
+保存します。以下では保存場所を`/mnt/ssd-4tb/checkpoints/dinov3/`へ固定しています。
+
+```text
+/mnt/ssd-4tb/checkpoints/dinov3/
+└── dinov3_vits16_pretrain_lvd1689m-08c60483.pth
+```
+
 ```bash
 python tools/cache_m3ed_dinov3_features.py \
-  --prepared-root /path/to/M3ED_cache/half_dagr \
-  --output-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
+  --prepared-root /mnt/ssd-4tb/dataset/m3ed_cache/half_dagr \
+  --output-dir /mnt/ssd-4tb/dataset/m3ed_cache/dinov3_vits16_640x352 \
+  --checkpoint /mnt/ssd-4tb/checkpoints/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
   --input-width 640 \
-  --input-height 352
+  --input-height 352 \
+  --batch-size 2 \
+  --device cuda
 ```
+
+`--checkpoint`は必須で、存在するlocal fileだけを受け付けます。したがって、許可が必要なweightを
+toolが暗黙にdownloadすることはありません。`--output-dir`はweightの保存先ではなく、各M3ED frameの
+DINO patch tokenを書き出すcache先です。
 
 ### 3. Pretraining
 
@@ -709,7 +724,8 @@ python train.py \
   experiment=h_distill_lstm_zloss \
   dataset.root=/path/to/M3ED \
   dataset.prepared_root=/path/to/M3ED_cache/half_dagr \
-  teacher.cache_dir=/path/to/M3ED_cache/dinov3_vits16_640x352
+  teacher.cache_dir=/path/to/M3ED_cache/dinov3_vits16_640x352 \
+  teacher.checkpoint=/mnt/ssd-4tb/checkpoints/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth
 ```
 
 上はidentity normalizationで起動確認するcommandです。本学習では末尾へ
@@ -724,7 +740,7 @@ bash tools/run_m3ed_event_dropout.sh \
   --root /path/to/M3ED \
   --prepared-root /path/to/M3ED_cache/half_dagr \
   --teacher-cache-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
-  --checkpoint /path/to/dinov3_vits16_weights.pt \
+  --checkpoint /mnt/ssd-4tb/checkpoints/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
   --event-statistics /path/to/M3ED_train_cache/event_statistics.json \
   --batch-size 4 \
   --sequence-length 16
@@ -761,7 +777,7 @@ bash tools/visualize_m3ed_e3_e4.sh \
   --root /path/to/M3ED \
   --prepared-root /path/to/M3ED_cache/half_dagr \
   --teacher-cache-dir /path/to/M3ED_cache/dinov3_vits16_640x352 \
-  --teacher-checkpoint /path/to/dinov3_vits16_weights.pt \
+  --teacher-checkpoint /mnt/ssd-4tb/checkpoints/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
   --sequence car_urban_day_ucity_small_loop
 ```
 
