@@ -812,7 +812,7 @@ semantic segmentationはM3EDのsemantic HDF5、depthはleft-event座標の公式
 python tools/prepare_m3ed_downstream.py \
   --root /mnt/ssd-4tb/dataset/m3ed \
   --prepared-root /mnt/ssd-4tb/dataset/m3ed_cache/half_dagr \
-  --output-root /mnt/ssd-4tb/dataset/m3ed_cache/downstream \
+  --output-root "$PWD/outputs/m3ed_downstream" \
   --tasks depth semantics pose
 ```
 
