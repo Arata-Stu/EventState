@@ -1037,6 +1037,27 @@ python tools/summarize_detection_runs.py \
   --output outputs/dsec_detection_summary.json
 ```
 
+進行中のend-to-end学習は、完了epochのlossとvalidation履歴にconsole log末尾の
+現在進捗を組み合わせて確認できる。JSONLを直接表示する必要はなく、このツールも
+Python標準ライブラリだけで動作する。
+
+```bash
+python tools/summarize_detection_training.py \
+  outputs/dsec_detection_end_to_end \
+  --mode finetune \
+  --seed 0
+
+# 30秒ごとに同じ画面を更新する
+python tools/summarize_detection_training.py \
+  outputs/dsec_detection_end_to_end \
+  --mode finetune \
+  --seed 0 \
+  --watch 30
+```
+
+表示されるtrain値は直近の完了epoch、validation値は`validate-every`間隔で記録された
+最新値と最良値である。`現在位置`だけは各`finetune_E*.log`末尾のtqdmから取得する。
+
 最終testでは、まず元のfeature cacheを`--role test`で生成し、benchmark feature変換も
 `--role test`で実行します。その後`tools/evaluate_dsec_detection.py`へbenchmarkの`best.pt`を
 渡します。checkpointに記録された`dsec-det` protocolは評価時にも強制されます。
