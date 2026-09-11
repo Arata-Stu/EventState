@@ -1,6 +1,8 @@
 name: m3ed
 root: null
 prepared_root: null
+target_cache_dir: null
+target_tasks: []
 
 # Logical, sequence-level split. M3ED stores recordings as individual HDF5
 # files rather than physical train/test directories. Keep these lists disjoint.

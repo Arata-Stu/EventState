@@ -1,0 +1,46 @@
+# Downstream split for the M3ED car subset currently available to EventState.
+# Semantic labels are InternImage pseudo-labels, not human ground truth.
+
+semantic:
+  train:
+    - car_urban_day_city_hall
+    - car_urban_day_horse
+    - car_urban_day_penno_big_loop
+    - car_urban_day_penno_small_loop
+  validation:
+    - car_urban_day_ucity_small_loop
+  test:
+    # Not used by the current representation pretraining or checkpoint selection.
+    - car_urban_day_rittenhouse
+
+depth_pose:
+  train:
+    - car_urban_day_city_hall
+    - car_urban_day_horse
+    - car_urban_day_penno_big_loop
+    - car_urban_day_penno_small_loop
+  validation:
+    - car_urban_day_ucity_small_loop
+  test_in_domain:
+    - car_urban_day_rittenhouse
+  test_ood_forest:
+    - car_forest_into_ponds_long
+    - car_forest_into_ponds_short
+    - car_forest_sand_1
+    - car_forest_tree_tunnel
+  test_ood_night:
+    - car_urban_night_city_hall
+    - car_urban_night_penno_big_loop
+    - car_urban_night_penno_small_loop
+    - car_urban_night_penno_small_loop_darker
+    - car_urban_night_rittenhouse
+    - car_urban_night_ucity_small_loop
+
+# These distributed recordings have only *_data.h5 in the local inventory and
+# therefore cannot contribute official depth, pose, or semantic targets.
+unlabeled:
+  - car_forest_sand_2
+  - car_urban_day_schuylkill_tunnel
+  - car_urban_day_ucity_big_loop
+  - car_urban_night_schuylkill_tunnel
+  - car_urban_night_ucity_big_loop

@@ -802,6 +802,42 @@ semantic segmentationはM3EDのsemantic HDF5、depthはleft-event座標の公式
 `semantics.h5`にはInternImage由来のlabelが含まれるため、人手GTとしては扱わずpseudo-label評価と
 明記します。
 
+#### Downstream target cache
+
+既存のevent/RGB/DINO cacheとtrain sequenceだけから計算した`event_statistics.json`を変更せず、
+公式のLiDAR depth、InternImage semantic pseudo-label、FasterLIO poseを同じEventState frameへ
+対応付ける追加cacheを作成できます。
+
+```bash
+python tools/prepare_m3ed_downstream.py \
+  --root /mnt/ssd-4tb/dataset/m3ed \
+  --prepared-root /mnt/ssd-4tb/dataset/m3ed_cache/half_dagr \
+  --output-root /mnt/ssd-4tb/dataset/m3ed_cache/downstream \
+  --tasks depth semantics pose
+```
+
+`--sequences`を省略するとprepared rootに存在するsequenceだけを対象にし、公式target fileがないtaskは
+sequence単位でskipしてmanifestへ記録します。すべてを必須にする場合は`--require-all`を指定します。
+完了済みcacheは入力file identity、timestamp、task、depth範囲、時刻許容差が一致する場合だけ再利用し、
+条件変更時は`--overwrite`で明示的に再生成します。
+
+出力される`targets.h5`には以下が含まれます。
+
+- `depth_m` / `depth_valid`: rectified 640x352のmetric LiDAR depthと有効mask
+- `semantics_19` / `semantics_11`: Cityscapes-19とDSEC-11 mapping、ignore labelは255
+- `pose_Cn_T_C0`: 各EventState timestampへnearest matchした公式pose
+- `relative_pose_prev_T_current`: F3と同じ`P_prev @ inv(P_current)`規約の相対運動
+- `linear_velocity_mps` / `angular_velocity_radps`: pose timestamp差から求めた速度
+
+疎なdepthは通常の画像resizeで間引かず、native valid pointをrectified half-scaleへforward projectionし、
+同じpixelへ複数点が入った場合は手前のdepthを残します。semanticだけはnearest-neighbor remapします。
+既定ではdepth/poseを50 ms以内、semanticを完全一致するtimestampへ対応付け、対応しないframeは明示的な
+invalidとして保持します。固定splitは
+[`tools/manifests/m3ed_downstream_split.yaml`](tools/manifests/m3ed_downstream_split.yaml)にあります。
+
+`M3EDSequenceDataset`へ`target_cache_dir`と`target_tasks`を渡すと、同じclipにtarget tensorも返ります。
+target cacheは固定640x352 geometryなので、現時点ではstochastic crop/flipとの併用を拒否します。
+
 ## DSEC-Detection frozen probe
 
 検出評価はDAGRと同じ公式41 train / 6 validation / 13 test splitをそのまま使います。

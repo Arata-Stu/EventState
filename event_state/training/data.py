@@ -299,7 +299,11 @@ def _dataset_options(
         "load_events": True,
         "load_images": not cache_features,
         **(
-            {"prepared_root": _value(dataset_config, "prepared_root")}
+            {
+                "prepared_root": _value(dataset_config, "prepared_root"),
+                "target_cache_dir": _value(dataset_config, "target_cache_dir"),
+                "target_tasks": _as_optional_list(_value(dataset_config, "target_tasks")),
+            }
             if str(_value(dataset_config, "name", "dsec")).lower() == "m3ed"
             else {}
         ),

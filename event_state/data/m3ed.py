@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 import torch
 from PIL import Image
@@ -22,6 +23,7 @@ from torch.utils.data import Dataset
 
 from .cache_metadata import TEACHER_CACHE_FORMAT_VERSION
 from .dsec import normalize_event_window_fraction
+from .m3ed_downstream import M3ED_DOWNSTREAM_FORMAT_VERSION
 from .transforms import PairedSequenceTransform
 
 
@@ -33,6 +35,16 @@ def _safe_torch_load(path: Path) -> Any:
         return torch.load(path, map_location="cpu", weights_only=True)
     except TypeError:
         return torch.load(path, map_location="cpu")
+
+
+def _read_metadata(path: Path, description: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Invalid {description} metadata: {path}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid {description} metadata: {path}")
+    return value
 
 
 @dataclass(frozen=True)
@@ -99,6 +111,8 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
         load_images: bool = True,
         event_window_fraction: float = 1.0,
         prepared_root: str | Path | None = None,
+        target_cache_dir: str | Path | None = None,
+        target_tasks: Sequence[str] | None = None,
     ) -> None:
         if sequence_length <= 0 or clip_stride <= 0:
             raise ValueError("sequence_length and clip_stride must be positive")
@@ -124,6 +138,19 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
         self.feature_cache_dir = (
             Path(feature_cache_dir).expanduser() if feature_cache_dir else None
         )
+        self.target_cache_dir = (
+            Path(target_cache_dir).expanduser() if target_cache_dir else None
+        )
+        self.target_tasks = tuple(
+            dict.fromkeys(str(value) for value in (target_tasks or ()))
+        )
+        unsupported_tasks = sorted(set(self.target_tasks) - {"depth", "semantics", "pose"})
+        if unsupported_tasks:
+            raise ValueError("Unsupported M3ED downstream tasks: " + ", ".join(unsupported_tasks))
+        if self.target_tasks and self.target_cache_dir is None:
+            raise ValueError("target_cache_dir is required when target_tasks are requested")
+        if self.target_tasks and self.transform.stochastic:
+            raise ValueError("Prepared M3ED downstream targets require deterministic geometry")
         self.load_events = bool(load_events)
         self.load_images = bool(load_images)
         self.sequence_names = discover_prepared_m3ed_sequences(
@@ -132,6 +159,7 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
         self._frames_by_sequence: dict[str, list[M3EDFrame]] = {}
         self._metadata_by_sequence: dict[str, dict[str, Any]] = {}
         self._teacher_metadata: dict[str, dict[str, Any]] = {}
+        self._target_metadata: dict[str, dict[str, Any]] = {}
         self._clips: list[tuple[str, int, int]] = []
 
         for sequence_name in self.sequence_names:
@@ -141,6 +169,10 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
             if self.feature_cache_dir is not None:
                 self._teacher_metadata[sequence_name] = self._load_teacher_metadata(
                     sequence_name, len(frames)
+                )
+            if self.target_tasks:
+                self._target_metadata[sequence_name] = self._load_target_metadata(
+                    sequence_name, metadata
                 )
             if self.include_incomplete_clips:
                 self._clips.extend(
@@ -286,7 +318,110 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
             sample["teacher_features"] = torch.stack(
                 [self._load_teacher_feature(record) for record in records]
             )
+        if self.target_tasks:
+            sample.update(self._load_targets(sequence_name, sample["frame_indices"]))
         return sample
+
+    def _load_target_metadata(
+        self, sequence_name: str, prepared_metadata: dict[str, Any]
+    ) -> dict[str, Any]:
+        if self.target_cache_dir is None:
+            raise RuntimeError("target_cache_dir is not configured")
+        path = self.target_cache_dir / sequence_name / "metadata.json"
+        metadata = _read_metadata(path, "M3ED downstream target")
+        expected = {
+            "format_version": M3ED_DOWNSTREAM_FORMAT_VERSION,
+            "dataset": "M3ED",
+            "sequence_name": sequence_name,
+            "prepared_format_version": M3ED_PREPARED_FORMAT_VERSION,
+            "frame_count": int(prepared_metadata["frame_count"]),
+            "timestamps": prepared_metadata["timestamps"],
+            "coordinate_space": "rectified_left_event",
+            "target_size": [self.transform.height, self.transform.width],
+        }
+        for field, value in expected.items():
+            if metadata.get(field) != value:
+                raise ValueError(
+                    f"M3ED downstream {field}={metadata.get(field)!r} does not match "
+                    f"{value!r}: {path}"
+                )
+        missing = sorted(set(self.target_tasks) - set(metadata.get("tasks", [])))
+        if missing:
+            raise ValueError(
+                f"M3ED downstream targets unavailable for {sequence_name}: {', '.join(missing)}"
+            )
+        targets_path = self.target_cache_dir / sequence_name / "targets.h5"
+        success_path = self.target_cache_dir / sequence_name / "_SUCCESS"
+        if not targets_path.is_file() or not success_path.is_file():
+            raise FileNotFoundError(f"Incomplete M3ED downstream cache: {targets_path}")
+        required_by_task = {
+            "depth": {"depth_m", "depth_valid", "depth_frame_valid"},
+            "semantics": {
+                "semantics_19",
+                "semantics_11",
+                "semantics_frame_valid",
+            },
+            "pose": {
+                "pose_Cn_T_C0",
+                "pose_frame_valid",
+                "relative_pose_prev_T_current",
+                "relative_pose_valid",
+                "relative_pose_delta_us",
+                "linear_velocity_mps",
+                "angular_velocity_radps",
+            },
+        }
+        with h5py.File(targets_path, "r") as source:
+            if "timestamps" not in source:
+                raise ValueError(f"M3ED downstream HDF5 lacks timestamps: {targets_path}")
+            cached_timestamps = np.asarray(source["timestamps"], dtype=np.int64)
+            if not np.array_equal(cached_timestamps, prepared_metadata["timestamps"]):
+                raise ValueError(f"M3ED downstream HDF5 timestamps mismatch: {targets_path}")
+            required = set().union(*(required_by_task[task] for task in self.target_tasks))
+            missing_datasets = sorted(required - set(source.keys()))
+            if missing_datasets:
+                raise ValueError(
+                    f"M3ED downstream HDF5 lacks datasets {missing_datasets}: {targets_path}"
+                )
+        return metadata
+
+    def _load_targets(self, sequence_name: str, frame_indices: Tensor) -> dict[str, Tensor]:
+        if self.target_cache_dir is None:
+            raise RuntimeError("target_cache_dir is not configured")
+        indices = frame_indices.detach().cpu().numpy().astype(np.int64)
+        path = self.target_cache_dir / sequence_name / "targets.h5"
+        output: dict[str, Tensor] = {}
+        with h5py.File(path, "r") as source:
+            if "depth" in self.target_tasks:
+                output["depth_m"] = torch.from_numpy(np.asarray(source["depth_m"][indices]))
+                output["depth_valid"] = torch.from_numpy(
+                    np.asarray(source["depth_valid"][indices], dtype=np.bool_)
+                )
+                output["depth_frame_valid"] = torch.from_numpy(
+                    np.asarray(source["depth_frame_valid"][indices], dtype=np.bool_)
+                )
+            if "semantics" in self.target_tasks:
+                output["semantics_19"] = torch.from_numpy(
+                    np.asarray(source["semantics_19"][indices], dtype=np.uint8)
+                )
+                output["semantics_11"] = torch.from_numpy(
+                    np.asarray(source["semantics_11"][indices], dtype=np.uint8)
+                )
+                output["semantics_frame_valid"] = torch.from_numpy(
+                    np.asarray(source["semantics_frame_valid"][indices], dtype=np.bool_)
+                )
+            if "pose" in self.target_tasks:
+                for key in (
+                    "pose_Cn_T_C0",
+                    "pose_frame_valid",
+                    "relative_pose_prev_T_current",
+                    "relative_pose_valid",
+                    "relative_pose_delta_us",
+                    "linear_velocity_mps",
+                    "angular_velocity_radps",
+                ):
+                    output[key] = torch.from_numpy(np.asarray(source[key][indices]))
+        return output
 
     def _load_event(self, record: M3EDFrame) -> tuple[Tensor, int]:
         if record.event_path is None:
