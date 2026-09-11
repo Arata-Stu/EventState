@@ -1058,6 +1058,20 @@ python tools/summarize_detection_training.py \
 表示されるtrain値は直近の完了epoch、validation値は`validate-every`間隔で記録された
 最新値と最良値である。`現在位置`だけは各`finetune_E*.log`末尾のtqdmから取得する。
 
+学習済みfrozen detectorと進行中または完了済みfine-tuneの学習曲線は、fine-tune側の
+validation epochへ揃えて比較できる。
+
+```bash
+python tools/compare_detection_training.py \
+  --frozen-root outputs/dsec_detection_frozen_step100000 \
+  --finetune-root outputs/dsec_detection_end_to_end \
+  --seed 0
+```
+
+validation mAPは同じofficial split/evaluatorなので直接比較できる。train lossは両方とも
+YOLOX lossだが、frozenはheadのみ、fine-tuneはEventState backboneとheadの両方を更新するため、
+絶対値よりも低下率と収束速度を比較する。
+
 最終testでは、まず元のfeature cacheを`--role test`で生成し、benchmark feature変換も
 `--role test`で実行します。その後`tools/evaluate_dsec_detection.py`へbenchmarkの`best.pt`を
 渡します。checkpointに記録された`dsec-det` protocolは評価時にも強制されます。
