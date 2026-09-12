@@ -1153,6 +1153,23 @@ validation mAPは同じofficial split/evaluatorなので直接比較できる。
 YOLOX lossだが、frozenはheadのみ、fine-tuneはEventState backboneとheadの両方を更新するため、
 絶対値よりも低下率と収束速度を比較する。
 
+End-to-end fine-tune完了後は、各`best.pt`を公式test 13 sequencesのcontinuous streamで
+評価する。E2/E4のstateは全frameで更新し、sequence境界でのみresetされる。空いている
+GPU 2でE0/E2/E4を順番に評価する例は次の通り。
+
+```bash
+bash tools/evaluate_finetuned_dsec_detection_e0_e2_e4.sh \
+  --detection-dir outputs/dsec_detection_end_to_end \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --gpu 2 \
+  --seed 0
+```
+
+各結果は`finetune/{E0,E2,E4}/seed_0/test_metrics.json`へ保存される。既存結果は
+skipされ、明示的に再評価する場合だけ`--overwrite`を指定する。
+
 最終testでは、まず元のfeature cacheを`--role test`で生成し、benchmark feature変換も
 `--role test`で実行します。その後`tools/evaluate_dsec_detection.py`へbenchmarkの`best.pt`を
 渡します。checkpointに記録された`dsec-det` protocolは評価時にも強制されます。
