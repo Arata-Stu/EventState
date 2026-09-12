@@ -838,6 +838,45 @@ invalidとして保持します。固定splitは
 `M3EDSequenceDataset`へ`target_cache_dir`と`target_tasks`を渡すと、同じclipにtarget tensorも返ります。
 target cacheは固定640x352 geometryなので、現時点ではstochastic crop/flipとの併用を拒否します。
 
+#### Downstream alignmentの目視確認
+
+5 sequenceすべてについて、RGB・DAGR event・semantic pseudo-label・LiDAR depth・pose由来速度を
+同じtimestampで並べたQA動画を生成できます。
+
+```bash
+python tools/visualize_m3ed_downstream.py \
+  --prepared-root /mnt/ssd-4tb/dataset/m3ed_cache/half_dagr \
+  --downstream-root /path/to/m3ed_downstream \
+  --output-dir /path/to/m3ed_downstream_qa \
+  --frame-stride 5 \
+  --fps 20
+```
+
+`--sequences`を省略すると、両cacheで`metadata.json`・`targets.h5`・`_SUCCESS`が揃うsequenceを
+すべて処理します。各MP4は上段にaligned RGB、semantic overlay、semantic label、下段にevent、
+LiDAR depth、depth overlayを表示します。疎なdepth点は既定で目視用に半径1 pixelだけ太らせますが、
+補間はせず、subtitleとCSVには元の有効pixel数を記録します。厳密なpixel位置を見る場合は
+`--depth-point-radius 0`を使います。
+
+既定の`--frame-stride 5`はsequence全区間を高速に確認する設定です。ずれが疑わしい場所は、例えば
+次のように連続300 frameを再出力します。
+
+```bash
+python tools/visualize_m3ed_downstream.py \
+  --prepared-root /mnt/ssd-4tb/dataset/m3ed_cache/half_dagr \
+  --downstream-root /path/to/m3ed_downstream \
+  --output-dir /path/to/m3ed_downstream_qa_detail \
+  --sequences car_urban_day_ucity_small_loop \
+  --start-frame 5000 \
+  --max-frames 300 \
+  --frame-stride 1 \
+  --fps 20
+```
+
+動画と同名のCSVにはframe/timestamp、event count、semantic coverage、depth valid pixel数、targetとの
+timestamp差、移動速度を保存します。semanticは人手GTではなくInternImage pseudo-labelである点に注意して
+ください。
+
 ## DSEC-Detection frozen probe
 
 検出評価はDAGRと同じ公式41 train / 6 validation / 13 test splitをそのまま使います。
