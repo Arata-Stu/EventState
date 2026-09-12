@@ -509,7 +509,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         import imageio_ffmpeg
     except ImportError as error:
         raise SystemExit(
-            "Install visualization dependencies with `uv sync --active --extra visualize`"
+            "Install the video dependency in the active environment with "
+            "`python -m pip install 'imageio-ffmpeg>=0.5'`"
         ) from error
     args.prepared_root = args.prepared_root.expanduser().resolve()
     args.downstream_root = args.downstream_root.expanduser().resolve()

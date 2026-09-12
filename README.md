@@ -843,6 +843,12 @@ target cacheは固定640x352 geometryなので、現時点ではstochastic crop/
 5 sequenceすべてについて、RGB・DAGR event・semantic pseudo-label・LiDAR depth・pose由来速度を
 同じtimestampで並べたQA動画を生成できます。
 
+既存の学習環境には動画encoderのPython packageだけを追加します。
+
+```bash
+python -m pip install 'imageio-ffmpeg>=0.5'
+```
+
 ```bash
 python tools/visualize_m3ed_downstream.py \
   --prepared-root /mnt/ssd-4tb/dataset/m3ed_cache/half_dagr \
