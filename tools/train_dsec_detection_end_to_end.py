@@ -58,6 +58,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--backbone-lr-mult", type=float, default=1.0)
+    parser.add_argument(
+        "--freeze-event-encoder",
+        action="store_true",
+        help=(
+            "Keep the pretrained event ViT fixed while updating the temporal "
+            "backbone and detection head"
+        ),
+    )
     parser.add_argument("--weight-decay", type=float, default=5e-2)
     parser.add_argument("--head-width", type=int, default=192)
     parser.add_argument("--horizontal-flip-probability", type=float, default=0.5)
@@ -120,6 +128,15 @@ def _freeze_disposable_projectors(model: nn.Module) -> None:
             projector.eval()
             for parameter in projector.parameters():
                 parameter.requires_grad_(False)
+
+
+def _freeze_event_encoder(model: nn.Module) -> None:
+    encoder = getattr(model, "event_encoder", None)
+    if not isinstance(encoder, nn.Module):
+        raise TypeError("EventState model lacks an event_encoder module")
+    encoder.eval()
+    for parameter in encoder.parameters():
+        parameter.requires_grad_(False)
 
 
 def _select_feature(outputs: Mapping[str, Any], feature: str) -> Tensor:
@@ -240,7 +257,11 @@ def main() -> None:
     student = build_model(construction_config, device=device)
     if args.mode == "finetune":
         load_checkpoint(reference, model=student, device=device, restore_rng=False)
+    elif args.freeze_event_encoder:
+        raise ValueError("--freeze-event-encoder is only valid with --mode finetune")
     _freeze_disposable_projectors(student)
+    if args.freeze_event_encoder:
+        _freeze_event_encoder(student)
 
     split = load_dsec_detection_split(args.split_manifest)
     sequence_length = int(_value(saved_config, "dataset.sequence_length", 8))
@@ -345,6 +366,11 @@ def main() -> None:
             "initialization": (
                 "eventstate_checkpoint" if args.mode == "finetune" else "random"
             ),
+            "trainable_components": (
+                ["temporal_backbone", "detector_head"]
+                if args.freeze_event_encoder
+                else ["event_encoder", "temporal_backbone", "detector_head"]
+            ),
             "sequence_length": sequence_length,
             "train_frames": len(train_dataset),
             "validation_stream_frames": len(validation_dataset),
@@ -366,8 +392,12 @@ def main() -> None:
         if (
             resume_config.get("mode") != args.mode
             or resume_config.get("feature") != args.feature
+            or bool(resume_config.get("freeze_event_encoder", False))
+            != args.freeze_event_encoder
         ):
-            raise ValueError("Resume checkpoint mode/feature does not match this run")
+            raise ValueError(
+                "Resume checkpoint mode/feature/freeze policy does not match this run"
+            )
         student.load_state_dict(resume["student"])
         detector.load_state_dict(resume["detector"])
         optimizer.load_state_dict(resume["optimizer"])
@@ -380,6 +410,10 @@ def main() -> None:
     for epoch in range(start_epoch, args.epochs):
         student.train()
         _freeze_disposable_projectors(student)
+        if args.freeze_event_encoder:
+            # requires_grad=False prevents weight updates; eval mode additionally
+            # prevents any train-time stochastic behavior in the frozen ViT.
+            _freeze_event_encoder(student)
         detector.train()
         totals: dict[str, float] = {}
         batches = 0

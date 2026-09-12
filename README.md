@@ -1170,6 +1170,28 @@ bash tools/evaluate_finetuned_dsec_detection_e0_e2_e4.sh \
 各結果は`finetune/{E0,E2,E4}/seed_0/test_metrics.json`へ保存される。既存結果は
 skipされ、明示的に再評価する場合だけ`--overwrite`を指定する。
 
+Full fine-tuneによるevent表現の破壊とtemporal adaptationを分離するablationとして、
+`--freeze-event-encoder`を指定できる。この場合、事前学習済みevent ViTとdistillation
+projectorは固定され、LSTMとYOLOX headだけが更新される。E0のようなidentity temporal
+backboneでは実質的にhead-onlyとなるため、主対象はE2/E4である。
+
+```bash
+CUDA_VISIBLE_DEVICES=2 python tools/train_dsec_detection_end_to_end.py \
+  --mode finetune \
+  --reference-checkpoint /path/to/E4/checkpoints/step_00100000.pt \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --labels-root /path/to/DSEC/dsec_det_labels \
+  --dataset-root /path/to/DSEC \
+  --feature h \
+  --output-dir outputs/dsec_detection_temporal_head/finetune/E4/seed_0 \
+  --batch-size 4 \
+  --epochs 50 \
+  --validate-every 5 \
+  --seed 0 \
+  --device cuda \
+  --freeze-event-encoder
+```
+
 最終testでは、まず元のfeature cacheを`--role test`で生成し、benchmark feature変換も
 `--role test`で実行します。その後`tools/evaluate_dsec_detection.py`へbenchmarkの`best.pt`を
 渡します。checkpointに記録された`dsec-det` protocolは評価時にも強制されます。
