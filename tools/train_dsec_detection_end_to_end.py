@@ -30,6 +30,7 @@ from event_state.detection import (
     load_dsec_detection_split,
 )
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
+from event_state.training.event_dropout import apply_temporal_event_dropout
 
 
 DEFAULT_SPLIT = Path(__file__).parent / "manifests" / "dsec_det_official_split.yaml"
@@ -69,6 +70,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=5e-2)
     parser.add_argument("--head-width", type=int, default=192)
     parser.add_argument("--horizontal-flip-probability", type=float, default=0.5)
+    parser.add_argument(
+        "--event-dropout-probability",
+        type=float,
+        default=0.0,
+        help="Probability of one temporal event-gap block per training clip",
+    )
+    parser.add_argument(
+        "--event-dropout-lengths",
+        type=int,
+        nargs="+",
+        default=(1, 2, 4),
+        help="Candidate contiguous event-gap lengths",
+    )
+    parser.add_argument("--event-dropout-min-context-frames", type=int, default=2)
+    parser.add_argument("--event-dropout-min-recovery-frames", type=int, default=1)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--precision", choices=("fp32", "fp16"), default="fp16")
@@ -241,6 +257,17 @@ def main() -> None:
         raise ValueError("learning rates must be positive")
     if not 0.0 <= args.horizontal_flip_probability <= 1.0:
         raise ValueError("horizontal-flip-probability must be in [0, 1]")
+    if not 0.0 <= args.event_dropout_probability <= 1.0:
+        raise ValueError("event-dropout-probability must be in [0, 1]")
+    if not args.event_dropout_lengths or any(
+        length <= 0 for length in args.event_dropout_lengths
+    ):
+        raise ValueError("event-dropout-lengths must contain positive integers")
+    if (
+        args.event_dropout_min_context_frames < 0
+        or args.event_dropout_min_recovery_frames < 0
+    ):
+        raise ValueError("event-dropout context/recovery frames must be non-negative")
 
     _seed_everything(args.seed)
     device = torch.device(args.device)
@@ -278,6 +305,17 @@ def main() -> None:
         float(value)
         for value in _value(saved_config, "dataset.representation.normalize_std")
     )
+    representation_type = str(_value(saved_config, "dataset.representation.type"))
+    if args.event_dropout_probability > 0 and (
+        max(args.event_dropout_lengths)
+        + args.event_dropout_min_context_frames
+        + args.event_dropout_min_recovery_frames
+        > sequence_length
+    ):
+        raise ValueError(
+            "event-dropout block and required context/recovery do not fit "
+            f"the {sequence_length}-frame training clip"
+        )
     dataset_common = {
         "event_cache_dir": args.event_cache_dir,
         "labels_root": args.labels_root,
@@ -394,9 +432,17 @@ def main() -> None:
             or resume_config.get("feature") != args.feature
             or bool(resume_config.get("freeze_event_encoder", False))
             != args.freeze_event_encoder
+            or float(resume_config.get("event_dropout_probability", 0.0))
+            != args.event_dropout_probability
+            or tuple(resume_config.get("event_dropout_lengths", (1, 2, 4)))
+            != tuple(args.event_dropout_lengths)
+            or int(resume_config.get("event_dropout_min_context_frames", 2))
+            != args.event_dropout_min_context_frames
+            or int(resume_config.get("event_dropout_min_recovery_frames", 1))
+            != args.event_dropout_min_recovery_frames
         ):
             raise ValueError(
-                "Resume checkpoint mode/feature/freeze policy does not match this run"
+                "Resume checkpoint mode/feature/freeze/dropout policy does not match this run"
             )
         student.load_state_dict(resume["student"])
         detector.load_state_dict(resume["detector"])
@@ -421,6 +467,16 @@ def main() -> None:
             train_loader, desc=f"DSEC-Det {args.mode} {epoch + 1}/{args.epochs}", unit="batch"
         ):
             events = batch["events"].to(device, non_blocking=True)
+            events, event_dropout_mask = apply_temporal_event_dropout(
+                events,
+                probability=args.event_dropout_probability,
+                lengths=args.event_dropout_lengths,
+                min_context_frames=args.event_dropout_min_context_frames,
+                min_recovery_frames=args.event_dropout_min_recovery_frames,
+                representation_type=representation_type,
+                normalize_mean=event_mean,
+                normalize_std=event_std,
+            )
             targets = _move_targets(batch["targets"], device)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
@@ -443,6 +499,9 @@ def main() -> None:
             for name, value in losses.items():
                 totals[name] = totals.get(name, 0.0) + float(value.detach())
             totals["grad_norm"] = totals.get("grad_norm", 0.0) + float(gradient_norm)
+            totals["event_dropout_fraction"] = totals.get(
+                "event_dropout_fraction", 0.0
+            ) + float(event_dropout_mask.float().mean())
         scheduler.step()
 
         should_validate = (epoch + 1) % args.validate_every == 0 or epoch + 1 == args.epochs
