@@ -259,6 +259,9 @@ def _load_end_to_end(
         "checkpoint_best_validation_mAP": float(checkpoint.get("best_mAP", -1.0)),
         "training_mode": str(run_config.get("mode")),
         "freeze_event_encoder": bool(run_config.get("freeze_event_encoder", False)),
+        "freeze_temporal_model": bool(
+            run_config.get("freeze_temporal_model", False)
+        ),
     }
     return student, detector, config, feature, identity
 

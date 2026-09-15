@@ -1203,6 +1203,13 @@ CUDA_VISIBLE_DEVICES=2 python tools/train_dsec_detection_end_to_end.py \
   --freeze-event-encoder
 ```
 
+欠落時特徴に対するdetector headの適応だけを測る場合は、上記に
+`--freeze-temporal-model`を追加する。この引数は`--freeze-event-encoder`と併用し、
+event encoder・LSTM・projectorを固定してYOLOX headだけを更新する。Detection学習にも
+E4と同じ欠落分布を入れる場合は、さらに
+`--event-dropout-probability 0.5 --event-dropout-lengths 1 2 4`
+`--event-dropout-min-context-frames 2 --event-dropout-min-recovery-frames 1`を指定する。
+
 最終testでは、まず元のfeature cacheを`--role test`で生成し、benchmark feature変換も
 `--role test`で実行します。その後`tools/evaluate_dsec_detection.py`へbenchmarkの`best.pt`を
 渡します。checkpointに記録された`dsec-det` protocolは評価時にも強制されます。

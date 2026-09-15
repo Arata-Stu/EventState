@@ -67,6 +67,14 @@ def parse_args() -> argparse.Namespace:
             "backbone and detection head"
         ),
     )
+    parser.add_argument(
+        "--freeze-temporal-model",
+        action="store_true",
+        help=(
+            "Keep the pretrained temporal model fixed. Combine with "
+            "--freeze-event-encoder for a head-only frozen-backbone run"
+        ),
+    )
     parser.add_argument("--weight-decay", type=float, default=5e-2)
     parser.add_argument("--head-width", type=int, default=192)
     parser.add_argument("--horizontal-flip-probability", type=float, default=0.5)
@@ -152,6 +160,15 @@ def _freeze_event_encoder(model: nn.Module) -> None:
         raise TypeError("EventState model lacks an event_encoder module")
     encoder.eval()
     for parameter in encoder.parameters():
+        parameter.requires_grad_(False)
+
+
+def _freeze_temporal_model(model: nn.Module) -> None:
+    temporal = getattr(model, "temporal_model", None)
+    if not isinstance(temporal, nn.Module):
+        raise TypeError("EventState model lacks a temporal_model module")
+    temporal.eval()
+    for parameter in temporal.parameters():
         parameter.requires_grad_(False)
 
 
@@ -284,11 +301,18 @@ def main() -> None:
     student = build_model(construction_config, device=device)
     if args.mode == "finetune":
         load_checkpoint(reference, model=student, device=device, restore_rng=False)
-    elif args.freeze_event_encoder:
-        raise ValueError("--freeze-event-encoder is only valid with --mode finetune")
+    elif args.freeze_event_encoder or args.freeze_temporal_model:
+        raise ValueError("backbone freezing is only valid with --mode finetune")
+    if args.freeze_temporal_model and not args.freeze_event_encoder:
+        raise ValueError(
+            "--freeze-temporal-model requires --freeze-event-encoder for the "
+            "head-only frozen-backbone protocol"
+        )
     _freeze_disposable_projectors(student)
     if args.freeze_event_encoder:
         _freeze_event_encoder(student)
+    if args.freeze_temporal_model:
+        _freeze_temporal_model(student)
 
     split = load_dsec_detection_split(args.split_manifest)
     sequence_length = int(_value(saved_config, "dataset.sequence_length", 8))
@@ -378,13 +402,21 @@ def main() -> None:
     student_parameters = [
         parameter for parameter in student.parameters() if parameter.requires_grad
     ]
-    optimizer = torch.optim.AdamW(
-        [
-            {"params": student_parameters, "lr": args.learning_rate * args.backbone_lr_mult},
-            {"params": detector.parameters(), "lr": args.learning_rate},
-        ],
-        weight_decay=args.weight_decay,
+    optimizer_groups: list[dict[str, Any]] = []
+    student_group_index: int | None = None
+    if student_parameters:
+        student_group_index = len(optimizer_groups)
+        optimizer_groups.append(
+            {
+                "params": student_parameters,
+                "lr": args.learning_rate * args.backbone_lr_mult,
+            }
+        )
+    head_group_index = len(optimizer_groups)
+    optimizer_groups.append(
+        {"params": list(detector.parameters()), "lr": args.learning_rate}
     )
+    optimizer = torch.optim.AdamW(optimizer_groups, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
         lr_lambda=lambda epoch: 0.01
@@ -405,9 +437,13 @@ def main() -> None:
                 "eventstate_checkpoint" if args.mode == "finetune" else "random"
             ),
             "trainable_components": (
-                ["temporal_backbone", "detector_head"]
-                if args.freeze_event_encoder
-                else ["event_encoder", "temporal_backbone", "detector_head"]
+                ["detector_head"]
+                if args.freeze_temporal_model
+                else (
+                    ["temporal_backbone", "detector_head"]
+                    if args.freeze_event_encoder
+                    else ["event_encoder", "temporal_backbone", "detector_head"]
+                )
             ),
             "sequence_length": sequence_length,
             "train_frames": len(train_dataset),
@@ -432,6 +468,8 @@ def main() -> None:
             or resume_config.get("feature") != args.feature
             or bool(resume_config.get("freeze_event_encoder", False))
             != args.freeze_event_encoder
+            or bool(resume_config.get("freeze_temporal_model", False))
+            != args.freeze_temporal_model
             or float(resume_config.get("event_dropout_probability", 0.0))
             != args.event_dropout_probability
             or tuple(resume_config.get("event_dropout_lengths", (1, 2, 4)))
@@ -460,6 +498,8 @@ def main() -> None:
             # requires_grad=False prevents weight updates; eval mode additionally
             # prevents any train-time stochastic behavior in the frozen ViT.
             _freeze_event_encoder(student)
+        if args.freeze_temporal_model:
+            _freeze_temporal_model(student)
         detector.train()
         totals: dict[str, float] = {}
         batches = 0
@@ -519,8 +559,12 @@ def main() -> None:
             "epoch": epoch,
             "mode": args.mode,
             "feature": args.feature,
-            "learning_rate/student": optimizer.param_groups[0]["lr"],
-            "learning_rate/head": optimizer.param_groups[1]["lr"],
+            "learning_rate/student": (
+                optimizer.param_groups[student_group_index]["lr"]
+                if student_group_index is not None
+                else 0.0
+            ),
+            "learning_rate/head": optimizer.param_groups[head_group_index]["lr"],
             **{f"train/{key}": value / max(1, batches) for key, value in totals.items()},
         }
         if validation is not None:
