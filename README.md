@@ -354,6 +354,17 @@ GPU 0/1/2をそれぞれE0/E2/E4へ割り当てます。E2/E4のtemporal model�
 `best.pt`生成は無効で、既定runでは`checkpoints/step_00100000.pt`を採用します。公式validation/test
 は表現学習やcheckpoint選択へ使用しません。E1の本学習は[実験TODO](docs/todo.md)に記録しています。
 
+E0/E2/E4完了後に同じ条件でE1/E3を補完する場合は、GPU 0/1へ一つずつ割り当てます。
+同じ`--output-root`を再指定すると、各runの最新`step_*.pt`から再開します。
+
+```bash
+bash tools/run_v100_e1_e3.sh \
+  --root /path/to/DSEC \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /path/to/DSEC_cache/dinov3_vits16 \
+  --checkpoint /path/to/dinov3_vits16_pretrain_lvd1689m-08c60483.pth
+```
+
 長時間runのconsole logは、全行を表示せず次の集約コマンドで比較できます。既定では直近10,000
 stepについて、初期区間からのloss変化、直近区間内の変化、h/z loss、projected cosine、勾配の
 中央値・95 percentile、速度、optimizer skipや非有限値の有無をE0/E2/E4横並びで表示します。
