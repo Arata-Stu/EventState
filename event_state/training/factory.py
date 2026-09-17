@@ -171,6 +171,21 @@ def validate_config(config: Any) -> None:
         raise ValueError("scheduler.warmup_steps must be in [0, training.max_steps)")
     if float(_value(training, "gradient_clip", 0.0)) < 0:
         raise ValueError("training.gradient_clip must be non-negative")
+    sampling = _value(training, "sampling", {})
+    sampling_mode = str(_value(sampling, "mode", "random")).lower()
+    if sampling_mode not in {"random", "stream", "mixed"}:
+        raise ValueError("training.sampling.mode must be random, stream, or mixed")
+    for name in ("random_batch_size", "stream_batch_size"):
+        value = _value(sampling, name, None)
+        if value is not None and int(value) <= 0:
+            raise ValueError(f"training.sampling.{name} must be positive or null")
+    active_weights = []
+    if sampling_mode in {"random", "mixed"}:
+        active_weights.append(float(_value(sampling, "random_weight", 1.0)))
+    if sampling_mode in {"stream", "mixed"}:
+        active_weights.append(float(_value(sampling, "stream_weight", 1.0)))
+    if any(weight < 0 for weight in active_weights) or not any(active_weights):
+        raise ValueError("Active training.sampling weights must be non-negative and nonzero")
     validation_batches = _value(training, "validation_batches", None)
     if validation_batches is not None and int(validation_batches) <= 0:
         raise ValueError("training.validation_batches must be positive or null")

@@ -45,10 +45,12 @@ class EventStateTrainer:
         device: torch.device,
         logger: TrainingLogger,
         checkpoint_config: Any,
+        stream_loader: Any | None = None,
     ) -> None:
         self.model = model
         self.teacher = teacher
         self.train_loader = train_loader
+        self.stream_loader = stream_loader
         self.validation_loader = validation_loader
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -65,6 +67,8 @@ class EventStateTrainer:
         self.global_step = 0
         self.best_validation_loss = float("inf")
         self._restored_data_state: dict[str, Any] = {}
+        self._stream_state_bank: dict[str, Any] = {}
+        self._previous_stream_names: set[str] = set()
 
         self.precision = str(_value(self.training_config, "precision", "fp16")).lower()
         if self.precision not in {"bf16", "fp16", "float16", "fp32", "float32"}:
@@ -246,6 +250,102 @@ class EventStateTrainer:
         if isinstance(state, Mapping):
             return {key: EventStateTrainer._detach_state(value) for key, value in state.items()}
         return state
+
+    def _move_state(self, state: Any) -> Any:
+        if isinstance(state, Tensor):
+            return state.to(self.device, non_blocking=self.device.type == "cuda")
+        if isinstance(state, tuple):
+            return tuple(self._move_state(item) for item in state)
+        if isinstance(state, list):
+            return [self._move_state(item) for item in state]
+        if isinstance(state, Mapping):
+            return {key: self._move_state(value) for key, value in state.items()}
+        return state
+
+    @staticmethod
+    def _stack_stream_states(states: list[Any | None]) -> Any:
+        prototype = next((state for state in states if state is not None), None)
+        if prototype is None:
+            return None
+
+        def stack(items: list[Any | None], reference: Any) -> Any:
+            if isinstance(reference, Tensor):
+                tensors = [
+                    torch.zeros_like(reference) if item is None else item
+                    for item in items
+                ]
+                return torch.cat(tensors, dim=1)
+            if isinstance(reference, tuple):
+                return tuple(
+                    stack(
+                        [None if item is None else item[index] for item in items],
+                        reference[index],
+                    )
+                    for index in range(len(reference))
+                )
+            if isinstance(reference, list):
+                return [
+                    stack(
+                        [None if item is None else item[index] for item in items],
+                        reference[index],
+                    )
+                    for index in range(len(reference))
+                ]
+            raise TypeError("Unsupported recurrent state structure")
+
+        return stack(states, prototype)
+
+    @staticmethod
+    def _split_stream_state(state: Any, batch_size: int) -> list[Any]:
+        if isinstance(state, Tensor):
+            if state.shape[1] % batch_size:
+                raise ValueError("Recurrent state cannot be split across stream batch")
+            return list(state.chunk(batch_size, dim=1))
+        if isinstance(state, (tuple, list)):
+            parts = [
+                EventStateTrainer._split_stream_state(item, batch_size)
+                for item in state
+            ]
+            constructor = tuple if isinstance(state, tuple) else list
+            return [constructor(part[index] for part in parts) for index in range(batch_size)]
+        raise TypeError("Unsupported recurrent state structure")
+
+    def _stream_forward(
+        self,
+        batch: Mapping[str, Any],
+        *,
+        event_dropout_mask: Tensor | None,
+    ) -> dict[str, Any]:
+        names_field = batch.get("sequence_name")
+        starts = batch.get("is_sequence_start")
+        if not isinstance(names_field, (list, tuple)):
+            raise ValueError("Stream batches must contain sequence_name values")
+        if not isinstance(starts, Tensor) or starts.numel() != len(names_field):
+            raise ValueError("Stream batches must contain is_sequence_start flags")
+        names = [str(name) for name in names_field]
+        current_names = set(names)
+        for completed_name in self._previous_stream_names - current_names:
+            self._stream_state_bank.pop(completed_name, None)
+        for name, is_start in zip(names, starts.tolist()):
+            if bool(is_start):
+                self._stream_state_bank.pop(name, None)
+        state = self._stack_stream_states(
+            [self._stream_state_bank.get(name) for name in names]
+        )
+        result = self._forward_objectives(
+            batch,
+            state=state,
+            event_dropout_mask=event_dropout_mask,
+        )
+        next_state = self._detach_state(result.get("state"))
+        if next_state is not None:
+            for name, item in zip(
+                names,
+                self._split_stream_state(next_state, len(names)),
+            ):
+                self._stream_state_bank[name] = item
+        self._previous_stream_names = current_names
+        return result
 
     def _forward_student(
         self,
@@ -431,7 +531,11 @@ class EventStateTrainer:
                 values[label] = global_gradient_norm(module.parameters())
         return values
 
-    def train_optimizer_step(self, iterator: CyclingDataIterator) -> dict[str, float]:
+    def train_optimizer_step(
+        self,
+        iterator: CyclingDataIterator | None,
+        stream_iterator: CyclingDataIterator | None = None,
+    ) -> dict[str, float]:
         if self.optimizer is None or self.scheduler is None:
             raise RuntimeError("Training requires optimizer and scheduler components")
         self.model.train()
@@ -448,13 +552,40 @@ class EventStateTrainer:
         samples = 0
         frames = 0
 
-        for _ in range(accumulation):
-            batch = self._move_batch(next(iterator))
+        sampling = _value(self.training_config, "sampling", {})
+        random_weight = float(_value(sampling, "random_weight", 1.0))
+        stream_weight = float(_value(sampling, "stream_weight", 1.0))
+        sources = [
+            ("random", iterator, random_weight),
+            ("stream", stream_iterator, stream_weight),
+        ]
+        sources = [
+            source for source in sources
+            if source[1] is not None and source[2] > 0
+        ]
+        total_source_weight = sum(source[2] for source in sources)
+        if not sources or total_source_weight <= 0:
+            raise ValueError("At least one training source must have positive weight")
+
+        for source_name, source_iterator, source_weight in sources * accumulation:
+            assert source_iterator is not None
+            previous_epoch = source_iterator.epoch
+            batch = self._move_batch(next(source_iterator))
+            if source_name == "stream" and source_iterator.epoch != previous_epoch:
+                self._stream_state_bank.clear()
+                self._previous_stream_names.clear()
             batch, event_dropout_mask = self._apply_training_event_dropout(batch)
-            result = self._forward_objectives(
-                batch, event_dropout_mask=event_dropout_mask
+            result = (
+                self._stream_forward(
+                    batch, event_dropout_mask=event_dropout_mask
+                )
+                if source_name == "stream"
+                else self._forward_objectives(
+                    batch, event_dropout_mask=event_dropout_mask
+                )
             )
-            scaled_loss = result["loss"] / accumulation
+            normalized_weight = source_weight / total_source_weight
+            scaled_loss = result["loss"] * normalized_weight / accumulation
             if self.scaler is None:
                 scaled_loss.backward()
             else:
@@ -494,7 +625,10 @@ class EventStateTrainer:
                 if valid_counts.numel():
                     batch_metrics["event_count"] = valid_counts.float().mean()
             for name, value in batch_metrics.items():
-                meters.setdefault(name, WeightedMean()).update(value, batch_size)
+                meters.setdefault(name, WeightedMean()).update(value, normalized_weight)
+                meters.setdefault(
+                    f"{source_name}/{name}", WeightedMean()
+                ).update(value, batch_size)
 
         if self.scaler is not None:
             self.scaler.unscale_(self.optimizer)
@@ -638,9 +772,35 @@ class EventStateTrainer:
             config=self.checkpoint_config,
         )
 
+    def _training_data_state(
+        self,
+        random_iterator: CyclingDataIterator | None,
+        stream_iterator: CyclingDataIterator | None,
+    ) -> dict[str, Any]:
+        def cpu_state(value: Any) -> Any:
+            if isinstance(value, Tensor):
+                return value.detach().cpu()
+            if isinstance(value, tuple):
+                return tuple(cpu_state(item) for item in value)
+            if isinstance(value, list):
+                return [cpu_state(item) for item in value]
+            if isinstance(value, Mapping):
+                return {key: cpu_state(item) for key, item in value.items()}
+            return value
+
+        return {
+            "random": (
+                None if random_iterator is None else random_iterator.state_dict()
+            ),
+            "stream": (
+                None if stream_iterator is None else stream_iterator.state_dict()
+            ),
+            "stream_state_bank": cpu_state(self._stream_state_bank),
+        }
+
     def fit(self) -> None:
-        if self.train_loader is None:
-            raise RuntimeError("Training requires a train dataloader")
+        if self.train_loader is None and self.stream_loader is None:
+            raise RuntimeError("Training requires at least one train dataloader")
         if self.optimizer is None or self.scheduler is None:
             raise RuntimeError("Training requires optimizer and scheduler components")
         max_steps = int(_value(self.training_config, "max_steps"))
@@ -651,11 +811,34 @@ class EventStateTrainer:
                 flush=True,
             )
             return
-        iterator = CyclingDataIterator(
-            self.train_loader,
-            seed=int(_value(self.config, "seed", 0)),
-            state=self._restored_data_state,
+        restored = self._restored_data_state
+        random_state = restored.get("random", restored) if restored else None
+        stream_state = restored.get("stream") if restored else None
+        iterator = (
+            CyclingDataIterator(
+                self.train_loader,
+                seed=int(_value(self.config, "seed", 0)),
+                state=random_state,
+            )
+            if self.train_loader is not None
+            else None
         )
+        stream_iterator = (
+            CyclingDataIterator(
+                self.stream_loader,
+                seed=int(_value(self.config, "seed", 0)) + 10_000,
+                state=stream_state,
+            )
+            if self.stream_loader is not None
+            else None
+        )
+        restored_bank = restored.get("stream_state_bank", {}) if restored else {}
+        if isinstance(restored_bank, Mapping):
+            self._stream_state_bank = {
+                str(name): self._move_state(state)
+                for name, state in restored_bank.items()
+            }
+            self._previous_stream_names = set(self._stream_state_bank)
         log_every = int(_value(self.training_config, "log_every", 20))
         validation_enabled = bool(
             _value(self.training_config, "validation_enabled", True)
@@ -672,7 +855,7 @@ class EventStateTrainer:
         last_checkpoint_step = -1
 
         while self.global_step < max_steps:
-            metrics = self.train_optimizer_step(iterator)
+            metrics = self.train_optimizer_step(iterator, stream_iterator)
             if metrics.get("optimizer_step_skipped", 0.0):
                 overflow = {
                     "train/optimizer_step_skipped": metrics["optimizer_step_skipped"],
@@ -694,12 +877,15 @@ class EventStateTrainer:
                 validation_loss = validation["val/loss"]
                 if math.isfinite(validation_loss) and validation_loss < self.best_validation_loss:
                     self.best_validation_loss = validation_loss
-                    self._save(self.checkpoint_directory / "best.pt", iterator.state_dict())
+                    self._save(
+                        self.checkpoint_directory / "best.pt",
+                        self._training_data_state(iterator, stream_iterator),
+                    )
                 last_validation_step = self.global_step
             if self.global_step % checkpoint_every == 0 or self.global_step == max_steps:
                 self._save(
                     self.checkpoint_directory / f"step_{self.global_step:08d}.pt",
-                    iterator.state_dict(),
+                    self._training_data_state(iterator, stream_iterator),
                 )
                 last_checkpoint_step = self.global_step
             self.logger.flush()
@@ -710,5 +896,5 @@ class EventStateTrainer:
         if last_checkpoint_step != self.global_step:
             self._save(
                 self.checkpoint_directory / f"step_{self.global_step:08d}.pt",
-                iterator.state_dict(),
+                self._training_data_state(iterator, stream_iterator),
             )

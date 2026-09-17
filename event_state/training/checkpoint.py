@@ -42,6 +42,14 @@ _TRAINING_RUNTIME_FIELDS = {
     "checkpoint_every",
     "validation_batches",
 }
+_LEGACY_RANDOM_SAMPLING = {
+    "mode": "random",
+    "random_batch_size": None,
+    "stream_batch_size": None,
+    "random_weight": 1.0,
+    "stream_weight": 1.0,
+    "shuffle_sequences": True,
+}
 
 
 @dataclass(frozen=True)
@@ -176,14 +184,17 @@ def critical_config(config: Any, *, mode: str = "resume") -> dict[str, Any]:
         "loss": _plain_value(plain.get("loss")),
     }
     if mode == "resume":
+        training = _filtered_section(
+            plain, "training", _TRAINING_RUNTIME_FIELDS
+        )
+        if isinstance(training, dict) and "sampling" not in training:
+            training["sampling"] = dict(_LEGACY_RANDOM_SAMPLING)
         signature.update(
             {
                 "seed": _plain_value(plain.get("seed")),
                 "optimizer": _plain_value(plain.get("optimizer")),
                 "scheduler": _plain_value(plain.get("scheduler")),
-                "training": _filtered_section(
-                    plain, "training", _TRAINING_RUNTIME_FIELDS
-                ),
+                "training": training,
             }
         )
     return signature
@@ -256,6 +267,13 @@ def assert_checkpoint_signature_compatible(
     saved = _plain_value(saved_signature)
     if not isinstance(saved, MappingABC):
         raise ValueError(f"Checkpoint does not contain a valid {mode} config signature")
+    if mode == "resume":
+        saved = dict(saved)
+        training = saved.get("training")
+        if isinstance(training, dict) and "sampling" not in training:
+            training = dict(training)
+            training["sampling"] = dict(_LEGACY_RANDOM_SAMPLING)
+            saved["training"] = training
     current = critical_config(current_config, mode=mode)
     differences = _config_differences(saved, current)
     if differences:

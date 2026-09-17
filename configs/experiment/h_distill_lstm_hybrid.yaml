@@ -1,0 +1,24 @@
+# @package _global_
+experiment:
+  name: e1_h_distill_lstm_hybrid
+
+loss:
+  h_distill:
+    enabled: true
+    cosine_weight: 1.0
+    mse_weight: 1.0
+  z_objective:
+    type: none
+    weight: 0.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
+
+training:
+  sampling:
+    mode: mixed
+    # Preserve the previous effective local batch size of eight on one V100.
+    random_batch_size: 4
+    stream_batch_size: 4
+    random_weight: 1.0
+    stream_weight: 1.0
+    shuffle_sequences: true

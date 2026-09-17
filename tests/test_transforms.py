@@ -30,3 +30,20 @@ def test_event_normalization_is_applied_after_geometry() -> None:
     normalized, _ = transform(events, None)
     assert torch.equal(normalized, torch.zeros_like(normalized))
 
+
+def test_sequence_consistent_augmentation_reuses_geometry() -> None:
+    pattern = torch.arange(12 * 16, dtype=torch.float32).view(1, 1, 12, 16)
+    transform = PairedSequenceTransform(
+        height=8,
+        width=8,
+        training=True,
+        scale=(0.5, 0.9),
+        horizontal_flip_probability=0.5,
+        sequence_consistent=True,
+        seed=17,
+    )
+
+    first, _ = transform(pattern, None, sequence_key="sequence_a")
+    second, _ = transform(pattern, None, sequence_key="sequence_a")
+
+    assert torch.equal(first, second)

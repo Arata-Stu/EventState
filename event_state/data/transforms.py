@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import random
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -22,6 +24,8 @@ class PairedSequenceTransform:
     horizontal_flip_probability: float = 0.0
     event_mean: tuple[float, ...] | None = None
     event_std: tuple[float, ...] | None = None
+    sequence_consistent: bool = False
+    seed: int = 0
 
     def __post_init__(self) -> None:
         if self.height <= 0 or self.width <= 0:
@@ -48,6 +52,8 @@ class PairedSequenceTransform:
         self,
         events: Tensor | None,
         images: Tensor | None,
+        *,
+        sequence_key: str | None = None,
     ) -> tuple[Tensor | None, Tensor | None]:
         reference = events if events is not None else images
         if reference is None:
@@ -59,8 +65,9 @@ class PairedSequenceTransform:
             if tensor is not None and tensor.shape[-2:] != (source_h, source_w):
                 raise ValueError(f"{name} is not spatially aligned with the other modality")
 
-        top, left, crop_h, crop_w = self._sample_crop(source_h, source_w)
-        flip = self.training and random.random() < self.horizontal_flip_probability
+        rng = self._rng(sequence_key)
+        top, left, crop_h, crop_w = self._sample_crop(source_h, source_w, rng)
+        flip = self.training and rng.random() < self.horizontal_flip_probability
         events = self._apply(events, top, left, crop_h, crop_w, flip)
         images = self._apply(images, top, left, crop_h, crop_w, flip)
         if events is not None and self.event_mean is not None:
@@ -74,9 +81,26 @@ class PairedSequenceTransform:
             events = (events - mean) / std
         return events, images
 
-    def _sample_crop(self, source_h: int, source_w: int) -> tuple[int, int, int, int]:
+    def _rng(self, sequence_key: str | None) -> Any:
+        if not self.sequence_consistent:
+            return random
+        if sequence_key is None:
+            raise ValueError(
+                "sequence_key is required for sequence-consistent augmentation"
+            )
+        digest = hashlib.sha256(
+            f"{self.seed}:{sequence_key}".encode("utf-8")
+        ).digest()
+        return random.Random(int.from_bytes(digest[:8], "big"))
+
+    def _sample_crop(
+        self,
+        source_h: int,
+        source_w: int,
+        rng: Any,
+    ) -> tuple[int, int, int, int]:
         target_ratio = self.width / self.height
-        scale = random.uniform(*self.scale) if self.training else 1.0
+        scale = rng.uniform(*self.scale) if self.training else 1.0
         desired_area = source_h * source_w * scale
         crop_w = min(source_w, max(1, round(math.sqrt(desired_area * target_ratio))))
         crop_h = min(source_h, max(1, round(crop_w / target_ratio)))
@@ -85,8 +109,8 @@ class PairedSequenceTransform:
             crop_w = min(source_w, max(1, round(crop_h * target_ratio)))
 
         if self.training:
-            top = random.randint(0, source_h - crop_h)
-            left = random.randint(0, source_w - crop_w)
+            top = rng.randint(0, source_h - crop_h)
+            left = rng.randint(0, source_w - crop_w)
         else:
             top = (source_h - crop_h) // 2
             left = (source_w - crop_w) // 2

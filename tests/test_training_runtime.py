@@ -120,6 +120,20 @@ def _make_trainer(
     )
 
 
+def test_stream_state_split_stack_round_trip() -> None:
+    state = (
+        torch.arange(2 * 3 * 4, dtype=torch.float32).reshape(2, 3, 4),
+        torch.arange(2 * 3 * 4, dtype=torch.float32).reshape(2, 3, 4) + 100,
+    )
+
+    parts = EventStateTrainer._split_stream_state(state, batch_size=3)
+    restored = EventStateTrainer._stack_stream_states(parts)
+
+    assert restored is not None
+    assert torch.equal(restored[0], state[0])
+    assert torch.equal(restored[1], state[1])
+
+
 def test_optimizer_groups_cover_parameters_once_and_apply_lr_multipliers() -> None:
     model = TinyEventState()
     optimizer = build_optimizer(

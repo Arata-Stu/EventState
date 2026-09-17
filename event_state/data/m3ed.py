@@ -278,7 +278,16 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
     def __len__(self) -> int:
         return len(self._clips)
 
-    def __getitem__(self, index: int) -> dict[str, Any]:
+    @property
+    def clip_records(self) -> tuple[tuple[str, int, int], ...]:
+        """Chronological clip metadata used by stateful stream samplers."""
+
+        return tuple(self._clips)
+
+    def __getitem__(self, index: int | tuple[int, int]) -> dict[str, Any]:
+        augmentation_epoch = 0
+        if isinstance(index, tuple):
+            index, augmentation_epoch = index
         sequence_name, start, clip_length = self._clips[index]
         records = self._frames_by_sequence[sequence_name][start : start + clip_length]
 
@@ -296,7 +305,15 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
             if self.load_images
             else None
         )
-        event_sequence, image_sequence = self.transform(event_sequence, image_sequence)
+        event_sequence, image_sequence = self.transform(
+            event_sequence,
+            image_sequence,
+            sequence_key=(
+                f"{sequence_name}:epoch={augmentation_epoch}"
+                if self.transform.sequence_consistent
+                else None
+            ),
+        )
 
         sample: dict[str, Any] = {
             "timestamps": torch.tensor([item.timestamp for item in records], dtype=torch.int64),

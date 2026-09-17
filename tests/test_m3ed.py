@@ -96,3 +96,36 @@ def test_m3ed_validation_can_emit_short_final_clip(tmp_path: Path) -> None:
     assert len(dataset) == 2
     assert dataset[1]["events"].shape[0] == 1
     assert dataset[1]["is_sequence_end"] is True
+
+
+def test_m3ed_exposes_stream_clips_and_accepts_epoch_index(tmp_path: Path) -> None:
+    _write_prepared_sequence(tmp_path, "traffic_stop", frame_count=6)
+    dataset = M3EDSequenceDataset(
+        root=tmp_path,
+        prepared_root=tmp_path,
+        split="train",
+        sequences=["traffic_stop"],
+        sequence_length=2,
+        clip_stride=2,
+        event_representation=GEPEventFrame(height=4, width=4),
+        transform=PairedSequenceTransform(
+            height=4,
+            width=4,
+            training=True,
+            horizontal_flip_probability=0.5,
+            sequence_consistent=True,
+            seed=5,
+        ),
+        event_cache_dir=tmp_path,
+        load_events=True,
+        load_images=True,
+    )
+
+    assert dataset.clip_records == (
+        ("traffic_stop", 1, 2),
+        ("traffic_stop", 3, 2),
+    )
+    first = dataset[(0, 3)]
+    second = dataset[(0, 3)]
+    assert torch.equal(first["events"], second["events"])
+    assert torch.equal(first["images"], second["images"])

@@ -61,6 +61,7 @@ def main(config: DictConfig) -> None:
             device=runtime.device,
             logger=logger,
             checkpoint_config=checkpoint_config,
+            stream_loader=runtime.dataloaders.stream,
         )
         print(
             f"Starting {config.experiment.name} on {runtime.device}; "

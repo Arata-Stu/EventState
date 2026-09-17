@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import json
 import random
-from collections.abc import Mapping
+from collections import defaultdict
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 
 from event_state.data import (
     DSECSequenceDataset,
@@ -73,7 +74,14 @@ def build_event_representation(dataset_config: Any) -> Any:
     )
 
 
-def _build_transform(dataset_config: Any, *, training: bool, channels: int) -> Any:
+def _build_transform(
+    dataset_config: Any,
+    *,
+    training: bool,
+    channels: int,
+    sequence_consistent: bool = False,
+    seed: int = 0,
+) -> Any:
     representation_config = _value(dataset_config, "representation")
     augmentation = _value(dataset_config, "augmentation")
     augmentation_enabled = training and bool(_value(augmentation, "enabled", False))
@@ -101,14 +109,92 @@ def _build_transform(dataset_config: Any, *, training: bool, channels: int) -> A
         ),
         event_mean=event_mean,
         event_std=event_std,
+        sequence_consistent=sequence_consistent and augmentation_enabled,
+        seed=seed,
     )
 
 
 @dataclass(frozen=True)
 class DataLoaders:
-    train: DataLoader
+    train: DataLoader | None
+    stream: DataLoader | None
     validation: DataLoader | None
     generator: torch.Generator
+
+
+class StatefulStreamBatchSampler(Sampler[list[tuple[int, int]]]):
+    """Batch chronological, non-overlapping clips while interleaving sequences.
+
+    Each active lane advances by one clip per yielded batch. Once a sequence is
+    exhausted, the lane is assigned the next sequence. The trainer keys recurrent
+    state by sequence name, so lane replacement and a smaller final batch are safe.
+    """
+
+    def __init__(
+        self,
+        clip_records: Sequence[tuple[str, int, int]],
+        *,
+        batch_size: int,
+        seed: int,
+        shuffle_sequences: bool = True,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("stream batch_size must be positive")
+        grouped: dict[str, list[int]] = defaultdict(list)
+        for index, (sequence_name, start, _length) in enumerate(clip_records):
+            grouped[str(sequence_name)].append(index)
+        if not grouped:
+            raise ValueError("stream sampler requires at least one clip")
+        for indices in grouped.values():
+            indices.sort(key=lambda index: int(clip_records[index][1]))
+        self._indices_by_sequence = dict(grouped)
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.shuffle_sequences = bool(shuffle_sequences)
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __iter__(self) -> Iterator[list[tuple[int, int]]]:
+        sequence_names = list(self._indices_by_sequence)
+        if self.shuffle_sequences:
+            random.Random(self.seed + self.epoch).shuffle(sequence_names)
+        pending = iter(sequence_names)
+        active: list[Iterator[int]] = []
+        for _ in range(min(self.batch_size, len(sequence_names))):
+            active.append(iter(self._indices_by_sequence[next(pending)]))
+
+        while active:
+            batch: list[tuple[int, int]] = []
+            next_active: list[Iterator[int]] = []
+            for lane in active:
+                try:
+                    batch.append((next(lane), self.epoch))
+                    next_active.append(lane)
+                    continue
+                except StopIteration:
+                    pass
+                try:
+                    replacement = iter(self._indices_by_sequence[next(pending)])
+                except StopIteration:
+                    continue
+                batch.append((next(replacement), self.epoch))
+                next_active.append(replacement)
+            active = next_active
+            if batch:
+                yield batch
+
+    def __len__(self) -> int:
+        sequence_names = list(self._indices_by_sequence)
+        if self.shuffle_sequences:
+            random.Random(self.seed + self.epoch).shuffle(sequence_names)
+        lengths = [len(self._indices_by_sequence[name]) for name in sequence_names]
+        lane_loads = lengths[: self.batch_size]
+        for length in lengths[self.batch_size :]:
+            lane = min(range(len(lane_loads)), key=lane_loads.__getitem__)
+            lane_loads[lane] += length
+        return max(lane_loads)
 
 
 def _expected_teacher_identity(teacher_config: Any) -> dict[str, Any]:
@@ -396,15 +482,47 @@ def build_dataloaders(config: Any) -> DataLoaders:
     event_representation = build_event_representation(dataset_config)
     cache_features = bool(_value(teacher_config, "cache_features", True))
     common = _dataset_options(dataset_config, teacher_config, event_representation)
-    train_dataset = _dataset_class(dataset_config)(
-        split=train_split,
-        sequences=train_sequences,
-        clip_stride=int(_value(dataset_config, "clip_stride", 1)),
-        include_incomplete_clips=False,
-        transform=_build_transform(
-            dataset_config, training=True, channels=event_representation.channels
-        ),
-        **common,
+    sampling = _value(training_config, "sampling", {})
+    sampling_mode = str(_value(sampling, "mode", "random")).lower()
+    if sampling_mode not in {"random", "stream", "mixed"}:
+        raise ValueError("training.sampling.mode must be random, stream, or mixed")
+    use_random = sampling_mode in {"random", "mixed"}
+    use_stream = sampling_mode in {"stream", "mixed"}
+    seed = int(_value(config, "seed", 0))
+    train_dataset = (
+        _dataset_class(dataset_config)(
+            split=train_split,
+            sequences=train_sequences,
+            clip_stride=int(_value(dataset_config, "clip_stride", 1)),
+            include_incomplete_clips=False,
+            transform=_build_transform(
+                dataset_config,
+                training=True,
+                channels=event_representation.channels,
+                seed=seed,
+            ),
+            **common,
+        )
+        if use_random
+        else None
+    )
+    stream_dataset = (
+        _dataset_class(dataset_config)(
+            split=train_split,
+            sequences=train_sequences,
+            clip_stride=int(_value(dataset_config, "sequence_length")),
+            include_incomplete_clips=False,
+            transform=_build_transform(
+                dataset_config,
+                training=True,
+                channels=event_representation.channels,
+                sequence_consistent=True,
+                seed=seed,
+            ),
+            **common,
+        )
+        if use_stream
+        else None
     )
     validation_dataset = (
         _build_validation_dataset(config, event_representation)
@@ -412,11 +530,13 @@ def build_dataloaders(config: Any) -> DataLoaders:
         else None
     )
     if cache_features:
-        _validate_teacher_cache(
-            train_dataset,
-            teacher_config=teacher_config,
-            dataset_config=dataset_config,
-        )
+        for dataset in (train_dataset, stream_dataset):
+            if dataset is not None:
+                _validate_teacher_cache(
+                    dataset,
+                    teacher_config=teacher_config,
+                    dataset_config=dataset_config,
+                )
         if validation_dataset is not None:
             _validate_teacher_cache(
                 validation_dataset,
@@ -427,16 +547,48 @@ def build_dataloaders(config: Any) -> DataLoaders:
     batch_size = int(_value(training_config, "batch_size", 1))
     if batch_size <= 0:
         raise ValueError("training.batch_size must be positive")
-    generator = torch.Generator().manual_seed(int(_value(config, "seed", 0)))
+    generator = torch.Generator().manual_seed(seed)
     loader_options = _loader_options(training_config)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        generator=generator,
-        drop_last=False,
-        **loader_options,
+    default_branch_batch = max(1, batch_size // 2) if sampling_mode == "mixed" else batch_size
+    configured_random_batch = _value(sampling, "random_batch_size", None)
+    configured_stream_batch = _value(sampling, "stream_batch_size", None)
+    random_batch_size = int(
+        default_branch_batch
+        if configured_random_batch is None
+        else configured_random_batch
     )
+    stream_batch_size = int(
+        default_branch_batch
+        if configured_stream_batch is None
+        else configured_stream_batch
+    )
+    if random_batch_size <= 0 or stream_batch_size <= 0:
+        raise ValueError("training.sampling branch batch sizes must be positive")
+    train_loader = (
+        DataLoader(
+            train_dataset,
+            batch_size=random_batch_size,
+            shuffle=True,
+            generator=generator,
+            drop_last=False,
+            **loader_options,
+        )
+        if train_dataset is not None
+        else None
+    )
+    stream_loader = None
+    if stream_dataset is not None:
+        stream_sampler = StatefulStreamBatchSampler(
+            stream_dataset.clip_records,
+            batch_size=stream_batch_size,
+            seed=seed + 10_000,
+            shuffle_sequences=bool(_value(sampling, "shuffle_sequences", True)),
+        )
+        stream_loader = DataLoader(
+            stream_dataset,
+            batch_sampler=stream_sampler,
+            **loader_options,
+        )
     validation_loader = (
         DataLoader(
             validation_dataset,
@@ -450,7 +602,12 @@ def build_dataloaders(config: Any) -> DataLoaders:
         if validation_dataset is not None
         else None
     )
-    return DataLoaders(train=train_loader, validation=validation_loader, generator=generator)
+    return DataLoaders(
+        train=train_loader,
+        stream=stream_loader,
+        validation=validation_loader,
+        generator=generator,
+    )
 
 
 class CyclingDataIterator:
@@ -466,6 +623,10 @@ class CyclingDataIterator:
     def _start_epoch(self) -> None:
         if self.loader.generator is not None:
             self.loader.generator.manual_seed(self.seed + self.epoch)
+        batch_sampler = getattr(self.loader, "batch_sampler", None)
+        set_epoch = getattr(batch_sampler, "set_epoch", None)
+        if callable(set_epoch):
+            set_epoch(self.epoch)
         self._iterator = iter(self.loader)
         skipped = 0
         while skipped < self.batch_in_epoch:
