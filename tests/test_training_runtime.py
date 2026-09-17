@@ -616,6 +616,99 @@ def test_train_only_loader_does_not_construct_validation_split(
     assert loaders.validation is None
 
 
+def test_m3ed_mixed_loader_builds_random_and_stream_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[dict] = []
+
+    class DummyRepresentation:
+        channels = 3
+
+    class DummyDataset(torch.utils.data.Dataset):
+        def __init__(self, **kwargs) -> None:
+            constructed.append(kwargs)
+            self.sequence_names = list(kwargs["sequences"])
+            self.feature_cache_dir = None
+            stride = int(kwargs["clip_stride"])
+            self.clip_records = (
+                ("sequence_a", 1, 2),
+                ("sequence_a", 1 + stride, 2),
+                ("sequence_b", 1, 2),
+            )
+
+        def __len__(self) -> int:
+            return len(self.clip_records)
+
+        def __getitem__(self, index) -> dict:
+            if isinstance(index, tuple):
+                index = index[0]
+            sequence_name, start, _length = self.clip_records[index]
+            return {
+                "events": torch.zeros(2, 3, 2, 2),
+                "sequence_name": sequence_name,
+                "is_sequence_start": start == 1,
+                "is_sequence_end": False,
+            }
+
+    monkeypatch.setattr(
+        training_data,
+        "build_event_representation",
+        lambda dataset_config: DummyRepresentation(),
+    )
+    monkeypatch.setattr(training_data, "M3EDSequenceDataset", DummyDataset)
+    config = {
+        "seed": 7,
+        "dataset": {
+            "name": "m3ed",
+            "root": "/raw-m3ed",
+            "prepared_root": "/prepared-m3ed",
+            "sequence_length": 2,
+            "clip_stride": 1,
+            "train_split": "train",
+            "train_sequences": ["sequence_a", "sequence_b"],
+            "val_split": "validation",
+            "val_sequences": ["sequence_v"],
+            "image_directory": "aligned_rgb",
+            "rectify_events": True,
+            "event_cache_dir": "/prepared-m3ed",
+            "event_window_fraction": 1.0,
+            "target_cache_dir": None,
+            "target_tasks": [],
+            "representation": {
+                "type": "gep_rgb",
+                "normalize_mean": [0.0, 0.0, 0.0],
+                "normalize_std": [1.0, 1.0, 1.0],
+            },
+            "augmentation": {"enabled": False},
+            "input_height": 2,
+            "input_width": 2,
+        },
+        "teacher": {"cache_features": False},
+        "training": {
+            "validation_enabled": False,
+            "batch_size": 4,
+            "sampling": {
+                "mode": "mixed",
+                "random_batch_size": 2,
+                "stream_batch_size": 2,
+            },
+            "num_workers": 0,
+            "pin_memory": False,
+            "persistent_workers": False,
+        },
+    }
+
+    loaders = training_data.build_dataloaders(config)
+
+    assert len(constructed) == 2
+    assert loaders.train is not None
+    assert loaders.stream is not None
+    assert isinstance(
+        loaders.stream.batch_sampler,
+        training_data.StatefulStreamBatchSampler,
+    )
+
+
 def test_evaluation_local_dino_relocation_uses_content_identity(tmp_path: Path) -> None:
     saved_repository = tmp_path / "old_mount" / "dinov3"
     current_repository = tmp_path / "new_mount" / "dinov3"

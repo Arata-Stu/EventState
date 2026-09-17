@@ -69,3 +69,8 @@ Prepared depth, semantic, or pose targets are not required for representation
 pretraining. Stochastic augmentation remains intentionally incompatible with
 those aligned downstream targets; use the target-free pretraining dataset when
 running the augmentation ablation.
+
+`tools/run_m3ed_hybrid_augmentation_ablation.sh` launches a controlled four-run
+comparison. The cached-teacher pair isolates random versus hybrid sampling, and
+the online-teacher pair isolates augmentation. The two online runs execute
+sequentially on GPU 2, while the cached runs occupy GPUs 0 and 1.
