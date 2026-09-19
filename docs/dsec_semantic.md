@@ -54,3 +54,30 @@ bash tools/run_dsec_semantic_frozen.sh \
 The run is restartable at sequence granularity during feature export and from
 `last.pt` during both head-training stages. Final official-test metrics are
 written to `test_metrics.json`.
+
+## Full-sequence visualization
+
+The visualization command renders every labeled frame from all three official
+test sequences without temporal subsampling. One PCA basis and one percentile
+range are fitted jointly across the selected sequences, so feature colors are
+comparable between videos. RGB is displayed only as a visual reference;
+semantic predictions consume the cached event feature alone.
+
+```bash
+python tools/visualize_dsec_semantic_sequences.py \
+  --checkpoint outputs/dsec_semantic_frozen/MODEL/seed_0/final/last.pt \
+  --feature-cache-dir /path/to/DSEC_cache/semantic_features/MODEL \
+  --event-cache-dir /path/to/DSEC_cache/events/gep_rgb \
+  --labels-root /path/to/DSEC/task_labels/semantic \
+  --dataset-root /path/to/DSEC \
+  --output-dir outputs/dsec_semantic_frozen/MODEL/seed_0/visualization/test \
+  --role test \
+  --model-label MODEL \
+  --device cuda
+```
+
+Each sequence produces an MP4 plus a per-frame CSV and a JSON provenance file.
+The six panels show aligned RGB reference, GEP event input, normalized feature
+PCA, official ground truth, event-only prediction, and a correct/error overlay.
+Use `--max-frames 100` for a quick preview, or `--sequences NAME ...` to select
+specific sequences.
