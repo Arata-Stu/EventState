@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -332,7 +333,14 @@ def _render_sequence(
     imageio_ffmpeg: Any,
 ) -> None:
     output = args.output_dir / f"{sequence}.mp4"
-    if output.is_file() and not args.overwrite:
+    csv_output = output.with_suffix(".csv")
+    json_output = output.with_suffix(".json")
+    if (
+        output.is_file()
+        and csv_output.is_file()
+        and json_output.is_file()
+        and not args.overwrite
+    ):
         print(f"{sequence}: existing video skipped: {output}", flush=True)
         return
     frame_count = len(dataset)
@@ -355,23 +363,29 @@ def _render_sequence(
     gap = 6
     header_height = 38
     panel_full_height = panel_height + 54
-    canvas_width = panel_width * 3 + gap * 2
-    canvas_height = header_height + panel_full_height * 2 + gap
-    canvas_width += canvas_width % 2
-    canvas_height += canvas_height % 2
+    content_width = panel_width * 3 + gap * 2
+    content_height = header_height + panel_full_height * 2 + gap
+    # Avoid imageio-ffmpeg's implicit scale filter. Padding to a macroblock
+    # boundary keeps every submitted RGB frame and the encoded stream identical
+    # in size, while remaining compatible with conservative H.264 players.
+    canvas_width = math.ceil(content_width / 16) * 16
+    canvas_height = math.ceil(content_height / 16) * 16
     title_font = _font(18)
     small_font = _font(13)
     use_amp = args.precision == "fp16" and device.type == "cuda"
     rows: list[dict[str, Any]] = []
 
     output.parent.mkdir(parents=True, exist_ok=True)
+    temporary_output = output.with_name(f".{output.stem}.partial.mp4")
+    temporary_output.unlink(missing_ok=True)
     writer = imageio_ffmpeg.write_frames(
-        str(output),
+        str(temporary_output),
         size=(canvas_width, canvas_height),
         fps=args.fps,
         codec="libx264",
         pix_fmt_in="rgb24",
-        output_params=["-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+        pix_fmt_out="yuv420p",
+        output_params=["-crf", "18", "-movflags", "+faststart"],
     )
     writer.send(None)
     rendered = 0
@@ -499,11 +513,15 @@ def _render_sequence(
     finally:
         writer.close()
 
-    with output.with_suffix(".csv").open("w", newline="", encoding="utf-8") as handle:
+    # The public path becomes visible only after FFmpeg has finalized the MP4
+    # container and written its moov atom.
+    temporary_output.replace(output)
+
+    with csv_output.open("w", newline="", encoding="utf-8") as handle:
         csv_writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         csv_writer.writeheader()
         csv_writer.writerows(rows)
-    output.with_suffix(".json").write_text(
+    json_output.write_text(
         json.dumps(
             {
                 "sequence": sequence,
