@@ -358,6 +358,11 @@ def _render_sequence(
         persistent_workers=args.num_workers > 0,
         collate_fn=segmentation_collate,
     )
+    # Start multiprocessing workers before opening FFmpeg.  With Linux/fork,
+    # workers created after FFmpeg inherit a copy of its stdin pipe.  The
+    # encoder then waits forever for EOF at writer.close(), even after every
+    # frame has been submitted by the parent process.
+    loader_iterator = iter(loader)
     panel_width = args.panel_width
     panel_height = round(panel_width * 440 / 640)
     gap = 6
@@ -390,7 +395,12 @@ def _render_sequence(
     writer.send(None)
     rendered = 0
     try:
-        for batch in tqdm(loader, desc=f"semantic video:{sequence}", unit="batch"):
+        for batch in tqdm(
+            loader_iterator,
+            total=len(loader),
+            desc=f"semantic video:{sequence}",
+            unit="batch",
+        ):
             features = batch["features"].to(device, non_blocking=True)
             with torch.autocast(
                 device_type=device.type, dtype=torch.float16, enabled=use_amp
@@ -511,7 +521,12 @@ def _render_sequence(
                 )
                 rendered += 1
     finally:
+        print(
+            f"{sequence}: finalizing MP4 after {rendered} frames...",
+            flush=True,
+        )
         writer.close()
+        print(f"{sequence}: MP4 finalized", flush=True)
 
     # The public path becomes visible only after FFmpeg has finalized the MP4
     # container and written its moov atom.
