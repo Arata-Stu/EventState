@@ -98,6 +98,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Replace existing clip artifacts; otherwise valid files are preserved",
     )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Optional sequence-frame limit for quick visualization previews",
+    )
     return parser.parse_args()
 
 
@@ -223,6 +229,8 @@ def _mask_events(
 
 def main() -> None:
     args = parse_args()
+    if args.max_frames is not None and args.max_frames <= 0:
+        raise ValueError("--max-frames must be positive")
     if args.drop_length < 0:
         raise ValueError("--drop-length must be non-negative")
     if args.drop_start < 0:
@@ -290,12 +298,18 @@ def main() -> None:
             sequence_name = str(batch["sequence_name"][0])
             if sequence_name != args.sequence:
                 continue
+            if args.max_frames is not None and frame_count >= args.max_frames:
+                break
             if _batch_bool(batch, "is_sequence_start") or args.state_policy == "clip":
                 recurrent_state = None
             events = _move(batch["events"], runtime.device)
+            if args.max_frames is not None:
+                remaining = args.max_frames - frame_count
+                events = events[:, :remaining]
+            clip_frames = int(events.shape[1])
             event_dropped = _drop_mask(
                 sequence_offset=frame_count,
-                frame_count=int(events.shape[1]),
+                frame_count=clip_frames,
                 start=args.drop_start,
                 stride=args.drop_stride,
                 length=args.drop_length,
@@ -316,7 +330,8 @@ def main() -> None:
             else:
                 outputs = runtime.model(events, state=recurrent_state)
                 recurrent_state = outputs.get("state")
-            timestamps = batch["timestamps"][0].detach().cpu()
+            timestamps = batch["timestamps"][0, :clip_frames].detach().cpu()
+            frame_indices = batch["frame_indices"][0, :clip_frames].detach().cpu()
             features: dict[str, torch.Tensor] = {}
             if "Pz" in feature_names:
                 features["Pz"] = (
@@ -338,7 +353,7 @@ def main() -> None:
                 "event_window_fraction": float(args.event_window_fraction),
                 "event_dropped": event_dropped.detach().cpu(),
                 "timestamps": timestamps,
-                "frame_indices": batch["frame_indices"][0].detach().cpu(),
+                "frame_indices": frame_indices,
                 "grid_size": [grid_height, grid_width],
                 "features": features,
             }
@@ -359,6 +374,8 @@ def main() -> None:
                 teacher = batch.get("teacher_features")
                 if not isinstance(teacher, torch.Tensor):
                     raise RuntimeError("Sequence visualization requires cached teacher features")
+                teacher = teacher[:, :clip_frames]
+                event_counts = batch["event_counts"][0, :clip_frames].detach().cpu()
                 context_path = args.context_dir / f"{clip_count:06d}.pt"
                 context = {
                     "format_version": SEQUENCE_FEATURE_FORMAT_VERSION,
@@ -366,13 +383,13 @@ def main() -> None:
                     "sequence_name": sequence_name,
                     "clip_index": clip_count,
                     "timestamps": timestamps,
-                    "frame_indices": batch["frame_indices"][0].detach().cpu(),
+                    "frame_indices": frame_indices,
                     "event_counts": torch.where(
                         event_dropped.detach().cpu(),
-                        torch.zeros_like(batch["event_counts"][0]),
-                        batch["event_counts"][0],
+                        torch.zeros_like(event_counts),
+                        event_counts,
                     ),
-                    "original_event_counts": batch["event_counts"][0].detach().cpu(),
+                    "original_event_counts": event_counts,
                     "event_dropped": event_dropped.detach().cpu(),
                     "event_drop": event_drop,
                     "event_window_fraction": float(args.event_window_fraction),
@@ -395,7 +412,6 @@ def main() -> None:
                 ):
                     atomic_torch_save(context, context_path)
 
-            clip_frames = int(timestamps.numel())
             frame_count += clip_frames
             clip_count += 1
             print(

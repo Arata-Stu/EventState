@@ -124,6 +124,9 @@ COMMON_ARGS=(
 if [ -n "$TEACHER_CHECKPOINT" ]; then
   COMMON_ARGS+=(--teacher-checkpoint "$TEACHER_CHECKPOINT")
 fi
+if [ -n "$MAX_FRAMES" ]; then
+  COMMON_ARGS+=(--max-frames "$MAX_FRAMES")
+fi
 OVERWRITE_ARGS=()
 if [ "$OVERWRITE" -eq 1 ]; then
   OVERWRITE_ARGS+=(--overwrite)
