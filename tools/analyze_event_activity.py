@@ -36,9 +36,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache",
         action="append",
-        required=True,
+        default=[],
         metavar="LABEL:PATH",
         help="Prepared event-cache root; repeat to compare DSEC and M3ED",
+    )
+    parser.add_argument(
+        "--frames-csv",
+        action="append",
+        default=[],
+        metavar="LABEL:PATH",
+        help=(
+            "Previously generated frames.csv; repeat to compare datasets stored "
+            "on different machines without copying event caches"
+        ),
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
@@ -71,6 +81,46 @@ def _parse_cache(value: str) -> tuple[str, Path]:
     return label, root
 
 
+def _parse_frames_csv(value: str) -> tuple[str, Path]:
+    try:
+        label, path = value.split(":", 1)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"frames-csv must be LABEL:PATH, got {value!r}"
+        ) from error
+    source = Path(path).expanduser().resolve()
+    if not label or not source.is_file():
+        raise argparse.ArgumentTypeError(f"invalid frames-csv: {value!r}")
+    return label, source
+
+
+def _load_frames_csv(label: str, path: Path) -> list[dict[str, Any]]:
+    integer_fields = {
+        "frame_index",
+        "timestamp",
+        "delta_us",
+        "height",
+        "width",
+        "event_count",
+    }
+    float_fields = {"event_rate_kev_s", "event_density_ev_mpix_s"}
+    rows: list[dict[str, Any]] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        for source in csv.DictReader(handle):
+            missing = (integer_fields | float_fields | {"sequence"}) - set(source)
+            if missing:
+                raise ValueError(
+                    f"frames.csv lacks {sorted(missing)}: {path}"
+                )
+            row: dict[str, Any] = {"dataset": label, "sequence": source["sequence"]}
+            row.update({key: int(float(source[key])) for key in integer_fields})
+            row.update({key: float(source[key]) for key in float_fields})
+            rows.append(row)
+    if not rows:
+        raise ValueError(f"frames.csv is empty: {path}")
+    return rows
+
+
 def _safe_load(path: Path) -> Any:
     # mmap=True reads pickle metadata immediately but pages the large event
     # tensor only if it is accessed. This makes a count-only scan practical for
@@ -84,20 +134,32 @@ def _safe_load(path: Path) -> Any:
             return torch.load(path, map_location="cpu")
 
 
-def _sequence_directories(root: Path, requested: list[str] | None) -> list[Path]:
-    directories = sorted(
-        path
-        for path in root.iterdir()
-        if path.is_dir() and any(item.stem.isdecimal() for item in path.glob("*.pt"))
-    )
+def _sequence_directories(
+    root: Path, requested: list[str] | None
+) -> list[tuple[str, Path]]:
+    directories: list[tuple[str, Path]] = []
+    for sequence_root in sorted(path for path in root.iterdir() if path.is_dir()):
+        direct = any(item.stem.isdecimal() for item in sequence_root.glob("*.pt"))
+        nested_root = sequence_root / "events"
+        nested = nested_root.is_dir() and any(
+            item.stem.isdecimal() for item in nested_root.glob("*.pt")
+        )
+        if direct and nested:
+            raise ValueError(
+                f"Ambiguous direct and nested event caches: {sequence_root}"
+            )
+        if direct:
+            directories.append((sequence_root.name, sequence_root))
+        elif nested:
+            directories.append((sequence_root.name, nested_root))
     if requested:
-        mapping = {path.name: path for path in directories}
+        mapping = dict(directories)
         missing = sorted(set(requested) - set(mapping))
         if missing:
             raise FileNotFoundError(
                 f"Sequences not found under {root}: {', '.join(missing)}"
             )
-        directories = [mapping[name] for name in requested]
+        directories = [(name, mapping[name]) for name in requested]
     if not directories:
         raise ValueError(f"No event-cache sequence directories found: {root}")
     return directories
@@ -108,12 +170,12 @@ def _scan_cache(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     directories = _sequence_directories(root, requested)
-    for directory in directories:
+    for sequence_name, directory in directories:
         paths = sorted(
             (path for path in directory.glob("*.pt") if path.stem.isdecimal()),
             key=lambda path: int(path.stem),
         )
-        for path in tqdm(paths, desc=f"activity:{label}:{directory.name}", unit="frame"):
+        for path in tqdm(paths, desc=f"activity:{label}:{sequence_name}", unit="frame"):
             payload = _safe_load(path)
             if not isinstance(payload, dict):
                 raise ValueError(f"Invalid event-cache payload: {path}")
@@ -144,7 +206,7 @@ def _scan_cache(
             rows.append(
                 {
                     "dataset": label,
-                    "sequence": directory.name,
+                    "sequence": sequence_name,
                     "frame_index": int(frame_index) if isinstance(frame_index, int) else -1,
                     "timestamp": timestamp,
                     "delta_us": delta_us,
@@ -377,7 +439,10 @@ def main() -> None:
     if not 2 <= args.min_bins <= args.max_bins:
         raise ValueError("Require 2 <= min-bins <= max-bins")
     caches = [_parse_cache(value) for value in args.cache]
-    labels = [label for label, _ in caches]
+    frame_sources = [_parse_frames_csv(value) for value in args.frames_csv]
+    if not caches and not frame_sources:
+        raise ValueError("Pass at least one --cache or --frames-csv source")
+    labels = [label for label, _ in (*caches, *frame_sources)]
     if len(set(labels)) != len(labels):
         raise ValueError("Cache labels must be unique")
     output_dir = args.output_dir.expanduser().resolve()
@@ -387,6 +452,19 @@ def main() -> None:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for label, root in caches:
         rows = _scan_cache(label, root, args.sequences)
+        grouped[label] = rows
+        all_rows.extend(rows)
+    for label, source in frame_sources:
+        rows = _load_frames_csv(label, source)
+        if args.sequences:
+            requested = set(args.sequences)
+            available = {str(row["sequence"]) for row in rows}
+            missing = sorted(requested - available)
+            if missing:
+                raise ValueError(
+                    f"Sequences not found in {source}: {', '.join(missing)}"
+                )
+            rows = [row for row in rows if str(row["sequence"]) in requested]
         grouped[label] = rows
         all_rows.extend(rows)
     _write_csv(output_dir / "frames.csv", all_rows)
@@ -407,7 +485,7 @@ def main() -> None:
             for row in current_thresholds
         )
         summary["datasets"][label] = {
-            "cache": str(dict(caches)[label]),
+            "source": str(dict((*caches, *frame_sources))[label]),
             "frames": len(rows),
             "sequences": len({row["sequence"] for row in rows}),
             "zero_event_frames": int(
