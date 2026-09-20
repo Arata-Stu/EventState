@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -477,11 +478,14 @@ def main() -> None:
     columns = 2 + len(sources) + 1
     gap = 6
     panel_full_height = args.panel_height + 34
-    canvas_width = columns * args.panel_width + (columns - 1) * gap
+    content_width = columns * args.panel_width + (columns - 1) * gap
     timeline_height = 170
-    canvas_height = panel_full_height * 2 + timeline_height + gap * 3
-    canvas_width += canvas_width % 2
-    canvas_height += canvas_height % 2
+    content_height = panel_full_height * 2 + timeline_height + gap * 3
+    # Submit the exact encoded dimensions instead of letting imageio-ffmpeg
+    # inject a scale filter.  Macroblock-aligned H.264 is more portable across
+    # QuickTime and browser players.
+    canvas_width = math.ceil(content_width / 16) * 16
+    canvas_height = math.ceil(content_height / 16) * 16
     font = ImageFont.load_default()
     cmap = colormaps["coolwarm"]
     line_colors = [
@@ -495,13 +499,16 @@ def main() -> None:
         source.label: [record[source.label] for record in records] for source in sources
     }
     event_counts = [record["event_count"] for record in records]
+    temporary_output = output.with_name(f".{output.stem}.partial.mp4")
+    temporary_output.unlink(missing_ok=True)
     writer = imageio_ffmpeg.write_frames(
-        str(output),
+        str(temporary_output),
         size=(canvas_width, canvas_height),
         fps=args.fps,
         codec="libx264",
         pix_fmt_in="rgb24",
-        output_params=["-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+        pix_fmt_out="yuv420p",
+        output_params=["-crf", "18", "-movflags", "+faststart"],
     )
     writer.send(None)
     try:
@@ -626,7 +633,10 @@ def main() -> None:
             if frame_index >= len(records):
                 break
     finally:
+        print(f"Finalizing MP4 after {frame_index} frames...", flush=True)
         writer.close()
+        print("MP4 finalized", flush=True)
+    temporary_output.replace(output)
     print(f"Video: {output}")
     print(f"Per-frame metrics: {metrics_path}")
     print(f"Summary: {output.with_suffix('.json')}")
