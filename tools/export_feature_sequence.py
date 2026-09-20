@@ -187,6 +187,65 @@ def _write_metadata(
     )
 
 
+def _expected_export_size(
+    dataset: Any,
+    sequence: str,
+    max_frames: int | None,
+) -> tuple[int, int]:
+    clip_count = 0
+    frame_count = 0
+    for sequence_name, _start, clip_length in dataset.clip_records:
+        if sequence_name != sequence:
+            continue
+        remaining = None if max_frames is None else max_frames - frame_count
+        if remaining is not None and remaining <= 0:
+            break
+        frame_count += min(int(clip_length), remaining) if remaining is not None else int(clip_length)
+        clip_count += 1
+    return clip_count, frame_count
+
+
+def _complete_export_exists(
+    directory: Path,
+    *,
+    sequence: str,
+    checkpoint: Path,
+    checkpoint_step: int,
+    expected_clip_count: int,
+    expected_frame_count: int,
+    feature_names: list[str],
+    state_policy: str,
+    event_drop: dict[str, int],
+    event_window_fraction: float,
+) -> bool:
+    metadata_path = directory / "metadata.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected = {
+        "format_version": SEQUENCE_FEATURE_FORMAT_VERSION,
+        "sequence_name": sequence,
+        "checkpoint": str(checkpoint.expanduser().resolve()),
+        "checkpoint_step": checkpoint_step,
+        "clip_count": expected_clip_count,
+        "frame_count": expected_frame_count,
+        "state_policy": state_policy,
+        "event_drop": event_drop,
+        "event_window_fraction": event_window_fraction,
+    }
+    if any(metadata.get(key) != value for key, value in expected.items()):
+        return False
+    if not set(feature_names) <= set(metadata.get("feature_names", [])):
+        return False
+    paths = sorted(directory.glob("[0-9][0-9][0-9][0-9][0-9][0-9].pt"))
+    expected_names = [f"{index:06d}.pt" for index in range(expected_clip_count)]
+    return (
+        [path.name for path in paths] == expected_names
+        and all(path.stat().st_size > 0 for path in paths)
+    )
+
+
 def _drop_mask(
     *,
     sequence_offset: int,
@@ -286,6 +345,40 @@ def main() -> None:
     clip_count = 0
     frame_count = 0
     dataset = runtime.validation_loader.dataset
+    expected_clip_count, expected_frame_count = _expected_export_size(
+        dataset, args.sequence, args.max_frames
+    )
+    output_complete = _complete_export_exists(
+        args.output_dir,
+        sequence=args.sequence,
+        checkpoint=args.checkpoint,
+        checkpoint_step=int(state.global_step),
+        expected_clip_count=expected_clip_count,
+        expected_frame_count=expected_frame_count,
+        feature_names=feature_names,
+        state_policy=args.state_policy,
+        event_drop=event_drop,
+        event_window_fraction=float(args.event_window_fraction),
+    )
+    context_complete = args.context_dir is None or _complete_export_exists(
+        args.context_dir,
+        sequence=args.sequence,
+        checkpoint=args.checkpoint,
+        checkpoint_step=int(state.global_step),
+        expected_clip_count=expected_clip_count,
+        expected_frame_count=expected_frame_count,
+        feature_names=["teacher", "event_rgb", "rgb"],
+        state_policy="state_independent",
+        event_drop=event_drop,
+        event_window_fraction=float(args.event_window_fraction),
+    )
+    if output_complete and context_complete and not args.overwrite:
+        print(
+            f"Complete sequence export exists; skipping inference: {args.output_dir} "
+            f"({expected_frame_count} frames in {expected_clip_count} clips)",
+            flush=True,
+        )
+        return
     grid_height = int(config.dataset.input_height) // int(config.teacher.patch_size)
     grid_width = int(config.dataset.input_width) // int(config.teacher.patch_size)
     autocast = (
