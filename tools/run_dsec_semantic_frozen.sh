@@ -18,6 +18,7 @@ NUM_WORKERS=4
 SEED=0
 HEAD_WIDTH=192
 HEAD_TYPE=linear
+LOSS=ce
 
 usage() {
   cat <<'EOF'
@@ -27,7 +28,7 @@ Usage:
     --feature-cache-dir PATH --output-dir PATH \
     [--feature z|h|concat] [--teacher-checkpoint PATH] [--gpu N] \
     [--batch-size N] [--epochs N] [--num-workers N] [--seed N] \
-    [--head-type linear|nonlinear]
+    [--head-type linear|nonlinear|gep_patch] [--loss ce|ce-dice]
 
 The EventState checkpoint stays frozen. The script updates recurrent state on
 every frame, saves maps only at semantic-label frames, trains the segmentation
@@ -57,6 +58,7 @@ while [ "$#" -gt 0 ]; do
     --seed) SEED=${2:?}; shift 2 ;;
     --head-width) HEAD_WIDTH=${2:?}; shift 2 ;;
     --head-type) HEAD_TYPE=${2:?}; shift 2 ;;
+    --loss) LOSS=${2:?}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -67,8 +69,12 @@ case "$FEATURE" in
   *) fail "--feature must be z, h, or concat" ;;
 esac
 case "$HEAD_TYPE" in
-  linear|nonlinear) ;;
-  *) fail "--head-type must be linear or nonlinear" ;;
+  linear|nonlinear|gep_patch) ;;
+  *) fail "--head-type must be linear, nonlinear, or gep_patch" ;;
+esac
+case "$LOSS" in
+  ce|ce-dice) ;;
+  *) fail "--loss must be ce or ce-dice" ;;
 esac
 
 [ -f "$CHECKPOINT" ] || fail "checkpoint not found: $CHECKPOINT"
@@ -139,6 +145,7 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --num-workers "$NUM_WORKERS" \
   --head-width "$HEAD_WIDTH" \
   --head-type "$HEAD_TYPE" \
+  --loss "$LOSS" \
   --seed "$SEED" \
   --precision fp16 \
   --device cuda \
@@ -164,6 +171,7 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --num-workers "$NUM_WORKERS" \
   --head-width "$HEAD_WIDTH" \
   --head-type "$HEAD_TYPE" \
+  --loss "$LOSS" \
   --seed "$SEED" \
   --precision fp16 \
   --device cuda \

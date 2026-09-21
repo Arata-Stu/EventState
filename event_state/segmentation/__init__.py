@@ -8,6 +8,7 @@ from .data import (
     segmentation_collate,
 )
 from .head import EventStateSegmentationHead
+from .loss import multiclass_dice_loss
 from .metrics import SemanticSegmentationEvaluator
 from .split import DSECSemanticSplit, load_dsec_semantic_split
 
@@ -20,6 +21,6 @@ __all__ = [
     "find_semantic_label_dir",
     "load_dsec_semantic_split",
     "load_semantic_label",
+    "multiclass_dice_loss",
     "segmentation_collate",
 ]
-

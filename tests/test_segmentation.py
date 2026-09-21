@@ -10,6 +10,7 @@ from event_state.segmentation import (
     EventStateSegmentationHead,
     SemanticSegmentationEvaluator,
     load_dsec_semantic_split,
+    multiclass_dice_loss,
 )
 
 
@@ -25,6 +26,29 @@ def test_linear_semantic_probe_has_only_one_learned_layer() -> None:
     ]
     assert learned_modules == [head.classifier]
     assert head.classifier.kernel_size == (1, 1)
+
+
+def test_gep_patch_head_removes_bottom_padding_without_resizing() -> None:
+    head = EventStateSegmentationHead(
+        in_channels=8,
+        num_classes=11,
+        output_size=(440, 640),
+        head_type="gep_patch",
+    )
+    logits = head(torch.zeros((2, 8, 28, 40)))
+    assert tuple(logits.shape) == (2, 11, 440, 640)
+
+
+def test_multiclass_dice_loss_ignores_void_pixels() -> None:
+    logits = torch.tensor([[[[8.0, -8.0]], [[-8.0, 8.0]]]])
+    targets = torch.tensor([[[0, 255]]])
+    changed_ignored_logits = logits.clone()
+    changed_ignored_logits[0, :, 0, 1] = torch.tensor([100.0, -100.0])
+    loss = multiclass_dice_loss(logits, targets, ignore_index=255)
+    changed_loss = multiclass_dice_loss(
+        changed_ignored_logits, targets, ignore_index=255
+    )
+    torch.testing.assert_close(loss, changed_loss)
 
 
 def test_official_dsec_semantic_split_is_6_2_3() -> None:

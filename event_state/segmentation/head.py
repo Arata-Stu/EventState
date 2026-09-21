@@ -1,4 +1,4 @@
-"""Linear and compact nonlinear probes for frozen EventState features."""
+"""Segmentation probes for frozen EventState features."""
 
 from __future__ import annotations
 
@@ -35,14 +35,36 @@ class EventStateSegmentationHead(nn.Module):
             raise ValueError("in_channels/width must be positive and num_classes > 1")
         if any(value <= 0 for value in output_size):
             raise ValueError("output_size values must be positive")
-        if head_type not in {"linear", "nonlinear"}:
-            raise ValueError("head_type must be linear or nonlinear")
+        if head_type not in {"linear", "nonlinear", "gep_patch"}:
+            raise ValueError("head_type must be linear, nonlinear, or gep_patch")
         self.head_type = head_type
         self.output_size = tuple(int(value) for value in output_size)
+        self.num_classes = int(num_classes)
         if head_type == "linear":
             # One shared affine classifier per spatial token. The following
             # bilinear interpolation has no learned parameters.
             self.classifier = nn.Conv2d(in_channels, num_classes, 1)
+            return
+        if head_type == "gep_patch":
+            # GEP's single-scale segmentation decoder first predicts one
+            # P x P class patch per feature token, then refines the dense
+            # logits with three spatial convolutions. EventState features use
+            # the DINOv3 patch size P=16.
+            patch_size = 16
+            self.patch_size = patch_size
+            self.patch_classifier = nn.Conv2d(
+                in_channels,
+                num_classes * patch_size * patch_size,
+                kernel_size=1,
+            )
+            self.pixel_shuffle = nn.PixelShuffle(patch_size)
+            self.post = nn.Sequential(
+                nn.Conv2d(num_classes, 64, kernel_size=3, padding=1),
+                nn.GELU(),
+                nn.Conv2d(64, 64, kernel_size=3, padding=1),
+                nn.GELU(),
+                nn.Conv2d(64, num_classes, kernel_size=3, padding=1),
+            )
             return
         mid = max(32, width // 2)
         low = max(32, width // 4)
@@ -59,6 +81,18 @@ class EventStateSegmentationHead(nn.Module):
     def forward(self, features: Tensor) -> Tensor:
         if self.head_type == "linear":
             value = self.classifier(features)
+            return F.interpolate(
+                value, size=self.output_size, mode="bilinear", align_corners=False
+            )
+        if self.head_type == "gep_patch":
+            value = self.pixel_shuffle(self.patch_classifier(features))
+            value = self.post(value)
+            output_height, output_width = self.output_size
+            if value.shape[-2] >= output_height and value.shape[-1] >= output_width:
+                # Semantic inputs are padded only at the bottom/right to a
+                # patch-aligned size. Remove that padding without shifting
+                # native DSEC coordinates.
+                return value[..., :output_height, :output_width]
             return F.interpolate(
                 value, size=self.output_size, mode="bilinear", align_corners=False
             )

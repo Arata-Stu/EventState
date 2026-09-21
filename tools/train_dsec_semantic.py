@@ -23,6 +23,7 @@ from event_state.segmentation import (
     EventStateSegmentationHead,
     SemanticSegmentationEvaluator,
     load_dsec_semantic_split,
+    multiclass_dice_loss,
     segmentation_collate,
 )
 
@@ -55,7 +56,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=5e-2)
     parser.add_argument("--head-width", type=int, default=192)
     parser.add_argument(
-        "--head-type", choices=("linear", "nonlinear"), default="linear"
+        "--head-type", choices=("linear", "nonlinear", "gep_patch"), default="linear"
+    )
+    parser.add_argument(
+        "--loss",
+        choices=("ce", "ce-dice"),
+        default="ce",
+        help="ce-dice uses the equal-weight GEP semantic objective",
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=0)
@@ -214,11 +221,12 @@ def main() -> None:
     if args.resume is not None:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
         saved_config = checkpoint.get("config", {})
-        for key in ("protocol", "feature", "seed", "head_width", "head_type"):
-            if saved_config.get(key) != config.get(key):
+        for key in ("protocol", "feature", "seed", "head_width", "head_type", "loss"):
+            saved_value = saved_config.get(key, "ce" if key == "loss" else None)
+            if saved_value != config.get(key):
                 raise ValueError(
                     f"Resume configuration mismatch for {key}: "
-                    f"{saved_config.get(key)!r} != {config.get(key)!r}"
+                    f"{saved_value!r} != {config.get(key)!r}"
                 )
         if saved_config.get("selected_development_epoch") != config.get(
             "selected_development_epoch"
@@ -236,6 +244,8 @@ def main() -> None:
     for epoch in range(start_epoch, args.epochs):
         model.train()
         total_loss = 0.0
+        total_ce_loss = 0.0
+        total_dice_loss = 0.0
         batches = 0
         description = f"DSEC-Semantic train {epoch + 1}/{args.epochs}"
         for batch in tqdm(train_loader, desc=description, unit="batch"):
@@ -244,19 +254,32 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 logits = model(features)
-                loss = F.cross_entropy(logits, labels, ignore_index=args.ignore_index)
+                ce_loss = F.cross_entropy(
+                    logits, labels, ignore_index=args.ignore_index
+                )
+                if args.loss == "ce-dice":
+                    dice_loss = multiclass_dice_loss(
+                        logits, labels, ignore_index=args.ignore_index
+                    )
+                else:
+                    dice_loss = logits.new_zeros(())
+                loss = ce_loss + dice_loss
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
             scaler.step(optimizer)
             scaler.update()
             total_loss += float(loss.detach())
+            total_ce_loss += float(ce_loss.detach())
+            total_dice_loss += float(dice_loss.detach())
             batches += 1
         scheduler.step()
         record = {
             "epoch": epoch,
             "learning_rate": optimizer.param_groups[0]["lr"],
             "train/loss": total_loss / max(1, batches),
+            "train/ce_loss": total_ce_loss / max(1, batches),
+            "train/dice_loss": total_dice_loss / max(1, batches),
         }
         validation = None
         if validation_loader is not None:
