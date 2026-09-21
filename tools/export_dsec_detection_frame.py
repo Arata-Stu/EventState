@@ -76,6 +76,14 @@ def parse_args() -> argparse.Namespace:
         choices=("rgb", "event"),
         default="rgb",
     )
+    parser.add_argument(
+        "--keep-padding",
+        action="store_true",
+        help=(
+            "Keep invalid rectification borders. By default every exported image "
+            "is cropped to the common valid sampling-grid bounding box."
+        ),
+    )
     parser.add_argument("--pca-tokens-per-frame", type=int, default=8)
     parser.add_argument("--pca-max-samples", type=int, default=50_000)
     return parser.parse_args()
@@ -119,6 +127,25 @@ def _prediction_payload(prediction: dict[str, torch.Tensor]) -> list[dict[str, A
             }
         )
     return rows
+
+
+def _valid_crop_box(grid: torch.Tensor) -> tuple[int, int, int, int]:
+    if grid.ndim != 3 or grid.shape[-1] != 2:
+        raise ValueError(f"Expected sampling grid [H,W,2], got {tuple(grid.shape)}")
+    valid = (
+        (grid[..., 0] >= -1.0)
+        & (grid[..., 0] <= 1.0)
+        & (grid[..., 1] >= -1.0)
+        & (grid[..., 1] <= 1.0)
+    )
+    coordinates = valid.nonzero(as_tuple=False)
+    if coordinates.numel() == 0:
+        raise ValueError("Rectification grid contains no valid output pixels")
+    top = int(coordinates[:, 0].min())
+    bottom = int(coordinates[:, 0].max()) + 1
+    left = int(coordinates[:, 1].min())
+    right = int(coordinates[:, 1].max()) + 1
+    return left, top, right, bottom
 
 
 def main() -> None:
@@ -199,11 +226,14 @@ def main() -> None:
         event_grid,
     )
     background = rgb if args.detection_background == "rgb" else event
+    crop_box = None if args.keep_padding else _valid_crop_box(event_grid)
 
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    rgb.save(output_dir / "rgb.png")
-    event.save(output_dir / "event.png")
+    exported_rgb = rgb if crop_box is None else rgb.crop(crop_box)
+    exported_event = event if crop_box is None else event.crop(crop_box)
+    exported_rgb.save(output_dir / "rgb.png")
+    exported_event.save(output_dir / "event.png")
 
     input_size = datasets[0].input_size
     if input_size is None:
@@ -224,10 +254,12 @@ def main() -> None:
         )
         feature_name = f"{label}_{source.feature}_feature_pca.png"
         detection_name = f"{label}_detection.png"
+        detection_image = _detection_image(background, target, prediction, box_font)
+        if crop_box is not None:
+            feature_image = feature_image.crop(crop_box)
+            detection_image = detection_image.crop(crop_box)
         feature_image.save(output_dir / feature_name)
-        _detection_image(background, target, prediction, box_font).save(
-            output_dir / detection_name
-        )
+        detection_image.save(output_dir / detection_name)
         source_metadata.append(
             {
                 "label": source.label,
@@ -250,6 +282,8 @@ def main() -> None:
         "evaluated": evaluated,
         "score_threshold": args.score_threshold,
         "detection_background": args.detection_background,
+        "crop_box_xyxy": list(crop_box) if crop_box is not None else None,
+        "padding_kept": args.keep_padding,
         "pca_scope": "complete sequence, shared across sources",
         "rgb_image": "rgb.png",
         "event_image": "event.png",
