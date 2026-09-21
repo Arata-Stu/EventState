@@ -10,6 +10,11 @@ from .data import (
 from .head import EventStateSegmentationHead
 from .loss import multiclass_dice_loss
 from .metrics import SemanticSegmentationEvaluator
+from .m3ed import (
+    M3EDSemanticFeatureDataset,
+    M3EDSemanticSplit,
+    load_m3ed_semantic_split,
+)
 from .split import DSECSemanticSplit, load_dsec_semantic_split
 
 __all__ = [
@@ -18,6 +23,9 @@ __all__ = [
     "DSECSemanticSplit",
     "EventStateSegmentationHead",
     "SemanticSegmentationEvaluator",
+    "M3EDSemanticFeatureDataset",
+    "M3EDSemanticSplit",
+    "load_m3ed_semantic_split",
     "find_semantic_label_dir",
     "load_dsec_semantic_split",
     "load_semantic_label",
