@@ -86,7 +86,13 @@ DINO cache は再利用できる。活動マスクは読み込み時に生成す
 イベント窓・画像位置合わせ・解像度を変える場合は、対応する入力／教師キャッシュを再生成する。
 
 以下は学習サーバーで実行する例。パスは実データに合わせて指定する。
-OpenCV はこの実験では学習時にも必要（`pip install -e '.[scale-event]'`）。
+OpenCV はこの実験では学習時にも必要。OpenCV と事前テスト用の pytest は
+`requirements.txt` に含めている。V100 の学習環境では uv で導入する。
+
+```bash
+source env/bin/activate
+uv pip install --python "$VIRTUAL_ENV/bin/python" --torch-backend=cu126 -r requirements.txt
+```
 
 ```bash
 python train.py dataset=dsec_det_train41 experiment=activity_dual \
@@ -200,7 +206,7 @@ bash tools/run_dsec_activity_comparison.sh \
 ```
 
 既定は100 step、warmup 10の試運転。Python の数値テストを CPU で実行し、通過した場合だけ
-3条件を起動する。学習ホストに既存依存関係に加えて pytest と OpenCV が必要。
+3条件を起動する。必要な pytest と OpenCV は上記の requirements から導入する。
 テストも EventState 内で完結し、ScaleEvent checkout は不要。Mac ではこのランチャーを実行しない。
 
 各条件のログは出力先の `logs/`、checkpoint は条件別の `checkpoints/` に保存する。

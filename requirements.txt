@@ -11,8 +11,9 @@ torch==2.14.0
 torchvision==0.29.0
 tqdm>=4.66
 
-# Dataset preparation only:
-# opencv-python>=4.8
+# Activity mask generation and launcher preflight tests:
+opencv-python>=4.8
+pytest>=8
 
 # Feature visualization only:
 # matplotlib>=3.8

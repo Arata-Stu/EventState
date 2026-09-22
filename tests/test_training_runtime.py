@@ -226,7 +226,7 @@ def _valid_config() -> dict:
             "image_std": [0.229, 0.224, 0.225],
         },
         "loss": {
-            "h_distill": {"enabled": True},
+            "h_distill": {"enabled": True, "cosine_weight": 1.0, "mse_weight": 1.0},
             "z_objective": {"type": "none"},
         },
         "training": {
@@ -245,6 +245,10 @@ def _valid_config() -> dict:
         "scheduler": {"warmup_steps": 1},
         "evaluation": {"event_count_thresholds": None, "max_batches": None},
     }
+
+
+def test_valid_config_fixture_passes_validation() -> None:
+    validate_config(_valid_config())
 
 
 def test_cached_teacher_rejects_stochastic_geometry() -> None:
