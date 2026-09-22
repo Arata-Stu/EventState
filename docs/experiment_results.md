@@ -197,7 +197,7 @@ cached/online teacherのno-augmentation条件はほぼ一致した。augmentatio
 
 出力: `outputs/dsec_hybrid_aug/`
 
-## 8. M3ED事前学習
+## 8. M3ED事前学習・Semantic validation
 
 M3EDの5系列を使った`h`蒸留・1層LSTMの途中結果。
 
@@ -207,10 +207,39 @@ M3EDの5系列を使った`h`蒸留・1層LSTMの途中結果。
 | Hybrid, no dropout | 100,000 | 0.06490 | 0.5143 | 0.4713 @ 3,000 |
 | Random + dropout | 84,180時点 | 0.07116 | 0.5184 @ 84,000 | 0.4856 @ 2,000 |
 
-Random + dropoutは89,000 step checkpointから100,000 stepへ再開済みだが、この文書更新時点では
-最終値の報告待ち。M3ED downstream semantic segmentationは未評価。
+Random + dropoutは89,000 step checkpointから100,000 stepへ再開した。最終checkpointの存在は
+確認済みだが、100,000 step時点の集約値はこの台帳へ未転記。
 
 出力: `outputs/m3ed_state_dropout_factorial_20260920_145338/`
+
+### Frozen Linear + CE
+
+M3ED InternImage疑似ラベルの11クラスを用い、4系列でheadを学習し、
+`car_urban_day_ucity_small_loop`をvalidationとして評価した。EventState backboneはFrozen。
+
+| 事前学習条件 | mIoU | Pixel Accuracy | Mean Class Accuracy | best epoch |
+|---|---:|---:|---:|---:|
+| Random, no dropout | 0.36889 | 0.73351 | 0.47826 | 50 |
+| Hybrid, no dropout | 0.37388 | 0.73799 | 0.48405 | 25 |
+| Hybrid + dropout | **0.37611** | **0.73815** | 0.48372 | 40 |
+
+出力: `outputs/m3ed_semantic_frozen_linear/*/seed_0/validation_metrics.json`
+
+### Hybrid + dropout: Head / Loss 2 x 2 ablation
+
+| Head | Loss | mIoU | Pixel Accuracy | Mean Class Accuracy | Linear+CEとの差 | best epoch |
+|---|---|---:|---:|---:|---:|---:|
+| Linear | CE | 0.37611 | 0.73815 | 0.48372 | 0.00000 | 40 |
+| Linear | CE + Dice | **0.38392** | 0.73902 | 0.49336 | **+0.00781** | 50 |
+| GEP patch | CE | 0.37552 | **0.73934** | 0.47908 | -0.00059 | 10 |
+| GEP patch | CE + Dice | 0.38280 | 0.73510 | **0.49895** | +0.00669 | 25 |
+
+M3EDでもDiceが有効だった。最高mIoUはLinear + CE + Diceであり、GEP patch単体の改善は
+確認されなかった。E2VIDの公開値39.40%との差は約1.01 pointだが、クラス数、split、入力、
+学習方式が異なるため直接比較には用いない。
+
+出力:
+`outputs/m3ed_semantic_frozen_head_loss_ablation/hybrid_dropout/*/seed_0/validation_metrics.json`
 
 ## 9. Event activity: DSEC / M3ED
 
@@ -238,9 +267,11 @@ M3EDはDSECより低event activityの裾が大幅に広く、長い低event区�
 
 ## 11. 未完了・追記待ち
 
-- [ ] M3ED Random + dropout 100,000 step最終値
+- [ ] M3ED Random + dropout 100,000 stepの最終集約値を転記
 - [ ] M3ED特徴可視化（Random continuous / Hybrid continuous / Hybrid clip reset）
-- [ ] M3ED downstream semantic segmentation
+- [x] M3ED downstream Semantic Linear+CE（Random/Hybrid/dropout）
+- [x] M3ED downstream Semantic Head/Loss 2 x 2（Hybrid+dropout）
+- [ ] M3ED Linear+CE+DiceでRandom/Hybrid/dropoutの事前学習要因を再比較
 - [ ] Hybrid augmentation checkpointのDSEC Frozen Detection数値転記
 - [ ] DSEC Semantic head/loss ablationの複数seed評価
 - [ ] DSEC以外のdomain transfer評価
