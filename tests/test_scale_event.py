@@ -1,6 +1,5 @@
-"""Numerical reference checks to run on the training host (torch + OpenCV)."""
+"""Self-contained specification checks; no reference repository is imported."""
 
-import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -57,37 +56,63 @@ def test_activity_only_experiment_preserves_existing_final_fit_settings():
     assert all(isinstance(loss, ActivityDistillationLoss) for loss in _build_losses(activity))
 
 
-def reference_module(relative):
-    path = ROOT / "reference_repo/ScaleEvent/scale_event" / relative
-    if not path.is_file():
-        pytest.skip("ScaleEvent reference checkout is required for numerical comparison")
-    spec = importlib.util.spec_from_file_location("scale_event_reference", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+@pytest.mark.parametrize("color,active", [
+    ((255, 255, 255), False), ((255, 254, 255), True), ((255, 0, 0), True),
+])
+def test_activation_constant_colors_have_known_classification(color, active):
+    pytest.importorskip("cv2")
+    image = np.empty((48, 80, 3), dtype=np.uint8)
+    image[:] = color
+    np.testing.assert_array_equal(
+        scale_event_activation(image, height=32, width=64), np.full((2, 4), active),
+    )
 
 
-@pytest.mark.parametrize("kind", ["empty", "full", "sparse", "near_white"])
-def test_activation_matches_released_png_path(tmp_path, kind):
-    cv2 = pytest.importorskip("cv2")
-    image = np.full((48, 80, 3), 255, dtype=np.uint8)
-    if kind == "full":
-        image[:] = [0, 0, 255]
-    elif kind == "sparse":
-        rng = np.random.default_rng(9)
-        image[rng.random((48, 80)) < 0.1] = [255, 0, 0]
-    elif kind == "near_white":
-        image[::2, :, 0] = 254
-    path = tmp_path / "events.png"
-    cv2.imwrite(str(path), image)
-    expected = reference_module("dataset/event_utils.py").prepare_mask(str(path), W=64, H=32)
-    actual = scale_event_activation(image, height=32, width=64)
-    np.testing.assert_array_equal(actual, expected.numpy()[..., 0].astype(bool))
+def test_activation_retains_two_stage_sampling_not_pooling():
+    pytest.importorskip("cv2")
+    # 32 -> 8 -> 2 samples original coordinates 5,6,9,10 for output index 0.
+    # An event at (0,0) is present in that patch but absent from those samples.
+    image = np.full((32, 32, 3), 255, dtype=np.uint8)
+    image[0, 0] = (255, 0, 0)
+    assert not scale_event_activation(image, height=32, width=32).any()
+    image[5, 5] = (255, 0, 0)
+    expected = np.array([[True, False], [False, False]])
+    np.testing.assert_array_equal(scale_event_activation(image, height=32, width=32), expected)
+
+
+def _scalar_crossgram_oracle(prediction, target, mask):
+    """Float64, scalar pair enumeration from the documented loss definition.
+
+    Kept independent of torch autograd, tensor matmul, row chunking, and the
+    implementation under test. Used also for finite-difference gradients.
+    """
+    p = np.asarray(prediction, dtype=np.float64) * mask[..., None]
+    q = np.asarray(target, dtype=np.float64) * mask[..., None]
+    l1 = np.abs(p - q).mean()
+    p = p.reshape(-1, p.shape[-2], p.shape[-1])
+    q = q.reshape(p.shape)
+    p = p / np.maximum(np.linalg.norm(p, axis=-1, keepdims=True), 1e-12)
+    q = q / np.maximum(np.linalg.norm(q, axis=-1, keepdims=True), 1e-12)
+    intra = cross = 0.0
+    for frame in range(len(p)):
+        for i in range(p.shape[1]):
+            for j in range(p.shape[1]):
+                reference = float(np.dot(q[frame, i], q[frame, j]))
+                if reference <= 0.1:
+                    continue
+                event = max(0.0, float(np.dot(p[frame, i], p[frame, j])))
+                mixed = max(0.0, float(np.dot(q[frame, i], p[frame, j])))
+                intra += (event - reference) ** 2
+                cross += (mixed - reference) ** 2
+    denominator = len(p) * p.shape[1] ** 2
+    intra /= denominator
+    cross /= denominator
+    return l1 + 10 * intra + 4 * cross, l1, intra, cross
 
 
 @pytest.mark.parametrize("chunk_size", [1, 3, 99])
 @pytest.mark.parametrize("mask_kind", ["mixed", "empty", "full"])
-def test_loss_and_gradients_match_released_crossgram(chunk_size, mask_kind):
+def test_loss_matches_scalar_definition_and_finite_difference_gradients(chunk_size, mask_kind):
     torch.manual_seed(42)
     prediction = torch.randn(2, 3, 7, 5, requires_grad=True)
     target = torch.randn_like(prediction, requires_grad=True)
@@ -95,20 +120,33 @@ def test_loss_and_gradients_match_released_crossgram(chunk_size, mask_kind):
     if mask_kind != "mixed":
         mask.fill_(mask_kind == "full")
     actual = ScaleEventLoss(chunk_size).components(prediction, target, mask)
-    reference_prediction = prediction.detach().clone().requires_grad_()
-    criterion = reference_module("pretrain/criterion.py").DistillLoss_With_CrossGram()
-    expected = criterion(
-        {"x_norm_patchtokens": target.detach().flatten(0, 1)},
-        {"x_norm_patchtokens": reference_prediction.flatten(0, 1)},
-        mask.flatten(0, 1).unsqueeze(-1).float(),
-    )
+    p = prediction.detach().numpy().astype(np.float64)
+    q = target.detach().numpy().astype(np.float64)
+    m = mask.numpy()
+    expected = _scalar_crossgram_oracle(p, q, m)
     for key, value in zip(("loss", "l1", "intra", "cross"), expected):
-        torch.testing.assert_close(actual[key], value, atol=1e-6, rtol=1e-5)
+        assert actual[key].item() == pytest.approx(value, abs=1e-6, rel=1e-5)
     actual["loss"].backward()
-    expected[0].backward()
-    torch.testing.assert_close(prediction.grad, reference_prediction.grad, atol=1e-6, rtol=1e-5)
+    for index in (0, 6, 23, 78, 130, 209):
+        delta = np.zeros_like(p)
+        delta.flat[index] = 1e-5
+        derivative = (_scalar_crossgram_oracle(p + delta, q, m)[0]
+                      - _scalar_crossgram_oracle(p - delta, q, m)[0]) / 2e-5
+        assert prediction.grad.flatten()[index].item() == pytest.approx(
+            derivative, abs=2e-5, rel=2e-3,
+        )
     assert target.grad is None
     assert torch.count_nonzero(prediction.grad[~mask]) == 0
+
+
+def test_crossgram_hand_calculated_example():
+    prediction = torch.tensor([[[1., 0.], [0., 1.]]])
+    teacher = torch.tensor([[[1., 0.], [1., 0.]]])
+    values = ScaleEventLoss().components(prediction, teacher)
+    assert values["l1"].item() == pytest.approx(0.5)
+    assert values["intra"].item() == pytest.approx(0.5)
+    assert values["cross"].item() == pytest.approx(0.5)
+    assert values["loss"].item() == pytest.approx(7.5)
 
 
 def test_activity_uses_same_crop_and_flip_before_normalization(monkeypatch):

@@ -31,6 +31,7 @@ No pretraining validation or best.pt selection. Full starts from DINO again;
 do not resume a smoke checkpoint as a full comparison.
 
 By default, numerical tests must pass before any GPU run starts.
+Tests and training use only EventState code; no ScaleEvent checkout is needed.
 --dry-run prints commands without running Python, tests, or training.
 --skip-tests is for a host where the same revision has already passed tests.
 Use an empty output directory; existing runs are never overwritten.
@@ -107,10 +108,6 @@ if [ "$DRY_RUN" -eq 0 ]; then
   git rev-parse HEAD >> "$OUTPUT_ROOT/launch.txt"
   git diff --stat >> "$OUTPUT_ROOT/launch.txt"
   if [ "$RUN_TESTS" -eq 1 ]; then
-    [ -f reference_repo/ScaleEvent/scale_event/pretrain/criterion.py ] || \
-      fail "ScaleEvent reference checkout is needed for parity tests"
-    [ -f reference_repo/ScaleEvent/scale_event/dataset/event_utils.py ] || \
-      fail "ScaleEvent reference activation code is missing"
     printf '[activity] Running preflight tests; log: %s/logs/preflight.log\n' "$OUTPUT_ROOT"
     if ! (
       export CUDA_VISIBLE_DEVICES=""

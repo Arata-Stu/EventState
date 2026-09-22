@@ -6,7 +6,8 @@
 参照実装: `reference_repo/ScaleEvent`、commit `92f005b0f2cbb19dfc8391e3019ca042b1a9f587`。
 判定は `scale_event/dataset/event_utils.py::prepare_mask`、損失は
 `scale_event/pretrain/criterion.py::DistillLoss_With_CrossGram` に合わせた。
-参照リポジトリへの実行時依存はない。
+参照リポジトリは仕様調査だけに使う。学習・テストとも外部 checkout への依存はなく、
+EventState 内の実装で完結する。サーバーへの ScaleEvent clone は不要。
 
 論文とコードは一致していないため、今回の再現基準は **公開コード** とする。
 
@@ -200,7 +201,7 @@ bash tools/run_dsec_activity_comparison.sh \
 
 既定は100 step、warmup 10の試運転。Python の数値テストを CPU で実行し、通過した場合だけ
 3条件を起動する。学習ホストに既存依存関係に加えて pytest と OpenCV が必要。
-参照比較のため ScaleEvent checkout も必要。Mac ではこのランチャーを実行しない。
+テストも EventState 内で完結し、ScaleEvent checkout は不要。Mac ではこのランチャーを実行しない。
 
 各条件のログは出力先の `logs/`、checkpoint は条件別の `checkpoints/` に保存する。
 活動あり／なしの両方が存在すること、損失・勾配が有限であること、optimizer skip、GPUメモリを確認する。
@@ -221,6 +222,7 @@ python -m pytest tests/test_scale_event.py tests/test_activity_losses.py \
   tests/test_training_runtime.py tests/test_detection.py tests/test_segmentation.py
 ```
 
-テストには公開コードのマスク・CrossGram 値／勾配との比較、既存損失との全1マスク時の一致、
+テストには既知の画像でのマスク判定、CrossGram の手計算値・独立したスカラー計算との比較、
+有限差分による勾配検証、既存損失との全1マスク時の一致、
 空領域、Semantic ignore 画素、検出 assignment の不変性、設定の同一性を含む。
-参照 checkout がない環境では参照比較は skip される。
+参照リポジトリを import したり、不在を理由にテストを skip したりしない。
