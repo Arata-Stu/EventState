@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from event_state.segmentation.loss import activity_cross_entropy
 from event_state.segmentation import (
     DSEC_SEMANTIC_11_CLASSES,
     DSECSemanticFeatureDataset,
@@ -25,6 +26,9 @@ from event_state.segmentation import (
     load_dsec_semantic_split,
     multiclass_dice_loss,
     segmentation_collate,
+)
+from event_state.losses.activity_weighting import (
+    spatial_activity_weights, validate_activity_weights,
 )
 
 
@@ -68,6 +72,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--precision", choices=("fp32", "fp16"), default="fp16")
     parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument("--activity-active-weight", type=float, default=1.0)
+    parser.add_argument("--activity-inactive-weight", type=float, default=1.0)
     parser.add_argument("--ignore-index", type=int, default=255)
     parser.add_argument("--horizontal-flip-probability", type=float, default=0.5)
     return parser.parse_args()
@@ -108,6 +114,8 @@ def evaluate(
 
 def main() -> None:
     args = parse_args()
+    validate_activity_weights(args.activity_active_weight, args.activity_inactive_weight)
+    use_activity = (args.activity_active_weight, args.activity_inactive_weight) != (1.0, 1.0)
     if args.epochs <= 0 or args.batch_size <= 0 or args.num_workers < 0:
         raise ValueError("epochs/batch-size must be positive and num-workers non-negative")
     if not 0.0 <= args.horizontal_flip_probability <= 1.0:
@@ -128,6 +136,9 @@ def main() -> None:
         selection = torch.load(
             args.selected_epochs_from, map_location="cpu", weights_only=False
         )
+        for key in ("activity_active_weight", "activity_inactive_weight"):
+            if float(selection.get("config", {}).get(key, 1.0)) != getattr(args, key):
+                raise ValueError("Final fit must use the development activity loss weights")
         selected_development_epoch = int(selection["epoch"])
         args.epochs = selected_development_epoch + 1
     train_sequences = (
@@ -143,6 +154,7 @@ def main() -> None:
         sequences=train_sequences,
         role="train",
         horizontal_flip_probability=args.horizontal_flip_probability,
+        load_activity=use_activity,
         **common,
     )
     validation_dataset = None
@@ -220,6 +232,9 @@ def main() -> None:
     best_miou = -1.0
     if args.resume is not None:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
+        for key in ("activity_active_weight", "activity_inactive_weight"):
+            if float(checkpoint.get("config", {}).get(key, 1.0)) != getattr(args, key):
+                raise ValueError(f"Resume activity loss weight changed: {key}")
         saved_config = checkpoint.get("config", {})
         for key in ("protocol", "feature", "seed", "head_width", "head_type", "loss"):
             saved_value = saved_config.get(key, "ce" if key == "loss" else None)
@@ -254,12 +269,18 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 logits = model(features)
-                ce_loss = F.cross_entropy(
-                    logits, labels, ignore_index=args.ignore_index
-                )
+                weights = None
+                if use_activity:
+                    weights = spatial_activity_weights(
+                        batch["event_activity"].to(device), args.activity_active_weight,
+                        args.activity_inactive_weight,
+                    )
+                ce_loss = (F.cross_entropy(logits, labels, ignore_index=args.ignore_index)
+                           if weights is None else activity_cross_entropy(
+                               logits, labels, weights, ignore_index=args.ignore_index))
                 if args.loss == "ce-dice":
                     dice_loss = multiclass_dice_loss(
-                        logits, labels, ignore_index=args.ignore_index
+                        logits, labels, ignore_index=args.ignore_index, pixel_weights=weights
                     )
                 else:
                     dice_loss = logits.new_zeros(())

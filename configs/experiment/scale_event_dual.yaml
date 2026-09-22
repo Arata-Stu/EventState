@@ -1,0 +1,18 @@
+# @package _global_
+experiment:
+  name: scale_event_dual_lstm
+
+loss:
+  kind: scale_event
+  gram_row_chunk_size: 128
+  h_distill:
+    enabled: true
+  z_objective:
+    type: direct_dino
+    weight: 1.0
+
+dataset:
+  activity_mask: true
+
+training:
+  validation_enabled: false

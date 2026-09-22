@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 prepare = ["opencv-python>=4.8", "numba>=0.59"]
+scale-event = ["opencv-python>=4.8"]
 visualize = ["imageio-ffmpeg>=0.5", "matplotlib>=3.8"]
 detection = ["pycocotools>=2.0.7"]
 dev = ["pytest>=8", "ruff>=0.6"]

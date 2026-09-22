@@ -31,6 +31,7 @@ from event_state.detection import (
 )
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
 from event_state.training.event_dropout import apply_temporal_event_dropout
+from event_state.losses.activity_weighting import spatial_activity_weights, validate_activity_weights
 
 
 DEFAULT_SPLIT = Path(__file__).parent / "manifests" / "dsec_det_official_split.yaml"
@@ -78,6 +79,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=5e-2)
     parser.add_argument("--head-width", type=int, default=192)
     parser.add_argument("--horizontal-flip-probability", type=float, default=0.5)
+    parser.add_argument("--activity-active-weight", type=float, default=1.0)
+    parser.add_argument("--activity-inactive-weight", type=float, default=1.0)
     parser.add_argument(
         "--event-dropout-probability",
         type=float,
@@ -266,6 +269,8 @@ def evaluate(
 
 def main() -> None:
     args = parse_args()
+    validate_activity_weights(args.activity_active_weight, args.activity_inactive_weight)
+    use_activity = (args.activity_active_weight, args.activity_inactive_weight) != (1.0, 1.0)
     if args.epochs <= 0 or args.validate_every <= 0 or args.batch_size <= 0:
         raise ValueError("epochs, validate-every, and batch-size must be positive")
     if args.num_workers < 0:
@@ -354,6 +359,7 @@ def main() -> None:
         sequences=split.train,
         continuous=False,
         horizontal_flip_probability=args.horizontal_flip_probability,
+        load_activity=use_activity,
         **dataset_common,
     )
     validation_dataset = DSECDetectionEventDataset(
@@ -463,6 +469,9 @@ def main() -> None:
     if args.resume is not None:
         resume = torch.load(args.resume, map_location="cpu", weights_only=False)
         resume_config = resume.get("config", {})
+        for key in ("activity_active_weight", "activity_inactive_weight"):
+            if float(resume_config.get(key, 1.0)) != getattr(args, key):
+                raise ValueError(f"Resume activity loss weight changed: {key}")
         if (
             resume_config.get("mode") != args.mode
             or resume_config.get("feature") != args.feature
@@ -527,7 +536,15 @@ def main() -> None:
                     batch["flip"],
                     feature=args.feature,
                 )
-                losses = detector(features, targets)
+                weights = None
+                if use_activity:
+                    activity = batch["event_activity"].to(device)
+                    if event_dropout_mask is not None:
+                        activity = activity & ~event_dropout_mask[:, -1, None, None]
+                    weights = spatial_activity_weights(
+                        activity, args.activity_active_weight, args.activity_inactive_weight,
+                    )
+                losses = detector(features, targets, loss_weights=weights)
             scaler.scale(losses["loss"]).backward()
             scaler.unscale_(optimizer)
             gradient_norm = torch.nn.utils.clip_grad_norm_(

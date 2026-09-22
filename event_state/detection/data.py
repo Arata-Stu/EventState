@@ -389,6 +389,7 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
         feature: str,
         protocol: str = "probe",
         horizontal_flip_probability: float = 0.0,
+        load_activity: bool = False,
     ) -> None:
         if feature not in {"z", "h", "concat"}:
             raise ValueError("feature must be z, h, or concat")
@@ -396,6 +397,7 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
             raise ValueError("protocol must be probe or dsec-det")
         self.feature_cache_dir = Path(feature_cache_dir).expanduser()
         self.feature = feature
+        self.load_activity = load_activity
         self.protocol = protocol
         self.detection_scale: int | None = None
         self.input_size: tuple[int, int] | None = None
@@ -532,9 +534,19 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
             value = features[self.feature]
         if not isinstance(value, Tensor) or value.ndim != 3:
             raise ValueError(f"Feature must have shape [C, H, W]: {path}")
+        activity = None
+        if self.load_activity:
+            from event_state.losses.activity_weighting import require_activity
+
+            activity = require_activity(payload, value.shape[-2:])
         if self.protocol == "dsec-det" and sequence in self.sampling_grids:
             value = value.float()
             grid = self.sampling_grids[sequence]
+            if activity is not None:
+                activity = F.grid_sample(
+                    activity[None, None].float(), grid.unsqueeze(0), mode="nearest",
+                    padding_mode="zeros", align_corners=False,
+                )[0, 0].bool()
             value = F.grid_sample(
                 value.unsqueeze(0),
                 grid.unsqueeze(0),
@@ -552,8 +564,14 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
                 f"{expected_grid}: {path}"
             )
         output_target = {key: tensor.clone() for key, tensor in target.items()}
+        if activity is not None:
+            activity = F.interpolate(activity[None, None].float(), scale_factor=self.patch_size,
+                                     mode="nearest")[0, 0].bool()
+            activity = activity[:self.input_size[0], :self.input_size[1]]
         if torch.rand(()) < self.horizontal_flip_probability:
             value = value.flip(-1)
+            if activity is not None:
+                activity = activity.flip(-1)
             image_width = float(self.input_size[1])
             boxes = output_target["boxes"]
             old_x1 = boxes[:, 0].clone()
@@ -561,6 +579,7 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
             boxes[:, 0] = image_width - old_x2
             boxes[:, 2] = image_width - old_x1
         return {
+            **({"event_activity": activity} if activity is not None else {}),
             "feature": value.float(),
             "target": output_target,
             "sequence_name": sequence,
@@ -590,6 +609,7 @@ class DSECDetectionEventDataset(Dataset[dict[str, Any]]):
         event_std: Sequence[float] | None = None,
         continuous: bool = False,
         horizontal_flip_probability: float = 0.0,
+        load_activity: bool = False,
     ) -> None:
         if sequence_length <= 0:
             raise ValueError("sequence_length must be positive")
@@ -601,6 +621,9 @@ class DSECDetectionEventDataset(Dataset[dict[str, Any]]):
             raise ValueError("event_mean and event_std must be set together")
 
         self.event_cache_dir = Path(event_cache_dir).expanduser()
+        self.load_activity = load_activity
+        if load_activity and source_stride != 16:
+            raise ValueError("ScaleEvent activity requires source stride 16")
         self.sequence_length = int(sequence_length)
         self.input_size = (int(input_size[0]), int(input_size[1]))
         self.source_stride = int(source_stride)
@@ -626,6 +649,8 @@ class DSECDetectionEventDataset(Dataset[dict[str, Any]]):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             if metadata.get("coordinate_space") != "rectified_event":
                 raise ValueError(f"Detection training requires rectified events: {metadata_path}")
+            if self.load_activity and metadata.get("representation", {}).get("type") != "gep_rgb":
+                raise ValueError("Activity-weighted detection requires GEP RGB event caches")
             if metadata.get("event_window") != "rgb_interval":
                 raise ValueError(
                     f"Detection fine-tuning requires the full RGB event interval: {metadata_path}"
@@ -707,7 +732,8 @@ class DSECDetectionEventDataset(Dataset[dict[str, Any]]):
             if int(payload.get("timestamp", -1)) != int(path.stem):
                 raise ValueError(f"Prepared event timestamp mismatch: {path}")
             events.append(tensor.float())
-        event_clip, _ = self.transform(torch.stack(events), None)
+        transformed = self.transform(torch.stack(events), None, return_activity=self.load_activity)
+        event_clip = transformed[0]
         if event_clip is None:
             raise RuntimeError("Event transform unexpectedly returned no tensor")
 
@@ -732,7 +758,22 @@ class DSECDetectionEventDataset(Dataset[dict[str, Any]]):
             old_x2 = boxes[:, 2].clone()
             boxes[:, 0] = image_width - old_x2
             boxes[:, 2] = image_width - old_x1
+        activity = None
+        if self.load_activity:
+            source = transformed[2][-1].reshape(
+                self.input_size[0] // 16, self.input_size[1] // 16,
+            )
+            activity = F.grid_sample(
+                source[None, None].float(),
+                self.sampling_grids[sample["sequence_name"]].unsqueeze(0),
+                mode="nearest", padding_mode="zeros", align_corners=False,
+            )
+            activity = F.interpolate(activity, scale_factor=self.source_stride,
+                                     mode="nearest")[0, 0].bool()[:430, :640]
+            if flip:
+                activity = activity.flip(-1)
         return {
+            **({"event_activity": activity} if activity is not None else {}),
             "events": event_clip,
             "target": output_target,
             "sequence_name": sample["sequence_name"],
@@ -746,6 +787,8 @@ class DSECDetectionEventDataset(Dataset[dict[str, Any]]):
 
 def detection_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     return {
+        **({"event_activity": torch.stack([sample["event_activity"] for sample in batch])}
+           if "event_activity" in batch[0] else {}),
         "features": torch.stack([sample["feature"] for sample in batch]),
         "targets": [sample["target"] for sample in batch],
         "sequence_names": [sample["sequence_name"] for sample in batch],
@@ -755,6 +798,8 @@ def detection_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
 def detection_event_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     return {
+        **({"event_activity": torch.stack([sample["event_activity"] for sample in batch])}
+           if "event_activity" in batch[0] else {}),
         "events": torch.stack([sample["events"] for sample in batch]),
         "targets": [sample["target"] for sample in batch],
         "sequence_names": [sample["sequence_name"] for sample in batch],

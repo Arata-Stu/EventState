@@ -106,6 +106,9 @@ def _valid_existing(
         and payload.get("checkpoint_sha256") == source_payload.get("checkpoint_sha256")
         and payload.get("timestamp") == source_payload.get("timestamp")
         and payload.get("frame_index") == source_payload.get("frame_index")
+        and payload.get("activity_format") == source_payload.get("activity_format")
+        and (source_payload.get("activity_format") is None
+             or isinstance(payload.get("event_activity"), torch.Tensor))
         and isinstance(feature_payload, dict)
         and features <= set(feature_payload)
         and compact
@@ -129,6 +132,7 @@ def _completed_sequence(
         return False
     identity_keys = (
         "benchmark_format_version",
+        "activity_format",
         "sequence_name",
         "official_role",
         "checkpoint_sha256",
@@ -255,7 +259,19 @@ def main() -> None:
             if not pending:
                 continue
             warped: dict[str, torch.Tensor] = {}
+            warped_activity = None
             with torch.inference_mode():
+                if metadata.get("activity_format") is not None:
+                    from event_state.losses.activity_weighting import require_activity
+
+                    masks = torch.stack([
+                        require_activity(payloads[index], payloads[index]["features"][next(iter(features))].shape[-2:])
+                        for index in pending
+                    ]).float().unsqueeze(1).to(device)
+                    warped_activity = F.grid_sample(
+                        masks, grid.unsqueeze(0).expand(len(pending), -1, -1, -1),
+                        mode="nearest", padding_mode="zeros", align_corners=False,
+                    )[:, 0].bool().cpu()
                 for feature in features:
                     values = torch.stack(
                         [payloads[index]["features"][feature].float() for index in pending]
@@ -278,6 +294,8 @@ def main() -> None:
                 output["coordinate_space"] = "dsec_det_distorted"
                 output["detection_scale"] = args.scale
                 output["benchmark_format_version"] = FORMAT_VERSION
+                if warped_activity is not None:
+                    output["event_activity"] = warped_activity[output_index].clone()
                 output["features"] = {
                     # A contiguous slice can still retain the storage of the
                     # complete [batch,C,H,W] tensor. Force a new one-frame

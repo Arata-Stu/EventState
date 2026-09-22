@@ -196,12 +196,24 @@ class EventStateYOLOX(nn.Module):
         self,
         features: Tensor,
         targets: list[dict[str, Tensor]] | None = None,
+        loss_weights: Tensor | None = None,
     ) -> Any:
         pyramid = self.neck(features)
         predictions, grid, strides = self._flatten_predictions(pyramid)
         decoded_boxes = self._decode_boxes(predictions[..., :4], grid, strides)
         if targets is not None:
-            return self.loss(predictions, decoded_boxes, grid, strides, targets)
+            anchor_weights = None
+            if loss_weights is not None:
+                if loss_weights.ndim != 3 or loss_weights.shape[0] != features.shape[0]:
+                    raise ValueError("Detection loss weights must be [B,H,W]")
+                if (not bool(torch.isfinite(loss_weights).all())
+                        or bool((loss_weights < 0).any())):
+                    raise ValueError("Detection weights must be finite and non-negative")
+                centers = ((grid[0] + 0.5) * strides[0]).long()
+                x = centers[:, 0].clamp(0, loss_weights.shape[-1] - 1)
+                y = centers[:, 1].clamp(0, loss_weights.shape[-2] - 1)
+                anchor_weights = loss_weights[:, y, x]
+            return self.loss(predictions, decoded_boxes, grid, strides, targets, anchor_weights)
         inferred_size = (
             int(features.shape[-2]) * self.input_stride,
             int(features.shape[-1]) * self.input_stride,
@@ -285,6 +297,7 @@ class EventStateYOLOX(nn.Module):
         grid: Tensor,
         strides: Tensor,
         targets: list[dict[str, Tensor]],
+        anchor_weights: Tensor | None = None,
     ) -> dict[str, Tensor]:
         if len(targets) != predictions.shape[0]:
             raise ValueError("targets length must match detector batch size")
@@ -299,9 +312,15 @@ class EventStateYOLOX(nn.Module):
                 boxes[batch_index], objectness, classes, grid, strides, target
             )
             object_target = foreground[:, None].to(predictions.dtype)
-            obj_loss = obj_loss + F.binary_cross_entropy_with_logits(
-                objectness, object_target, reduction="sum"
-            )
+            weights = None if anchor_weights is None else anchor_weights[batch_index]
+            if weights is None:
+                obj_loss = obj_loss + F.binary_cross_entropy_with_logits(
+                    objectness, object_target, reduction="sum"
+                )
+            else:
+                obj_loss = obj_loss + (F.binary_cross_entropy_with_logits(
+                    objectness, object_target, reduction="none"
+                ) * weights[:, None]).sum()
             count = int(foreground.sum())
             positive_count += count
             if count == 0:
@@ -309,12 +328,20 @@ class EventStateYOLOX(nn.Module):
             gt_boxes = target["boxes"].to(boxes.device)[matched_gt]
             gt_labels = target["labels"].to(boxes.device).long()[matched_gt]
             iou = _aligned_iou(boxes[batch_index, foreground], gt_boxes)
-            box_loss = box_loss + (1.0 - iou.square()).sum()
+            box_values = 1.0 - iou.square()
+            if weights is not None:
+                box_values = box_values * weights[foreground]
+            box_loss = box_loss + box_values.sum()
             class_target = F.one_hot(gt_labels, self.num_classes).to(predictions.dtype)
             class_target = class_target * matched_iou[:, None]
-            cls_loss = cls_loss + F.binary_cross_entropy_with_logits(
-                classes[foreground], class_target, reduction="sum"
-            )
+            if weights is None:
+                cls_loss = cls_loss + F.binary_cross_entropy_with_logits(
+                    classes[foreground], class_target, reduction="sum"
+                )
+            else:
+                cls_loss = cls_loss + (F.binary_cross_entropy_with_logits(
+                    classes[foreground], class_target, reduction="none"
+                ) * weights[foreground, None]).sum()
         normalizer = max(1, positive_count)
         box_loss = 5.0 * box_loss / normalizer
         obj_loss = obj_loss / normalizer

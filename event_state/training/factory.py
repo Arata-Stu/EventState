@@ -6,6 +6,7 @@ import math
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -55,6 +56,43 @@ def validate_config(config: Any) -> None:
     projector = _value(model, "projector")
 
     representation_type = str(_value(representation, "type", "gep_rgb"))
+    loss_kind = str(_value(loss, "kind", "dense"))
+    if loss_kind not in {"dense", "scale_event"}:
+        raise ValueError("loss.kind must be dense or scale_event")
+    activity_enabled = bool(_value(dataset, "activity_mask", False))
+    if loss_kind == "scale_event" and not activity_enabled:
+        raise ValueError("ScaleEvent loss requires dataset.activity_mask")
+    if activity_enabled:
+        if str(_value(dataset, "name", "dsec")) != "dsec" or representation_type != "gep_rgb":
+            raise ValueError("ScaleEvent activity currently requires DSEC with gep_rgb")
+        if int(_value(teacher, "patch_size", 16)) != 16:
+            raise ValueError("ScaleEvent activity requires patch size 16")
+        if any(int(_value(dataset, key)) % 16 for key in ("input_height", "input_width")):
+            raise ValueError("ScaleEvent input dimensions must be multiples of 16")
+    strict_joint = str(_value(dataset, "pretraining_protocol", "")) == "dsec_joint_clean"
+    if activity_enabled or strict_joint:
+        import yaml
+
+        from event_state.data.split_guard import (
+            validate_joint_dsec_split, validate_official_dsec_pretraining,
+        )
+
+        manifests = Path(__file__).resolve().parents[2] / "tools" / "manifests"
+        with (manifests / "dsec_det_official_split.yaml").open() as handle:
+            detection_split = yaml.safe_load(handle)
+        with (manifests / "dsec_semantic_split.yaml").open() as handle:
+            semantic_split = yaml.safe_load(handle)
+        if strict_joint:
+            validate_joint_dsec_split(
+                _value(dataset, "train_sequences"), _value(dataset, "val_sequences"),
+                detection_split, semantic_split,
+            )
+        else:
+            validate_official_dsec_pretraining(
+                _value(dataset, "train_sequences"), _value(dataset, "val_sequences"),
+                detection_split, semantic_split,
+                validation_enabled=bool(_value(training, "validation_enabled", True)),
+            )
     if representation_type == "gep_rgb":
         expected_channels = 3
     elif representation_type == "voxel_grid":
@@ -147,9 +185,9 @@ def validate_config(config: Any) -> None:
     z_scale = float(_value(z_config, "weight", 1.0))
     if any(weight < 0 for weight in (*h_weights, *z_weights, z_scale)):
         raise ValueError("Distillation weights must be non-negative")
-    if h_enabled and not any(h_weights):
+    if loss_kind == "dense" and h_enabled and not any(h_weights):
         raise ValueError("Enabled h distillation requires a positive cosine or MSE weight")
-    if z_type == "direct_dino" and (not any(z_weights) or z_scale == 0):
+    if z_type == "direct_dino" and ((loss_kind == "dense" and not any(z_weights)) or z_scale == 0):
         raise ValueError("Direct z distillation requires positive loss and objective weights")
 
     positive_fields = {
@@ -325,6 +363,22 @@ def _build_teacher(config: Any) -> nn.Module | None:
 def _build_losses(config: Any) -> tuple[nn.Module, nn.Module]:
     from event_state.models import DistillationLoss
 
+    if str(_value(_value(config, "loss"), "kind", "dense")) == "scale_event":
+        from event_state.losses.scale_event import ScaleEventLoss
+
+        chunk_size = int(_value(_value(config, "loss"), "gram_row_chunk_size", 128))
+        return ScaleEventLoss(chunk_size), ScaleEventLoss(chunk_size)
+
+    if bool(_value(_value(config, "dataset"), "activity_mask", False)):
+        from event_state.losses.activity import ActivityDistillationLoss
+
+        loss_config = _value(config, "loss")
+        return tuple(
+            ActivityDistillationLoss(
+                cosine_weight=float(_value(_value(loss_config, branch), "cosine_weight", 1.0)),
+                mse_weight=float(_value(_value(loss_config, branch), "mse_weight", 0.0)),
+            ) for branch in ("h_distill", "z_objective")
+        )
     h_config = _value(_value(config, "loss"), "h_distill")
     z_config = _value(_value(config, "loss"), "z_objective")
     return (

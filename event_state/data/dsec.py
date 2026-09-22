@@ -429,6 +429,7 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         load_events: bool = True,
         load_images: bool = True,
         event_window_fraction: float = 1.0,
+        activity_mask: bool = False,
     ) -> None:
         if sequence_length <= 0:
             raise ValueError("sequence_length must be positive")
@@ -452,6 +453,9 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         self.sequence_length = sequence_length
         self.include_incomplete_clips = bool(include_incomplete_clips)
         self.event_representation = event_representation
+        self.activity_mask = bool(activity_mask)
+        if self.activity_mask and (not load_events or not isinstance(event_representation, GEPEventFrame)):
+            raise ValueError("ScaleEvent activity requires loaded GEP RGB event frames")
         self.transform = transform
         self.image_directory = image_directory
         self.rectify_events = rectify_events
@@ -943,15 +947,17 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
                 [self._load_image(record.image_path) for record in records]
             )
 
-        event_sequence, image_sequence = self.transform(
+        transformed = self.transform(
             event_sequence,
             image_sequence,
+            return_activity=self.activity_mask,
             sequence_key=(
                 f"{sequence_name}:epoch={augmentation_epoch}"
                 if self.transform.sequence_consistent
                 else None
             ),
         )
+        event_sequence, image_sequence = transformed[:2]
         sample: dict[str, Any] = {
             "timestamps": torch.tensor([record.timestamp for record in records], dtype=torch.int64),
             "frame_indices": torch.tensor(
@@ -966,6 +972,8 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         if event_sequence is not None:
             sample["events"] = event_sequence
             sample["event_counts"] = torch.tensor(event_counts, dtype=torch.int64)
+        if self.activity_mask:
+            sample["event_activity"] = transformed[2]
         if image_sequence is not None:
             sample["images"] = image_sequence
         if self.feature_cache_dir is not None:

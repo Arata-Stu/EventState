@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from event_state.detection.split import load_dsec_detection_split
 from event_state.data.transforms import PairedSequenceTransform
+from event_state.losses.activity_weighting import ACTIVITY_FORMAT
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
 
 
@@ -40,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--include-activity", action="store_true")
     return parser.parse_args()
 
 
@@ -106,6 +108,7 @@ def _valid_existing(path: Path, identity: dict[str, Any], features: set[str]) ->
     return (
         isinstance(payload, dict)
         and all(payload.get(key) == value for key, value in identity.items())
+        and (identity.get("activity_format") is None or isinstance(payload.get("event_activity"), torch.Tensor))
         and isinstance(payload.get("features"), dict)
         and features <= set(payload["features"])
     )
@@ -130,6 +133,7 @@ def _completed_sequence(
         return False
     identity_keys = (
         "format_version",
+        "activity_format",
         "sequence_name",
         "official_role",
         "state_policy",
@@ -199,6 +203,8 @@ def main() -> None:
                     f"Event cache for official {args.role} sequence is missing: {source_dir}"
                 )
             source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
+            if args.include_activity and source_metadata.get("representation", {}).get("type") != "gep_rgb":
+                raise ValueError("Activity export requires a GEP RGB event cache")
             frame_paths = sorted(
                 (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
                 key=lambda path: int(path.stem),
@@ -208,6 +214,7 @@ def main() -> None:
             destination_dir = output_root / sequence
             destination_dir.mkdir(parents=True, exist_ok=True)
             sequence_metadata = {
+                "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
                 "format_version": FORMAT_VERSION,
                 "sequence_name": sequence,
                 "official_role": args.role,
@@ -246,6 +253,7 @@ def main() -> None:
                 timestamp = int(event_payload.get("timestamp", -1))
                 frame_index = int(event_payload.get("frame_index", -1))
                 identity = {
+                    "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
                     "format_version": FORMAT_VERSION,
                     "sequence_name": sequence,
                     "timestamp": timestamp,
@@ -256,7 +264,10 @@ def main() -> None:
                 }
                 destination = destination_dir / f"{timestamp}.pt"
                 # Continuous h requires replaying every frame even when its output exists.
-                normalized, _ = event_transform(events.float().unsqueeze(0), None)
+                transformed = event_transform(
+                    events.float().unsqueeze(0), None, return_activity=args.include_activity
+                )
+                normalized = transformed[0]
                 if normalized is None:
                     raise RuntimeError("Event transform unexpectedly returned no tensor")
                 normalized = normalized[0].to(device=device).unsqueeze(0)
@@ -288,6 +299,10 @@ def main() -> None:
                         .contiguous()
                     )
                 payload = {**identity, "features": feature_maps}
+                if args.include_activity:
+                    if int(model.event_encoder.patch_size) != 16:
+                        raise ValueError("ScaleEvent activity requires patch size 16")
+                    payload["event_activity"] = transformed[2][0].reshape(grid_height, grid_width)
                 if not args.overwrite and _valid_existing(
                     destination, identity, requested_features
                 ):

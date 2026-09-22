@@ -157,7 +157,9 @@ class EventStateTrainer:
     def _move_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
         non_blocking = self.device.type == "cuda"
         moved = dict(batch)
-        for key in ("events", "images", "teacher_features", "event_counts", "timestamps"):
+        for key in (
+            "events", "images", "teacher_features", "event_counts", "timestamps", "event_activity"
+        ):
             if key in moved and isinstance(moved[key], Tensor):
                 moved[key] = moved[key].to(self.device, non_blocking=non_blocking)
         return moved
@@ -420,6 +422,18 @@ class EventStateTrainer:
             if bool(_value(dropout_config, "mask_z_loss", True)):
                 z_loss_mask = (~event_dropout_mask).unsqueeze(-1)
 
+        if bool(_value(_value(self.config, "dataset"), "activity_mask", False)):
+            activity = batch.get("event_activity")
+            if (not isinstance(activity, Tensor) or activity.dtype != torch.bool
+                    or activity.shape != teacher_features.shape[:-1]
+                    or activity.device != events.device):
+                raise ValueError("ScaleEvent requires bool event_activity [B,T,N] aligned with teacher")
+            # Use observed activity: a deliberately dropped frame is entirely inactive.
+            if event_dropout_mask is not None:
+                activity = activity & ~event_dropout_mask.unsqueeze(-1)
+            h_loss_mask = (~activity) if h_loss_mask is None else (~activity) * h_loss_mask
+            z_loss_mask = activity if z_loss_mask is None else activity * z_loss_mask
+
         with self._autocast():
             # Every randomly sampled clip starts from an empty state. Since every sample in
             # DSECSequenceDataset belongs to exactly one sequence, state cannot cross a boundary.
@@ -503,6 +517,11 @@ class EventStateTrainer:
             )
         return {
             "loss": total_loss,
+            "activity_fraction": (
+                activity.float().mean()
+                if bool(_value(_value(self.config, "dataset"), "activity_mask", False))
+                else None
+            ),
             "z": z,
             "h": h,
             "z_prediction": z_prediction,
@@ -616,6 +635,8 @@ class EventStateTrainer:
                     batch_metrics["h_projected_cosine_observed"] = result[
                         "h_projected_frame_cosine"
                     ][observed_mask].mean()
+            if result.get("activity_fraction") is not None:
+                batch_metrics["active_patch_fraction"] = result["activity_fraction"]
             for branch in ("h", "z"):
                 for name, value in result[f"{branch}_components"].items():
                     if name != "loss":
@@ -724,6 +745,8 @@ class EventStateTrainer:
                 "h_projected_cosine": result["h_projected_frame_cosine"].mean(),
                 "z_projected_cosine": result["z_projected_frame_cosine"].mean(),
             }
+            if result.get("activity_fraction") is not None:
+                values["active_patch_fraction"] = result["activity_fraction"]
             for branch in ("h", "z"):
                 for name, value in result[f"{branch}_components"].items():
                     if name != "loss":

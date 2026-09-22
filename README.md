@@ -4,6 +4,14 @@
 > frozen RGB teacher and as event-encoder initialization. See
 > [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for license and attribution details.
 
+
+## 活動領域別の損失（従来の DSEC 分割を維持）
+
+`dataset=dsec_det_train41 experiment=activity_dual` は、従来の cosine＋MSE と学習条件を
+維持し、ScaleEvent の活動判定で z は活動領域、h は補集合へ蒸留します。
+下流の検出・semantic にも任意の活動重み付き教師あり損失を追加しています。
+実行例、比較条件、検証状況は [専用手順](docs/scale_event_distillation.md) を参照してください。
+
 イベントカメラの短時間特徴 `z_t` と、時間方向に統合したpersistent visual state
 `h_t` を分けて学習するためのpretraining実装です。Phase 0/1ではFrozen DINOv3
 ViT-S/16のdense patch tokenを教師とし、次を比較します。

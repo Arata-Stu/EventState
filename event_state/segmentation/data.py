@@ -8,6 +8,7 @@ from typing import Any, Sequence
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -92,6 +93,7 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
         feature: str,
         num_classes: int = 11,
         horizontal_flip_probability: float = 0.0,
+        load_activity: bool = False,
     ) -> None:
         if feature not in {"z", "h", "concat"}:
             raise ValueError("feature must be z, h, or concat")
@@ -99,6 +101,7 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
             raise ValueError("horizontal_flip_probability must be in [0, 1]")
         self.feature_cache_dir = Path(feature_cache_dir).expanduser()
         self.feature = feature
+        self.load_activity = load_activity
         self.num_classes = int(num_classes)
         self.horizontal_flip_probability = float(horizontal_flip_probability)
         self.label_size: tuple[int, int] | None = None
@@ -176,10 +179,24 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
         label = load_semantic_label(label_path, num_classes=self.num_classes)
         if tuple(label.shape) != self.label_size:
             raise ValueError(f"Label size mismatch: {label_path}")
+        activity = None
+        if self.load_activity:
+            from event_state.losses.activity_weighting import require_activity
+
+            activity = require_activity(payload, value.shape[-2:])
+            # Expand at native patch stride, then crop padding; never stretch 448 to 440.
+            activity = F.interpolate(activity[None, None].float(), scale_factor=self.patch_size,
+                                     mode="nearest")[0, 0].bool()
+            activity = activity[:label.shape[0], :label.shape[1]]
+            if activity.shape != label.shape:
+                raise ValueError("Activity mask does not cover semantic labels")
         if torch.rand(()) < self.horizontal_flip_probability:
             value = value.flip(-1)
             label = label.flip(-1)
+            if activity is not None:
+                activity = activity.flip(-1)
         return {
+            **({"event_activity": activity} if activity is not None else {}),
             "feature": value.float(),
             "label": label,
             "sequence_name": sequence,
@@ -190,6 +207,8 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
 
 def segmentation_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     return {
+        **({"event_activity": torch.stack([sample["event_activity"] for sample in batch])}
+           if "event_activity" in batch[0] else {}),
         "features": torch.stack([sample["feature"] for sample in batch]),
         "labels": torch.stack([sample["label"] for sample in batch]),
         "sequence_names": [sample["sequence_name"] for sample in batch],
@@ -206,4 +225,3 @@ __all__ = [
     "segmentation_collate",
     "semantic_physical_split",
 ]
-

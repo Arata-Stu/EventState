@@ -23,6 +23,9 @@ from event_state.detection import (
     detection_collate,
     load_dsec_detection_split,
 )
+from event_state.losses.activity_weighting import (
+    spatial_activity_weights, validate_activity_weights,
+)
 
 
 DEFAULT_SPLIT = Path(__file__).parent / "manifests" / "dsec_det_official_split.yaml"
@@ -54,6 +57,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--precision", choices=("fp32", "fp16"), default="fp16")
     parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument("--activity-active-weight", type=float, default=1.0)
+    parser.add_argument("--activity-inactive-weight", type=float, default=1.0)
     return parser.parse_args()
 
 
@@ -102,6 +107,8 @@ def evaluate(
 
 def main() -> None:
     args = parse_args()
+    validate_activity_weights(args.activity_active_weight, args.activity_inactive_weight)
+    use_activity = (args.activity_active_weight, args.activity_inactive_weight) != (1.0, 1.0)
     if args.epochs <= 0 or args.batch_size <= 0 or args.num_workers < 0:
         raise ValueError("epochs/batch-size must be positive and num-workers non-negative")
     random.seed(args.seed)
@@ -121,7 +128,7 @@ def main() -> None:
         "protocol": args.protocol,
     }
     train_dataset = DSECDetectionFeatureDataset(
-        sequences=split.train, horizontal_flip_probability=0.5, **common
+        sequences=split.train, horizontal_flip_probability=0.5, load_activity=use_activity, **common
     )
     validation_dataset = DSECDetectionFeatureDataset(sequences=split.val, **common)
     if (
@@ -190,6 +197,9 @@ def main() -> None:
     best_map = -1.0
     if args.resume is not None:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
+        for key in ("activity_active_weight", "activity_inactive_weight"):
+            if float(checkpoint.get("config", {}).get(key, 1.0)) != getattr(args, key):
+                raise ValueError(f"Resume activity loss weight changed: {key}")
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
@@ -210,7 +220,13 @@ def main() -> None:
             with torch.autocast(
                 device_type=device.type, dtype=torch.float16, enabled=use_amp
             ):
-                losses = model(features, targets)
+                weights = None
+                if use_activity:
+                    weights = spatial_activity_weights(
+                        batch["event_activity"].to(device), args.activity_active_weight,
+                        args.activity_inactive_weight,
+                    )
+                losses = model(features, targets, loss_weights=weights)
             scaler.scale(losses["loss"]).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)

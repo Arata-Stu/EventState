@@ -17,6 +17,8 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from event_state.segmentation import find_semantic_label_dir, load_dsec_semantic_split
+from event_state.data.activity import scale_event_activation
+from event_state.losses.activity_weighting import ACTIVITY_FORMAT
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
 
 
@@ -42,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--include-activity", action="store_true")
     return parser.parse_args()
 
 
@@ -126,6 +129,7 @@ def _complete(destination: Path, expected: dict[str, Any], frame_indices: set[in
         return False
     keys = (
         "format_version",
+        "activity_format",
         "task",
         "sequence_name",
         "official_role",
@@ -210,6 +214,8 @@ def main() -> None:
             if not source_metadata_path.is_file():
                 raise FileNotFoundError(f"Event cache metadata not found: {source_metadata_path}")
             source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
+            if args.include_activity and source_metadata.get("representation", {}).get("type") != "gep_rgb":
+                raise ValueError("Activity export requires a GEP RGB event cache")
             frame_paths = sorted(
                 (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
                 key=lambda path: int(path.stem),
@@ -219,6 +225,7 @@ def main() -> None:
             destination_dir = output_root / sequence
             destination_dir.mkdir(parents=True, exist_ok=True)
             sequence_metadata = {
+                "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
                 "format_version": FORMAT_VERSION,
                 "task": "dsec_semantic",
                 "sequence_name": sequence,
@@ -287,6 +294,7 @@ def main() -> None:
                     )
                 destination = destination_dir / f"{frame_index:06d}.pt"
                 identity = {
+                    "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
                     "format_version": FORMAT_VERSION,
                     "task": "dsec_semantic",
                     "sequence_name": sequence,
@@ -297,6 +305,18 @@ def main() -> None:
                     "state_policy": args.state_policy,
                     "features": feature_maps,
                 }
+                if args.include_activity:
+                    if events.shape[0] != 3 or int(model.event_encoder.patch_size) != 16:
+                        raise ValueError("ScaleEvent activity requires GEP RGB with patch size 16")
+                    # Synthetic padding is not a real event: use white for the mask only.
+                    if not bool(torch.isfinite(events).all()) or bool(((events < 0) | (events > 1)).any()):
+                        raise ValueError("Activity source must be finite GEP RGB in [0,1]")
+                    source = events.float()[..., :440, :]
+                    source = F.pad(source, (0, input_size[1] - 640, 0, input_size[0] - 440), value=1)
+                    source = (source * 255).round().byte().permute(1, 2, 0).numpy()
+                    identity["event_activity"] = torch.from_numpy(scale_event_activation(
+                        source, height=input_size[0], width=input_size[1],
+                    ))
                 if destination.is_file() and not args.overwrite:
                     existing = _safe_load(destination)
                     valid = (
@@ -305,6 +325,7 @@ def main() -> None:
                             existing.get(key) == identity[key]
                             for key in (
                                 "format_version",
+                                "activity_format",
                                 "task",
                                 "sequence_name",
                                 "frame_index",
@@ -315,6 +336,7 @@ def main() -> None:
                             )
                         )
                         and requested <= set(existing.get("features", {}))
+                        and (not args.include_activity or isinstance(existing.get("event_activity"), torch.Tensor))
                     )
                     if valid:
                         preserved += 1

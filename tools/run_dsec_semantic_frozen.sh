@@ -19,6 +19,8 @@ SEED=0
 HEAD_WIDTH=192
 HEAD_TYPE=linear
 LOSS=ce
+ACTIVITY_ACTIVE_WEIGHT=1.0
+ACTIVITY_INACTIVE_WEIGHT=1.0
 
 usage() {
   cat <<'EOF'
@@ -28,7 +30,8 @@ Usage:
     --feature-cache-dir PATH --output-dir PATH \
     [--feature z|h|concat] [--teacher-checkpoint PATH] [--gpu N] \
     [--batch-size N] [--epochs N] [--num-workers N] [--seed N] \
-    [--head-type linear|nonlinear|gep_patch] [--loss ce|ce-dice]
+    [--head-type linear|nonlinear|gep_patch] [--loss ce|ce-dice] \
+    [--activity-active-weight FLOAT] [--activity-inactive-weight FLOAT]
 
 The EventState checkpoint stays frozen. The script updates recurrent state on
 every frame, saves maps only at semantic-label frames, trains the segmentation
@@ -59,6 +62,8 @@ while [ "$#" -gt 0 ]; do
     --head-width) HEAD_WIDTH=${2:?}; shift 2 ;;
     --head-type) HEAD_TYPE=${2:?}; shift 2 ;;
     --loss) LOSS=${2:?}; shift 2 ;;
+    --activity-active-weight) ACTIVITY_ACTIVE_WEIGHT=${2:?}; shift 2 ;;
+    --activity-inactive-weight) ACTIVITY_INACTIVE_WEIGHT=${2:?}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -112,6 +117,11 @@ if [ -n "$TEACHER_CHECKPOINT" ]; then
   TEACHER_ARGS=(--teacher-checkpoint "$TEACHER_CHECKPOINT")
 fi
 
+ACTIVITY_CACHE_ARGS=()
+if [ "$ACTIVITY_ACTIVE_WEIGHT" != "1.0" ] || [ "$ACTIVITY_INACTIVE_WEIGHT" != "1.0" ]; then
+  ACTIVITY_CACHE_ARGS=(--include-activity)
+fi
+
 for ROLE in train val test; do
   printf '[dsec-semantic] cache role=%s feature=%s gpu=%s\n' "$ROLE" "$FEATURE" "$GPU"
   CUDA_VISIBLE_DEVICES="$GPU" python tools/cache_dsec_semantic_features.py \
@@ -121,6 +131,7 @@ for ROLE in train val test; do
     --output-dir "$FEATURE_CACHE_DIR" \
     --role "$ROLE" \
     --features "${FEATURES[@]}" \
+    "${ACTIVITY_CACHE_ARGS[@]}" \
     --state-policy continuous \
     --device cuda \
     "${TEACHER_ARGS[@]}" \
@@ -146,6 +157,8 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --head-width "$HEAD_WIDTH" \
   --head-type "$HEAD_TYPE" \
   --loss "$LOSS" \
+  --activity-active-weight "$ACTIVITY_ACTIVE_WEIGHT" \
+  --activity-inactive-weight "$ACTIVITY_INACTIVE_WEIGHT" \
   --seed "$SEED" \
   --precision fp16 \
   --device cuda \
@@ -172,6 +185,8 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --head-width "$HEAD_WIDTH" \
   --head-type "$HEAD_TYPE" \
   --loss "$LOSS" \
+  --activity-active-weight "$ACTIVITY_ACTIVE_WEIGHT" \
+  --activity-inactive-weight "$ACTIVITY_INACTIVE_WEIGHT" \
   --seed "$SEED" \
   --precision fp16 \
   --device cuda \

@@ -391,7 +391,7 @@ def _dataset_options(
                 "target_tasks": _as_optional_list(_value(dataset_config, "target_tasks")),
             }
             if str(_value(dataset_config, "name", "dsec")).lower() == "m3ed"
-            else {}
+            else {"activity_mask": bool(_value(dataset_config, "activity_mask", False))}
         ),
     }
 

@@ -1,5 +1,16 @@
 # Third-party notices
 
+## ScaleEvent algorithm reference
+
+The optional ScaleEvent loss and event-activation rule are native implementations
+based on the released algorithm at https://github.com/zhiwen-xdu/ScaleEvent,
+commit `92f005b0f2cbb19dfc8391e3019ca042b1a9f587`.
+Paper: Chen et al., *Scaling Dense Event-Stream Pretraining from Visual Foundation
+Models*, https://arxiv.org/abs/2603.03969.
+The reference package is not imported by the training runtime or redistributed
+as part of EventState. Reference-parity tests optionally load a separate checkout.
+The complementary h-branch objective is an EventState extension.
+
 ## DINOv3
 
 **Built with DINOv3.**

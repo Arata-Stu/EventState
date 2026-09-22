@@ -54,7 +54,8 @@ class PairedSequenceTransform:
         images: Tensor | None,
         *,
         sequence_key: str | None = None,
-    ) -> tuple[Tensor | None, Tensor | None]:
+        return_activity: bool = False,
+    ) -> tuple[Tensor | None, Tensor | None] | tuple[Tensor, Tensor | None, Tensor]:
         reference = events if events is not None else images
         if reference is None:
             raise ValueError("At least one modality must be provided")
@@ -68,6 +69,24 @@ class PairedSequenceTransform:
         rng = self._rng(sequence_key)
         top, left, crop_h, crop_w = self._sample_crop(source_h, source_w, rng)
         flip = self.training and rng.random() < self.horizontal_flip_probability
+        activity = None
+        if return_activity:
+            from .activity import scale_event_activation
+
+            if events is None or events.shape[1] != 3:
+                raise ValueError("ScaleEvent activity requires unnormalized GEP RGB events")
+            if not bool(torch.isfinite(events).all()) or bool(((events < 0) | (events > 1)).any()):
+                raise ValueError("ScaleEvent event images must be finite and in [0,1]")
+            # Quantize the source once, before either resize, as when reading PNGs.
+            source = events[..., top:top + crop_h, left:left + crop_w]
+            source = (source * 255).round().to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            activity = torch.stack([
+                torch.from_numpy(scale_event_activation(frame, height=self.height, width=self.width))
+                for frame in source
+            ])
+            if flip:
+                activity = activity.flip(-1)
+            activity = activity.flatten(1)
         events = self._apply(events, top, left, crop_h, crop_w, flip)
         images = self._apply(images, top, left, crop_h, crop_w, flip)
         if events is not None and self.event_mean is not None:
@@ -79,6 +98,8 @@ class PairedSequenceTransform:
             mean = events.new_tensor(self.event_mean).view(1, -1, 1, 1)
             std = events.new_tensor(self.event_std).view(1, -1, 1, 1)
             events = (events - mean) / std
+        if return_activity:
+            return events, images, activity
         return events, images
 
     def _rng(self, sequence_key: str | None) -> Any:
