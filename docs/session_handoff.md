@@ -156,3 +156,50 @@ activity-aware蒸留と下流activity weightingを実装中。作業ツリーに
 
 会話だけに数値を残さない。
 
+## 9. DSEC論文用の単一フレームPNG出力
+
+`tools/export_dsec_detection_frame.py`で、DSEC-Detの1フレームからRGB、GEP Event、
+PCA特徴、Detection結果、manifestを個別PNG/JSONとして出力できる。
+
+ポスター素材として使用した既知のフレーム:
+
+```text
+sequence: zurich_city_14_b
+timestamp: 55314607586
+visualizer frame: 414 / 576
+model: Hybrid no-augmentation cached-teacher
+feature: h
+```
+
+サーバー上での再生成例:
+
+```bash
+cd ~/Arata_repo/EventState
+source env/bin/activate
+
+DET_DIR="outputs/dsec_detection_frozen_hybrid_noaug_cache/HYBRID/seed_0"
+FEATURE_CACHE="/home/iASL/Arata_repo/dataset/DSEC_cache/detection_features/hybrid_noaug_cache_step100000/dsec_det/HYBRID"
+EXPORT_DIR="$DET_DIR/publication/zurich_city_14_b_timestamp_55314607586"
+
+CUDA_VISIBLE_DEVICES=0 python tools/export_dsec_detection_frame.py \
+  --source "HYBRID:$DET_DIR/best.pt:$FEATURE_CACHE:h" \
+  --event-cache-dir /home/iASL/Arata_repo/dataset/DSEC_cache/events/gep_rgb \
+  --labels-root /home/iASL/Arata_repo/dataset/DSEC/dsec_det_labels \
+  --dataset-root /home/iASL/Arata_repo/dataset/DSEC \
+  --role test \
+  --sequence zurich_city_14_b \
+  --timestamp 55314607586 \
+  --output-dir "$EXPORT_DIR" \
+  --device cuda \
+  --precision fp16 \
+  --score-threshold 0.25 \
+  --detection-background rgb
+```
+
+現在のスクリプトは既定でrectification paddingを全画像共通の有効領域へcropする。
+paddingを意図的に残す場合だけ `--keep-padding` を付ける。PCAは選択フレームだけでfitせず、
+対象シーケンス全体からfitする。Macへコピーした素材の既知の保存先は次である。
+
+```text
+/Users/at/Library/Mobile Documents/com~apple~CloudDocs/プレゼン/プレゼン/中間発表/自分/素材/
+```
