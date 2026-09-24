@@ -147,7 +147,19 @@ M3ED関連は別PCでの再生成が必要なため、全キャッシュを保�
 seed 0のmAPはbaseline_e2=0.37778238、activity_only=0.37342058、
 scale_event_full=0.37427887。下流activity重みなし。詳細は実験台帳§14。
 出力は `outputs/dsec_detection_activity_20260923_h/<条件名>/seed_0/test_metrics.json`。
-次は予定済みのSemantic評価とz/concat比較。単一seedのh検出では改善は確認できていない。
+Semantic h（Frozen Linear+CE）も3条件完了し、test JSONを受領。
+mIoUはbaseline_e2=0.60053234、activity_only=0.58973430、scale_event_full=0.58832850。
+全条件790,169,600 pixels、seed 0、開発6/2→全8系列で再学習→test 3系列。
+出力は `outputs/dsec_semantic_activity_20260923_h/<条件名>/seed_0/test_metrics.json`。
+詳細は実験台帳§15。次は予定済みのz/concat比較。
+次の起動手順はSemanticの3条件×z/concat（計6 head）。GPUごとに1条件を担当し、
+zとhを一度に新規 `semantic_features/activity_20260923_zh/<条件名>` へ保存する。
+同じcacheを使ってz→concatを順次学習する。既存runnerは要求featuresの完全一致でcacheを
+検査するため、この共用手順ではcache生成とhead学習を個別CLIで実行する。
+出力予定は `outputs/dsec_semantic_activity_20260923_zh/<条件名>/<z|concat>/seed_0`。
+Frozen Linear+CE、seed 0、batch 8、開発50 epoch、6/2→8再学習→test 3を維持。
+起動・完了は未確認。concatの入力次元増加を考慮し、同じfeature同士で事前学習条件を比較する。
+単一seedのFrozen hでは検出・Semanticとも改善は確認できていない。
 本番の出力先は `outputs/dsec_activity_full_20260923_000937`、
 各条件のコンソールログはその配下の `logs/<条件名>.log`。
 サーバーでは `source env/bin/activate` を使い、依存関係はuvで管理する。

@@ -365,3 +365,44 @@ pedestrian APは低下した。単一seedであり有意差は未検証。
 過去のE2 0.36869とは区別し、今回の比較基準は0.37778238とする。
 この結果だけでz/hの相補性、低活動領域での性能、Semanticの効果は判断できない。
 予定済みのSemanticおよびz/concat評価を進め、testを用いた重み・閾値の調整は行わない。
+
+## 15. Activity事前学習: Frozen DSEC Semantic h
+
+ユーザー提供の公式test JSONを記録。§13の100,000 step重み、seed 0、continuous h、
+Frozen backbone、Linear head + CE、下流activity重みなし。
+提示した起動条件はbatch 8、開発50 epoch、FP16。公式trainの6/2分割でepochを選択し、
+headを初期化し直して全8系列で再学習、公式test 3系列を評価する既存runnerを使用。
+選択epoch数は未受領。全条件のevaluated_pixelsは790,169,600で一致。
+
+| 条件 | mIoU | Pixel accuracy | Mean class accuracy | baseline比mIoU (point) |
+|---|---:|---:|---:|---:|
+| baseline_e2 | 0.6005323404125538 | 0.9168447950920916 | 0.6870124260848327 | 0 |
+| activity_only | 0.5897342979648699 | 0.9150212156985033 | 0.6777412867096996 | −1.07980 |
+| scale_event_full | 0.588328497455661 | 0.9155564311762943 | 0.6719785038555767 | −1.22038 |
+
+| Class IoU | baseline_e2 | activity_only | scale_event_full |
+|---|---:|---:|---:|
+| background | 0.93925240 | 0.93609110 | 0.93740680 |
+| building | 0.82943686 | 0.82306586 | 0.82694177 |
+| fence | 0.24227367 | 0.23281210 | 0.22842223 |
+| person | 0.32195141 | 0.27222079 | 0.25678517 |
+| pole | 0.15524223 | 0.13985178 | 0.14917611 |
+| road | 0.93503312 | 0.93787378 | 0.93655054 |
+| sidewalk | 0.66460490 | 0.67571522 | 0.66567616 |
+| vegetation | 0.84206051 | 0.83564423 | 0.83692761 |
+| car | 0.82050617 | 0.81152706 | 0.81683195 |
+| wall | 0.42468745 | 0.42209278 | 0.41470152 |
+| traffic_sign | 0.43080702 | 0.40018258 | 0.40219362 |
+
+出力（サーバー）:
+`/home/iASL/Arata_repo/EventState/outputs/dsec_semantic_activity_20260923_h/{baseline_e2,activity_only,scale_event_full}/seed_0/test_metrics.json`
+
+特徴キャッシュ:
+`/home/iASL/Arata_repo/dataset/DSEC_cache/semantic_features/activity_20260923_h/<条件名>`
+
+Semanticラベル: `/home/iASL/Arata_repo/dataset/DSEC/task_labels/semantic`。
+両activity条件は11クラス中9クラスでbaselineを下回り、roadとsidewalkで上回った。
+personの低下はそれぞれ−4.97306 / −6.51662 point。
+Frozen hではDetection/Semanticの両方で改善を確認できなかったが、単一seedで有意差は未検証。
+hへの直接蒸留領域を限定した影響は原因仮説であり、クラス別activity測定なしに断定しない。
+z/concatおよび低活動領域での評価は未実施。次は予定済みのz/concat比較を行う。
