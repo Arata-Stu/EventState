@@ -105,7 +105,9 @@ python train.py dataset=dsec_det_train41 experiment=activity_dual \
 batch size 8、勾配累積1など、既存設定を変更しない。`active_patch_fraction` と各枝の
 損失を記録する。活動率がほぼ1なら h の直接教師信号が弱くなるため、その率を確認する。
 閾値を評価集合に合わせて自動調整することはしない。
-`scale_event_dual` は token 数の二乗に比例する追加計算が必要で、GPU 実測は未実施。
+`scale_event_dual` は token 数の二乗に比例する追加計算が必要。
+ユーザー提供のV100 32 GBでの100 step smokeログでは `gpu_memory_mb=20524`、
+約8.88 samples/sを記録した。本番全体の所要時間は未確認（詳細は実験結果文書）。
 
 最終 checkpoint は従来通り `checkpoints/step_00100000.pt` を使う（100,000 step の場合）。
 事前学習 validation がないため、`best.pt` は作らない。

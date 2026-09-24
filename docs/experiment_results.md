@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-09-22
+最終更新: 2026-09-24
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
@@ -285,3 +285,56 @@ M3EDはDSECより低event activityの裾が大幅に広く、長い低event区�
 - Frozen、Fine-tuning、Scratchを同じ欄で暗黙に比較しない。
 - 異なるhead/lossの結果を、表現そのものの優劣として扱わない。
 - 未完了値、途中step、smoke testは明示する。
+
+## 13. DSEC activity比較のsmokeと本番起動（2026-09-23記録）
+
+ユーザーから100 step smokeの完了報告を受領。条件は `baseline_e2`、
+`activity_only`、`scale_event_full`。DSEC-Det train 41系列で事前学習し、
+validation/testは使用しない。seedは起動既定値の0（保存configは未照合）。
+共通設定はclip長8、batch size 8。出力先:
+
+`/home/iASL/Arata_repo/EventState/outputs/dsec_activity_smoke_20260922_231607`
+
+提示されたScaleEvent型損失のstep 100ログ（ファイル名はログ断片に含まれず、
+損失項から `scale_event_full` 相当と判断）:
+
+| 指標 | 値 |
+|---|---:|
+| loss | 0.31568 |
+| h_distill_loss | 0.065251 |
+| z_distill_loss | 0.25043 |
+| active_patch_fraction | 0.78654 |
+| grad_norm | 0.29122 |
+| optimizer_step_skipped | 0 |
+| samples_per_second | 8.8763 |
+| gpu_memory_mb | 20524 |
+
+これは動作確認の値であり、下流mAP/mIoUや手法の改善を示す結果ではない。
+他2条件の最終数値は未受領。
+
+続いて同じ3条件をGPU 0/1/2で `--stage full --skip-tests` により起動したとの報告あり。
+本番は100,000 step、出力は `outputs/dsec_activity_full_<起動日時>`。
+正確な出力ディレクトリ名と学習進行・最終結果は未確認。
+
+2026-09-24追記: ユーザーから本番学習が終了したようだとの報告あり。
+条件・split・seedは上記の起動条件。3条件の100,000 step到達、最終checkpoint、
+最終数値はまだ未照合であり、正常終了確認済みとは扱わない。
+
+### 本番100,000 step到達確認（2026-09-24追加）
+
+後続のユーザー提供ログで、全3条件のstep 100000と最終checkpointの存在を確認。
+出力ルートは `/home/iASL/Arata_repo/EventState/outputs/dsec_activity_full_20260923_000937`。
+ログは `logs/<条件名>.log`、重みは `<条件名>/checkpoints/step_00100000.pt`（各277M）。
+checkpointのロード検証は未実施。splitはDSEC-Det train41、事前学習val/testなし、
+seedは起動既定値0（保存config未照合）、clip長8、batch size 8。
+
+| 条件 | 最終step loss | h loss | z loss | h projected cosine | z projected cosine | active率 | grad norm | samples/s | GPU memory MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline_e2 | 0.18805 | 0.091518 | 0.096530 | 0.96949 | 0.96782 | 未記録 | 0.44905 | 9.5659 | 17065 |
+| activity_only | 0.18862 | 0.072590 | 0.116030 | 0.96253 | 0.96330 | 0.75991 | 0.47226 | 10.324 | 16952 |
+| scale_event_full | 0.083002 | 0.018364 | 0.064638 | 0.95669 | 0.96261 | 0.75084 | 0.10510 | 6.1957 | 20524 |
+
+各条件の提示された最後3回の記録では `optimizer_step_skipped=0`。全期間のskip集計ではない。
+数値は最後の学習ログであり、全データ平均ではない。マスク対象・損失形式が異なるため
+lossの大小で優劣を判断しない。最終stepのevent_countも条件間で異なるため、同一batch比較ではない。
+次は同じ下流条件でFrozen Detection / Semanticを評価する。下流mAP/mIoUは未取得。

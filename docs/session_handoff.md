@@ -1,6 +1,6 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-09-22
+最終更新: 2026-09-24
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
@@ -119,16 +119,34 @@ M3EDの最高値はLinear+CE+Diceの38.392%。異なる18クラス／RGB-event�
 
 ## 6. 現在の実装・直近の作業
 
-activity-aware蒸留と下流activity weightingを実装中。作業ツリーにはユーザー／別セッションの
+activity-aware蒸留と下流activity weightingを実装済み。作業ツリーにはユーザー／別セッションの
 未コミット変更があるため、上書き・reset・checkoutをしない。
 
-主比較はGPU 0/1/2で次の3条件を同一設定で走らせる予定。
+主比較はGPU 0/1/2で次の3条件を走らせる。共通の学習設定を使い、3番目は損失形式も変える追加比較である。
 
 1. 従来E2相当の `z+h` 全領域蒸留
 2. `activity_dual`: activeを`z`、inactiveを`h`へ従来cosine+MSEで蒸留
 3. `scale_event_dual`: 同じ領域分担にScaleEvent型構造損失を追加
 
-まず100 step smoke、その後100,000 step。起動ツールは
+100 step smokeはユーザーから完了報告あり。保存先は
+`/home/iASL/Arata_repo/EventState/outputs/dsec_activity_smoke_20260922_231607`。
+続いてユーザーが `--stage full --skip-tests` で100,000 stepの3条件を起動した。
+2026-09-24にユーザー提供ログで3条件とも100,000 step到達と
+`checkpoints/step_00100000.pt`（各277M）の存在を確認。重みのロード検証は未実施。
+最終stepのloss・勾配は有限、optimizer skipは0（全期間の集計ではない）。
+次は従来の分割・下流損失でFrozen評価を行う。新しい重みで下流特徴を再抽出する。
+ただし先にサーバーストレージを整理する。2026-09-24のユーザー提供容量一覧では
+`/home`は98%使用・空き77G。DSEC下流特徴はDetection 671G、Semantic 53G、
+M3ED Semantic特徴は65G。旧特徴キャッシュの内訳・再生成元を確認中で削除は未実施。
+DSEC GEP RGB入力270Gとデータ本体は次の特徴抽出でも必要。
+M3ED関連は別PCでの再生成が必要なため、全キャッシュを保持し削除対象から除外する。
+旧DSEC Detection/Semantic特徴の削除をユーザーが実施予定（削除完了・空き容量は未確認）。
+下流はまず3条件のh特徴で従来E2と同じFrozen Detectionを比較する。
+キャッシュは新しい専用ディレクトリへ作成し、Semanticとz/concat評価は別段階で進める。
+本番の出力先は `outputs/dsec_activity_full_20260923_000937`、
+各条件のコンソールログはその配下の `logs/<条件名>.log`。
+サーバーでは `source env/bin/activate` を使い、依存関係はuvで管理する。
+起動ツールは
 `tools/run_dsec_activity_comparison.sh`。正確な仕様と検証条件は
 `docs/scale_event_distillation.md`を読む。
 
