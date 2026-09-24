@@ -338,3 +338,30 @@ seedは起動既定値0（保存config未照合）、clip長8、batch size 8。
 数値は最後の学習ログであり、全データ平均ではない。マスク対象・損失形式が異なるため
 lossの大小で優劣を判断しない。最終stepのevent_countも条件間で異なるため、同一batch比較ではない。
 次は同じ下流条件でFrozen Detection / Semanticを評価する。下流mAP/mIoUは未取得。
+
+## 14. Activity事前学習: Frozen DSEC Detection h
+
+ユーザー提供の `test_metrics.json` を記録。事前学習は§13の100,000 step重み、
+下流はseed 0、continuous h、backbone固定、YOLOX型headのみ学習。
+提示した起動条件はbatch 16・50 epoch・FP16・従来損失（activity重み1/1）。
+公式41/6/13分割のvalでbest.ptを選択し、testで評価。
+`protocol=dsec-det`、`coordinate_space=dsec_det_distorted`。best epochは未受領。
+
+| 条件 | mAP | AP50 | AP75 | AP car | AP pedestrian | AP small | AP medium | AP large |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline_e2 | 0.37778238 | 0.67310797 | 0.37677932 | 0.50850079 | 0.24706397 | 0.13867482 | 0.39766928 | 0.59484951 |
+| activity_only | 0.37342058 | 0.67779599 | 0.35627772 | 0.50928362 | 0.23755755 | 0.13820554 | 0.39278423 | 0.59727616 |
+| scale_event_full | 0.37427887 | 0.67851461 | 0.35585001 | 0.51983709 | 0.22872064 | 0.15040354 | 0.39414030 | 0.56004745 |
+
+出力（サーバー）:
+`/home/iASL/Arata_repo/EventState/outputs/dsec_detection_activity_20260923_h/{baseline_e2,activity_only,scale_event_full}/seed_0/test_metrics.json`
+
+特徴キャッシュ:
+`/home/iASL/Arata_repo/dataset/DSEC_cache/detection_features/activity_20260923_h/<条件名>/dsec_det`
+
+同時実行したbaselineに対するmAP差はactivity_onlyが−0.43618 point、
+scale_event_fullが−0.35035 point（0–100表記）。AP50は上昇したが、AP75と
+pedestrian APは低下した。単一seedであり有意差は未検証。
+過去のE2 0.36869とは区別し、今回の比較基準は0.37778238とする。
+この結果だけでz/hの相補性、低活動領域での性能、Semanticの効果は判断できない。
+予定済みのSemanticおよびz/concat評価を進め、testを用いた重み・閾値の調整は行わない。

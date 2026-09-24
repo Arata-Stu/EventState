@@ -143,6 +143,11 @@ M3ED関連は別PCでの再生成が必要なため、全キャッシュを保�
 旧DSEC Detection/Semantic特徴の削除をユーザーが実施予定（削除完了・空き容量は未確認）。
 下流はまず3条件のh特徴で従来E2と同じFrozen Detectionを比較する。
 キャッシュは新しい専用ディレクトリへ作成し、Semanticとz/concat評価は別段階で進める。
+その後ユーザーから3条件のFrozen Detection hの完了とtest結果を受領。
+seed 0のmAPはbaseline_e2=0.37778238、activity_only=0.37342058、
+scale_event_full=0.37427887。下流activity重みなし。詳細は実験台帳§14。
+出力は `outputs/dsec_detection_activity_20260923_h/<条件名>/seed_0/test_metrics.json`。
+次は予定済みのSemantic評価とz/concat比較。単一seedのh検出では改善は確認できていない。
 本番の出力先は `outputs/dsec_activity_full_20260923_000937`、
 各条件のコンソールログはその配下の `logs/<条件名>.log`。
 サーバーでは `source env/bin/activate` を使い、依存関係はuvで管理する。
