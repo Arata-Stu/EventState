@@ -1,6 +1,6 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-09-24
+最終更新: 2026-09-25
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
@@ -158,7 +158,19 @@ zとhを一度に新規 `semantic_features/activity_20260923_zh/<条件名>` へ
 検査するため、この共用手順ではcache生成とhead学習を個別CLIで実行する。
 出力予定は `outputs/dsec_semantic_activity_20260923_zh/<条件名>/<z|concat>/seed_0`。
 Frozen Linear+CE、seed 0、batch 8、開発50 epoch、6/2→8再学習→test 3を維持。
-起動・完了は未確認。concatの入力次元増加を考慮し、同じfeature同士で事前学習条件を比較する。
+2026-09-25に全3条件のz/concat完了表示と6実験のtest JSONを受領（台帳§16）。
+z/concatのmIoUはbaseline=0.59591928/0.59959334、
+activity_only=0.59787214/0.59868795、scale_event_full=0.59579199/0.59930571。
+activity zはbaseline z比+0.195 pointだが、concatでは両条件ともbaseline未満。
+単一seedであり、activity特有の相補性・低活動領域改善は未確認。
+Semanticの予定したh/z/concat比較は完了。Detection z/concatと低活動領域評価は未実施。
+次の事前学習3条件に向け、`--suite h-relaxation`を実装済み（サーバー起動は未確認）。
+active_z_only（h蒸留なし）、active_z_h_all（h全領域）、active_z_h_soft（h inactive=1/active=0.5）。
+全条件cosine+二乗L2、従来と同じtrain41・100k・batch8・clip8・seed0。
+LSTM構成は揃えるがz-onlyのtemporal/h projectorは未学習なので下流はzのみ評価する。
+既存hard maskはalpha=0のまま維持し、新条件はまずsmoke→full、下流validationで比較する。
+ローカルの構文・dry-run検査済み。追加Torchテストはサーバーpreflightで実行する。
+concatの入力次元増加を考慮し、同じfeature同士で事前学習条件を比較する。
 単一seedのFrozen hでは検出・Semanticとも改善は確認できていない。
 本番の出力先は `outputs/dsec_activity_full_20260923_000937`、
 各条件のコンソールログはその配下の `logs/<条件名>.log`。

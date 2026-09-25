@@ -60,6 +60,11 @@ def validate_config(config: Any) -> None:
     if loss_kind not in {"dense", "scale_event"}:
         raise ValueError("loss.kind must be dense or scale_event")
     activity_enabled = bool(_value(dataset, "activity_mask", False))
+    h_activity_alpha = float(_value(_value(loss, "h_distill"), "activity_active_weight", 0.0))
+    if not math.isfinite(h_activity_alpha) or not 0 <= h_activity_alpha <= 1:
+        raise ValueError("h_distill.activity_active_weight must be finite and in [0, 1]")
+    if h_activity_alpha != 0 and (not activity_enabled or loss_kind != "dense"):
+        raise ValueError("Nonzero h activity weight requires activity_mask and dense loss")
     if loss_kind == "scale_event" and not activity_enabled:
         raise ValueError("ScaleEvent loss requires dataset.activity_mask")
     if activity_enabled:

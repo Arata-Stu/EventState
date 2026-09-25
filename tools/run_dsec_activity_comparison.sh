@@ -14,6 +14,7 @@ NUM_WORKERS=4
 SEED=0
 DRY_RUN=0
 RUN_TESTS=1
+SUITE="original"
 
 usage() {
   cat <<'EOF'
@@ -22,9 +23,13 @@ Usage:
     --root PATH --event-cache-dir PATH --teacher-cache-dir PATH \
     --checkpoint PATH [--gpus 0,1,2] [--stage smoke|full] \
     [--output-root PATH] [--batch-size 8] [--num-workers 4] [--seed 0] \
-    [--dry-run] [--skip-tests]
+    [--dry-run] [--skip-tests] [--suite original|h-relaxation]
 
 GPU order: baseline E2 / activity-only cosine+MSE / ScaleEvent CrossGram.
+With --suite h-relaxation: active z-only / active z + all h / active z + soft h.
+Soft h uses inactive=1, active=0.5; all h uses both=1. All use cosine+MSE.
+The z-only run retains the same LSTM architecture, but disables h distillation;
+its temporal module is not trained and must not be used for downstream h probes.
 All use the same LSTM, seed, batch, optimizer and 41 training sequences.
 Smoke: 100 steps, warmup 10. Full: 100000 steps, warmup 1000.
 No pretraining validation or best.pt selection. Full starts from DINO again;
@@ -53,10 +58,23 @@ while [ "$#" -gt 0 ]; do
     --seed) SEED=${2:?}; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --skip-tests) RUN_TESTS=0; shift ;;
+    --suite) SUITE=${2:?}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
 done
+
+case "$SUITE" in
+  original)
+    EXPERIMENTS=(h_distill_lstm_zloss activity_dual scale_event_dual)
+    NAMES=(baseline_e2 activity_only scale_event_full)
+    PREFIX=dsec_activity ;;
+  h-relaxation)
+    EXPERIMENTS=(activity_z_only activity_z_h_all activity_z_h_soft)
+    NAMES=(active_z_only active_z_h_all active_z_h_soft)
+    PREFIX=dsec_activity_h_relaxation ;;
+  *) fail "--suite must be original or h-relaxation" ;;
+esac
 
 case "$STAGE" in
   smoke) MAX_STEPS=100; WARMUP_STEPS=10; LOG_EVERY=1; CHECKPOINT_EVERY=100 ;;
@@ -83,15 +101,14 @@ CHECKPOINT=$(cd "$(dirname "$CHECKPOINT")" && pwd -P)/$(basename "$CHECKPOINT")
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd -P)
 if [ -z "$OUTPUT_ROOT" ]; then
-  OUTPUT_ROOT="$PROJECT_ROOT/outputs/dsec_activity_${STAGE}_$(date +%Y%m%d_%H%M%S)"
+  OUTPUT_ROOT="$PROJECT_ROOT/outputs/${PREFIX}_${STAGE}_$(date +%Y%m%d_%H%M%S)"
 elif [[ "$OUTPUT_ROOT" != /* ]]; then
   OUTPUT_ROOT="$PWD/$OUTPUT_ROOT"
 fi
 [ ! -e "$OUTPUT_ROOT" ] || fail "output path exists; use a new directory: $OUTPUT_ROOT"
 cd "$PROJECT_ROOT"
 
-EXPERIMENTS=(h_distill_lstm_zloss activity_dual scale_event_dual)
-NAMES=(baseline_e2 activity_only scale_event_full)
+printf '[activity] suite: %s; outputs: %s\n' "$SUITE" "$OUTPUT_ROOT"
 PIDS=()
 terminate_children() {
   local pid
@@ -106,13 +123,14 @@ if [ "$DRY_RUN" -eq 0 ]; then
   printf 'stage=%s\ngpus=%s\nseed=%s\nbatch_size=%s\nmax_steps=%s\n' \
     "$STAGE" "$GPU_LIST" "$SEED" "$BATCH_SIZE" "$MAX_STEPS" > "$OUTPUT_ROOT/launch.txt"
   git rev-parse HEAD >> "$OUTPUT_ROOT/launch.txt"
+  printf 'suite=%s\n' "$SUITE" >> "$OUTPUT_ROOT/launch.txt"
   git diff --stat >> "$OUTPUT_ROOT/launch.txt"
   if [ "$RUN_TESTS" -eq 1 ]; then
     printf '[activity] Running preflight tests; log: %s/logs/preflight.log\n' "$OUTPUT_ROOT"
     if ! (
       export CUDA_VISIBLE_DEVICES=""
       python -c 'import cv2, torch; print("OpenCV", cv2.__version__, "torch", torch.__version__)' || exit 1
-      python -m pytest -q tests/test_scale_event.py tests/test_activity_losses.py \
+      python -m pytest -q tests/test_scale_event.py tests/test_activity_losses.py tests/test_activity_h_relaxation.py \
         tests/test_split_guard_stdlib.py tests/test_transforms.py tests/test_dsec.py \
         tests/test_training_runtime.py tests/test_detection.py tests/test_segmentation.py
     ) > "$OUTPUT_ROOT/logs/preflight.log" 2>&1; then

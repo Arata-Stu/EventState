@@ -192,6 +192,50 @@ Semantic runner は非デフォルトの重みを指定すると、必要なマ�
 
 ## 検証状況
 
+### hの領域制限を緩める追加比較
+
+`tools/run_dsec_activity_comparison.sh --suite h-relaxation` で以下を起動する。
+既存の3条件は既定の `--suite original` として動作を保つ。
+
+| GPU順 | 出力名 | experiment | z蒸留 | h蒸留 |
+|---|---|---|---|---|
+| 0 | active_z_only | activity_z_only | activeのみ | 無効 |
+| 1 | active_z_h_all | activity_z_h_all | activeのみ | 全領域 |
+| 2 | active_z_h_soft | activity_z_h_soft | activeのみ | inactive=1、active=0.5 |
+
+全条件cosine+正規化二乗L2、同じDINO初期値・LSTM構成・seed・optimizer・clip長8・
+batch 8・勾配累積1・train41・100,000 stepを用いる。過去checkpointから再開しない。
+z-onlyはh目的を無効化し、LSTM/h projectorは更新されない。そのh/concatは下流評価に使わず、
+zのみ評価する。モデル構成を揃えるためLSTMは存在するが、時系列学習をしたbaselineではない。
+
+`loss.h_distill.activity_active_weight=alpha`（既定0）により
+`w_h = (1-M) + alpha*M` とし、`sum(w_h*d_h)/sum(w_h)`を使う。
+inactiveの重みは1固定、alphaは有限な[0,1]。0が旧hard mask、0.5がsoft、1が全領域。
+分母も重み和とするため、全要素数で平均するScaleEvent型損失とは区別する。
+alpha>0はdense損失かつactivity_mask有効時のみ許可する。
+dropout時は観測マスクをinactiveとし、既存のdropout重みと乗算する（今回dropoutなし）。
+disabled hのログ値は診断用であり、z-onlyの合計損失や勾配には含めない。
+
+```bash
+bash tools/run_dsec_activity_comparison.sh \
+  --root /home/iASL/Arata_repo/dataset/DSEC \
+  --event-cache-dir /home/iASL/Arata_repo/dataset/DSEC_cache/events/gep_rgb \
+  --teacher-cache-dir /home/iASL/Arata_repo/dataset/DSEC_cache/dinov3_vits16 \
+  --checkpoint /home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --gpus 0,1,2 --suite h-relaxation --stage smoke
+```
+
+smoke成功後、`--stage full`に変更する。同じrevisionのpreflight通過後のみ`--skip-tests`可。
+出力は `outputs/dsec_activity_h_relaxation_<smoke|full>_<日時>`。
+起動時に保存先を表示し、各条件のログは `logs/<出力名>.log`。
+再利用する入力・教師cacheは変更せず、M3EDには触れない。
+
+追加テスト `tests/test_activity_h_relaxation.py` は重み0/0.5/1のルーティング、
+dropoutとの合成、手計算による重み和分母、teacher detach、z-onlyのtemporal/h projector勾配なし、
+設定の同一性と不正値拒否を検証する。MacではAST・shell構文・両suiteのdry-run・
+標準ライブラリだけの設定検査を通過。Torch/Hydraを使うテストはサーバーpreflightで実行する。
+比較はまず下流validationで行い、test値をalpha選択に使わない。
+
 ### V100 32GB × 3台で開始する
 
 `tools/run_dsec_activity_comparison.sh` は GPU 0/1/2 に、従来の E2、activity のみ、

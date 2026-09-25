@@ -1,0 +1,23 @@
+# @package _global_
+# Matched LSTM architecture; z-only leaves the temporal branch untrained.
+experiment:
+  name: activity_z_h_all
+
+loss:
+  kind: dense
+  h_distill:
+    enabled: true
+    cosine_weight: 1.0
+    mse_weight: 1.0
+    activity_active_weight: 1
+  z_objective:
+    type: direct_dino
+    weight: 1.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
+
+dataset:
+  activity_mask: true
+
+training:
+  validation_enabled: false

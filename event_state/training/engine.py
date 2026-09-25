@@ -431,7 +431,12 @@ class EventStateTrainer:
             # Use observed activity: a deliberately dropped frame is entirely inactive.
             if event_dropout_mask is not None:
                 activity = activity & ~event_dropout_mask.unsqueeze(-1)
-            h_loss_mask = (~activity) if h_loss_mask is None else (~activity) * h_loss_mask
+            # Inactive weight stays 1; alpha=0 preserves the original hard mask.
+            alpha = float(_value(h_config, "activity_active_weight", 0.0))
+            h_activity_weights = (~activity) if alpha == 0.0 else torch.where(
+                activity, alpha, 1.0,
+            )
+            h_loss_mask = h_activity_weights if h_loss_mask is None else h_activity_weights * h_loss_mask
             z_loss_mask = activity if z_loss_mask is None else activity * z_loss_mask
 
         with self._autocast():
