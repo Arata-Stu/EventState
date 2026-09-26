@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-09-25
+最終更新: 2026-09-26
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
@@ -453,3 +453,42 @@ activity条件のconcatはh単独の低下を大きく回復するが、同じco
 baselineにもconcat−zの改善があり、concatの入力次元・headパラメータ数も増えるため、
 これだけでactivity特有の相補性や長期記憶の改善とは結論できない。
 単一seedで小差の有意性は未検証。低活動領域の性能は依然未測定。
+
+## 17. h活動制約の緩和：事前学習の完了報告（2026-09-26受領）
+
+ユーザー提示のランチャーログで、以下の全3条件についてsmoke・fullのcomplete表示を確認。
+本番コマンドは `run_h_relaxation --stage full --skip-tests`。
+設定上はseed=0、DSEC-Det train41、validationなし、100,000 step、batch=8、clip=8。
+追加のユーザー提示ログで全条件100,000 step到達と最終checkpointの存在を確認。
+checkpointのロード検証は未実施、下流評価値は未受領。
+
+| 条件 | z蒸留 | h蒸留 | 本番GPU |
+|---|---|---|---|
+| active_z_only | activeのみ | 無効 | 0 |
+| active_z_h_all | activeのみ | 全領域、重み1 | 1 |
+| active_z_h_soft | activeのみ | inactive=1、active=0.5 | 2 |
+
+全条件cosine＋二乗L2。hは重み付き平均であり、ScaleEventのL1/Gram損失ではない。
+z-onlyはtemporal/h projectorが未学習なので下流はzのみを対象とする。
+
+サーバー上の出力ルート:
+
+- smoke: `/home/iASL/Arata_repo/EventState/outputs/dsec_activity_h_relaxation_smoke_20260925_103516`
+- full: `/home/iASL/Arata_repo/EventState/outputs/dsec_activity_h_relaxation_full_20260925_182735`
+
+各ルート配下の `logs/<条件名>.log` にログ、`<条件名>/checkpoints/` にcheckpointを保存する設定。
+最終checkpointは各条件の `checkpoints/step_00100000.pt`。
+
+| 条件 | 最終loss | h distill（診断値） | z distill | active fraction | checkpointサイズ |
+|---|---:|---:|---:|---:|---:|
+| active_z_only | 0.10806 | 3.0572（目的に不使用） | 0.10806 | 0.75991 | 262M |
+| active_z_h_all | 0.20348 | 0.097399 | 0.10608 | 0.76279 | 277M |
+| active_z_h_soft | 0.20148 | 0.094694 | 0.10678 | 0.76279 | 277M |
+
+提示された末尾3 stepでは全条件optimizer_step_skipped=0、loss・勾配は有限。
+z-onlyのtemporal/h projectorのgrad_norm=0はh蒸留無効の設定通り。
+h-all/h-softの最終h projected cosineは0.96753/0.96747。
+損失の対象・枝数が異なるためtotal lossを条件間の性能比較に使わない。
+サーバーの/homeは3.5T中3.1T使用、空き268G（92%使用）。
+次は従来のSemantic開発6/2分割、Frozen Linear+CE・seed0・batch8・50 epochでvalidation比較。
+testはこの開発段階では使用しない。

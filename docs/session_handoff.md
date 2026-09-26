@@ -1,6 +1,6 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-09-25
+最終更新: 2026-09-26
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
@@ -164,12 +164,20 @@ activity_only=0.59787214/0.59868795、scale_event_full=0.59579199/0.59930571。
 activity zはbaseline z比+0.195 pointだが、concatでは両条件ともbaseline未満。
 単一seedであり、activity特有の相補性・低活動領域改善は未確認。
 Semanticの予定したh/z/concat比較は完了。Detection z/concatと低活動領域評価は未実施。
-次の事前学習3条件に向け、`--suite h-relaxation`を実装済み（サーバー起動は未確認）。
+事前学習3条件の`--suite h-relaxation`は、ユーザー提示ログでsmoke・fullとも全条件のcomplete表示を確認。
+smoke出力は `outputs/dsec_activity_h_relaxation_smoke_20260925_103516`、
+full出力は `outputs/dsec_activity_h_relaxation_full_20260925_182735`。
+ユーザー提示ログで全条件100,000 stepと最終checkpointの存在を確認（262M/277M/277M）。
+最終lossはz-only=0.10806、h-all=0.20348、h-soft=0.20148。ロード検証は未実施。
+2026-09-26の空き容量は268G（/home使用率92%）。次はSemanticのtrain/valだけ特徴抽出し、
+Frozen Linear+CE・seed0・50 epoch・batch8で開発6/2評価する。z-onlyはzのみ、他2条件はh/z/concat。
+新しいcache予定先は `DSEC_cache/semantic_features/h_relaxation_20260925_182735/<条件名>`、
+出力予定先は `outputs/dsec_semantic_h_relaxation_20260925_182735/<条件名>/<feature>/seed_0`。
 active_z_only（h蒸留なし）、active_z_h_all（h全領域）、active_z_h_soft（h inactive=1/active=0.5）。
 全条件cosine+二乗L2、従来と同じtrain41・100k・batch8・clip8・seed0。
 LSTM構成は揃えるがz-onlyのtemporal/h projectorは未学習なので下流はzのみ評価する。
-既存hard maskはalpha=0のまま維持し、新条件はまずsmoke→full、下流validationで比較する。
-ローカルの構文・dry-run検査済み。追加Torchテストはサーバーpreflightで実行する。
+既存hard maskはalpha=0のまま維持し、新条件は下流validationで比較する。
+ローカルの構文・dry-run検査済み。サーバーpreflightの個別テスト結果は未受領。本番は--skip-testsで実行。
 concatの入力次元増加を考慮し、同じfeature同士で事前学習条件を比較する。
 単一seedのFrozen hでは検出・Semanticとも改善は確認できていない。
 本番の出力先は `outputs/dsec_activity_full_20260923_000937`、
