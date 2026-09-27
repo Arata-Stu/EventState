@@ -1,6 +1,6 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-09-26
+最終更新: 2026-09-27
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
@@ -173,6 +173,14 @@ full出力は `outputs/dsec_activity_h_relaxation_full_20260925_182735`。
 Frozen Linear+CE・seed0・50 epoch・batch8で開発6/2評価する。z-onlyはzのみ、他2条件はh/z/concat。
 新しいcache予定先は `DSEC_cache/semantic_features/h_relaxation_20260925_182735/<条件名>`、
 出力予定先は `outputs/dsec_semantic_h_relaxation_20260925_182735/<条件名>/<feature>/seed_0`。
+2026-09-27、上記Semanticの全3条件のcomplete表示を受領。提示済み手順では計7 headの
+開発学習とbest checkpointのvalidation評価まで完了したことを示す。
+7件のval JSONを受領（全633,036,800 pixels）。mIoUはz-only/z=0.59365503、
+h-allのz/h/concat=0.59764789/0.58961109/0.60040464、
+h-softのz/h/concat=0.59887872/0.59001120/0.60152263。best epochは未受領。
+softの上回り幅は小さく単一seed。次は既存baseline_e2/activity_onlyの同じval結果を確認し、
+旧hard maskからの回復を比較する。既存test値とは直接比較しない。
+この追加比較での公式train8再学習・test評価はまだ実施していない。
 active_z_only（h蒸留なし）、active_z_h_all（h全領域）、active_z_h_soft（h inactive=1/active=0.5）。
 全条件cosine+二乗L2、従来と同じtrain41・100k・batch8・clip8・seed0。
 LSTM構成は揃えるがz-onlyのtemporal/h projectorは未学習なので下流はzのみ評価する。
@@ -188,6 +196,33 @@ concatの入力次元増加を考慮し、同じfeature同士で事前学習条�
 `docs/scale_event_distillation.md`を読む。
 
 ## 7. activity-aware実験の解釈上の注意
+
+### 2026-09-27の継続方針
+
+ユーザーは比較の余地がある間はDSECを継続し、その後M3EDへ移る可能性を示した。
+M3EDへの移行・新しい学習はまだ未起動。以下は次の検証の提案順序。
+
+ユーザーが検証1を実施する方針を承認。baseline_e2/activity_only × h/z/concatの6評価用
+サーバーコマンドを提示する。hは `dsec_semantic_activity_20260923_h/<条件>/seed_0/development/best.pt`、
+z/concatは `dsec_semantic_activity_20260923_zh/<条件>/<feature>/seed_0/development/best.pt` を使用。
+対応するactivity_20260923_h/zhキャッシュを再利用し、GPU0=h、1=z、2=concatで各2条件を順次評価。
+保存先は `outputs/dsec_semantic_activity_validation_20260927/<条件>/<feature>/validation_metrics.json`。
+実行・結果はまだ未確認。最初に全6 checkpointとcacheディレクトリの存在を確認し、不在時は停止する。
+
+1. 既存baseline_e2/activity_only（必要ならscale_event_fullも）の開発bestと既存cacheを使い、
+   同一Semantic valでh/z/concatを評価。train8で再学習したfinal headをdev val評価に使わない。
+2. baselineと有力候補を絞り、固定backboneでhead seedを0/1/2へ増やす。
+   これはhead学習のばらつき検証であり、pretrain seedの再現性検証とは区別する。
+3. 同じ二値活動マスクでactive/inactive別のval指標と画素数・クラス別supportを測る。
+   baselineと候補の両方でcontinuous/reset評価を揃え、時系列状態の寄与を調べる。
+   resetやgapを使う場合は特徴を再計算し、既存continuous特徴の置換で済ませない。
+4. 対応baselineと候補をDSEC Detection valでも比較。新規特徴cache容量を確認し条件を絞る。
+5. 有力差があれば事前学習seedも追加して確認し、条件固定後にSemantic train8再学習→test、
+   Detection val選択→testを実施。改善がなければその結果を記録してDSECを一区切りにする。
+
+下流activity weightingの追加比較は上記の事前学習比較が整理できた後の別実験とする。
+細かな活動量定義は引き続き今後の展望。M3EDへ進む場合は既存splitとcache互換性を確認し、
+baseline＋候補に絞る。M3EDキャッシュは別PCでの再生成が必要なため保持する。
 
 - 「event activityでlossを変える」一般概念自体は新規ではない。
 - EventDAM（ICCV 2025）とScaleEvent（CVPR 2026）は高activity領域を重視する。
