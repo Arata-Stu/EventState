@@ -371,3 +371,17 @@ train4だけから算出されたGEPの有限mean/正のstdを必須とし、出
 サーバーpreflightにtests/test_m3ed_activity.pyを追加。白/黒フレームの活動判定が入力正規化に
 依存しないこと、mask有無で既存入力が同一なこと、全条件でsplitを検証することを確認する。
 MacではML依存テストを実行せず構文・dry-runのみ確認した。実データでの成功は未確認。
+
+既存M3ED統計の系列情報がtrain4と一致しない場合、チェックを無効化せず次で別名再計算する。
+raw再処理は不要。train4だけを既存cacheから読み、元のprepare_m3edと同じ中央352x640、
+全画素（ゼロを含む）でチャネル別母平均・母標準偏差を集計する。
+
+```bash
+python tools/compute_m3ed_event_normalization.py \
+  --prepared-root /home/iASL/Arata_repo/dataset/m3ed_cache/half_dagr \
+  --output /home/iASL/Arata_repo/dataset/m3ed_cache/half_dagr/event_statistics_train4.json
+```
+
+起動スクリプトに`--event-statistics <上記JSON>`をsmoke/fullとも追加する。
+旧M3ED結果と正規化係数が変わる可能性があるが、今回のbaseline/hard/softは全て同じ新統計で
+新規学習する。旧統計の実際の内容を確認するまでは過去実験の漏洩は断定できない。

@@ -367,3 +367,14 @@ prepared/teacher cacheを読み取り専用で使い、raw不要。dataset.root�
 
 Mac検証: AST4ファイル、shell構文、stdlibによるsmoke/full dry-runと不正統計拒否が通過。
 Torch/Hydraテストおよび実データ学習は未実行。サーバー同期後、まずsmokeのpreflightを実行。
+
+### M3ED smoke前の正規化統計で停止（2026-09-27）
+
+ユーザーのサーバーで既存event_statistics.jsonの系列情報がtrain4と一致せず、
+normalization validation failedで学習開始前に停止した。実際のJSON内容は未確認なので、
+どの系列を含むか／過去実験への影響はまだ不明。
+`tools/compute_m3ed_event_normalization.py`を追加。既存prepared GEPをtrain4だけ読み、
+従来prepare_m3edと同じ中央352x640（rows4:356）で全画素のmean/stdをfloat64集計し、
+別名event_statistics_train4.jsonへ保存する。rawも教師cacheも不要、既存ファイル上書き拒否。
+次の手順はサーバー同期→統計再計算→--event-statisticsで新JSON指定→smoke。
+MacはAST/--helpのみ確認、数値テストはtests/test_m3ed_activity.pyに追加しサーバーで実行する。

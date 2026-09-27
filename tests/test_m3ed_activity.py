@@ -57,3 +57,36 @@ def test_m3ed_activity_configs_and_split_guard(experiment):
     config.dataset.val_sequences = ["car_urban_day_rittenhouse"]
     with pytest.raises(ValueError, match="established validation"):
         validate_config(config)
+
+
+def test_recompute_train4_normalization_excludes_border_and_other_sequences(tmp_path):
+    import json
+    import yaml
+    from tools.compute_m3ed_event_normalization import main
+
+    root = Path(__file__).resolve().parents[1]
+    train = yaml.safe_load((root / 'tools/manifests/m3ed_downstream_split.yaml').read_text())['semantic']['train']
+    for name in train:
+        _write_prepared_sequence(tmp_path, name, frame_count=3)
+        path = tmp_path / name / 'metadata.json'
+        meta = json.loads(path.read_text())
+        meta['event_size'] = [360, 640]
+        path.write_text(json.dumps(meta))
+        for timestamp, value in ((2000, 0.25), (3000, 0.75)):
+            path = tmp_path / name / 'events' / f'{timestamp}.pt'
+            payload = torch.load(path, weights_only=True)
+            payload['events'] = torch.ones(3, 360, 640)
+            payload['events'][:, 4:356] = value
+            torch.save(payload, path)
+    # An unrelated invalid cache must not be read.
+    (tmp_path / 'car_urban_day_rittenhouse').mkdir()
+    output = tmp_path / 'train4.json'
+    main(['--prepared-root', str(tmp_path), '--output', str(output)])
+    result = json.loads(output.read_text())
+    assert result['normalize_mean'] == [0.5] * 3
+    assert result['normalize_std'] == [0.25] * 3
+    assert result['frame_count'] == 8
+    assert result['pixel_count'] == 8 * 352 * 640
+    assert set(result['sequences']) == set(train)
+    with pytest.raises(FileExistsError):
+        main(['--prepared-root', str(tmp_path), '--output', str(output)])
