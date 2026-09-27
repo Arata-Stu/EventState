@@ -64,6 +64,7 @@ representation:
   percentile: 90.0
   event_bins: 10
   polarity_split: true
+  channel_layout: time_major  # polarity_major: positive bins, then negative bins
   voxel_normalization: nonzero_standardize
   normalize_mean: [0.8993729785, 0.7969581015, 0.8928228776]
   normalize_std: [0.2204336077, 0.2921656668, 0.2204992771]

@@ -110,7 +110,11 @@ def event_representation_metadata(event_representation: Any) -> dict[str, Any]:
             "channels": int(event_representation.channels),
             "event_bins": int(event_representation.num_bins),
             "polarity_split": bool(event_representation.polarity_split),
-            "channel_order": "negative_0,positive_0,...",
+            "channel_order": (
+                "positive_0,...,positive_B-1,negative_0,...,negative_B-1"
+                if event_representation.channel_layout == "polarity_major"
+                else "negative_0,positive_0,..."
+            ),
             "normalization": str(event_representation.normalization),
         }
     raise TypeError(
@@ -135,6 +139,7 @@ def validate_event_cache_payload(
     input_fingerprint_digest: str,
     manifest_digest: str,
     event_window_fraction: float = 1.0,
+    cache_dtype: str = "float32",
 ) -> tuple[Tensor, int]:
     """Validate one event-cache item against its frame and sequence manifest."""
 
@@ -206,9 +211,11 @@ def validate_event_cache_payload(
         raise ValueError(
             f"Event cache shape {tuple(tensor.shape)} does not match {expected_shape}: {path}"
         )
-    if tensor.dtype != torch.float32:
-        raise ValueError(f"Event cache tensor must use float32: {path}")
-    return tensor, event_count
+    if cache_dtype not in {"float16", "float32"}:
+        raise ValueError(f"Unsupported event cache dtype: {cache_dtype}")
+    if tensor.dtype != getattr(torch, cache_dtype):
+        raise ValueError(f"Event cache tensor must use {cache_dtype}: {path}")
+    return tensor.float(), event_count
 
 
 def discover_dsec_sequences(
@@ -1012,6 +1019,7 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
                 rectified=self.rectify_events,
                 input_fingerprint_digest=manifest["input_fingerprint"]["digest"],
                 manifest_digest=canonical_json_sha256(manifest),
+                cache_dtype=manifest.get("cache_dtype", "float32"),
                 event_window_fraction=self.event_window_fraction,
             )
 

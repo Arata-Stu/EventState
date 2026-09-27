@@ -64,6 +64,7 @@ def build_event_representation(dataset_config: Any) -> Any:
             height=height,
             width=width,
             polarity_split=bool(_value(representation_config, "polarity_split", True)),
+            channel_layout=str(_value(representation_config, "channel_layout", "time_major")),
             normalization=str(
                 _value(representation_config, "voxel_normalization", "nonzero_standardize")
             ),

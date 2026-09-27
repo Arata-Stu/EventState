@@ -207,7 +207,34 @@ M3EDへの移行・新しい学習はまだ未起動。以下は次の検証の�
 z/concatは `dsec_semantic_activity_20260923_zh/<条件>/<feature>/seed_0/development/best.pt` を使用。
 対応するactivity_20260923_h/zhキャッシュを再利用し、GPU0=h、1=z、2=concatで各2条件を順次評価。
 保存先は `outputs/dsec_semantic_activity_validation_20260927/<条件>/<feature>/validation_metrics.json`。
-実行・結果はまだ未確認。最初に全6 checkpointとcacheディレクトリの存在を確認し、不在時は停止する。
+全6評価の完了・JSONを受領（台帳§19）。baselineのh/z/concatは
+0.58854159/0.59643383/0.59942271、hardは0.58259270/0.59838694/0.60128082。
+hの制約緩和でh単独は約+0.70〜0.74 point回復するが、concatのsoft−hardは+0.02418 point。
+次はbaseline/hard/softのconcatでhead seed1,2を追加し、既存seed0と比較する提案。未起動。
+ユーザーの訂正により、下流headはseed1を3 GPUで実行し全条件完了後にseed2を3 GPUで実行する。
+GPU0=baseline_e2、GPU1=activity_only、GPU2=active_z_h_soft。各GPUは常に1ジョブ。
+Frozen concat Linear+CE、開発6/2、50 epoch、batch8、FP16を維持。既存特徴cacheを再利用。
+出力予定は `outputs/dsec_semantic_concat_seeds_20260927/<条件>/seed_<1|2>`。
+seed0や事前学習を再実行せず、testも評価しない。サーバー起動・完了は未確認。
+
+20ch事前学習の参考実装としてユーザーが `/Users/at/project/competition/JetPilot` を指定。
+読み取り調査のみ実施。ROS2の `jetpilot_e2e_inference/src/event_tensor_cuda_backend.cu` に
+CUDA rolling ringのイベント集計があり、Python側 `e2e_learning/data/event_tensor.py` にCPU参照実装がある。
+既定は10時間bin×正負2極性、40ms窓・4ms stride、212×120、polarity_major（正10→負10）、
+時間補間なし、float32。CUDAは新規イベントをatomicAddでリングへ集計しsnapshotで出力・正規化する。
+窓は[start,end)、snapshotはイベント起点のbin境界整列が必要。DSECの既存窓・教師時刻との整合は未検証。
+ユーザーの明確化: リングはオンライン用であり学習前処理への移植は不要。
+揃える対象は20ch生成アルゴリズムとモデル入力値（dtype、正規化、極性順、bin境界、座標処理）。
+JetPilotのrosbag_extractor.pyではFP32集計後FP16保存、dataset.pyではFP32へ戻して
+(tensor-mean)/stdを適用。CUDA側はFP32集計から同式を適用し、mean/std既定は0/1だが設定可能。
+保存時FP16丸めと推論時FP32集計の差、実際のmean/std設定の一致は未検証。
+移植時は同一イベント・窓・幾何変換・正規化係数を入力し、集計後と正規化後をそれぞれ比較する。
+リング実装の共通化や全量キャッシュ方針の決定は目的ではない。移植・学習は未着手。
+その後のユーザー依頼で、DSEC voxelに `channel_layout=polarity_major` と
+前処理 `--event-cache-dtype float16` を追加。既定time_major/FP32と旧cache互換性は維持。
+学習側のrepresentation生成へlayoutを渡し、manifestの順序・保存dtypeを検査してFP32へ読み込む。
+JetPilotとの時間補間・窓境界・正規化の完全互換化と20ch学習起動は未実施。
+Macでは構文・CLI引数のstdlib検査のみ通過。追加Torchテストは未実行。
 
 1. 既存baseline_e2/activity_only（必要ならscale_event_fullも）の開発bestと既存cacheを使い、
    同一Semantic valでh/z/concatを評価。train8で再学習したfinal headをdev val評価に使わない。

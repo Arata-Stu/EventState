@@ -79,6 +79,28 @@ Hybrid や dropout との比較では、その比較相手の sampling/dropout �
 
 ## 前処理と事前学習
 
+### DSEC voxelのチャネル順・保存型（20ch準備）
+
+`prepare_dsec.py --representation voxel_grid --event-bins 10` は20chを生成する。
+新しい `--channel-layout polarity_major` は正極性の古い→新しい10bin、その後に
+負極性の古い→新しい10binを配置する。既定の `time_major` は従来の負0,正0,負1,正1…を維持。
+学習設定も `dataset.representation.channel_layout=polarity_major` に揃える。
+順序はrepresentationメタデータに記録し、異なる順序のキャッシュ読み込みを拒否する。
+
+`--event-cache-dtype float16` でDSECイベントテンソルをFP16保存できる（既定float32）。
+集計・voxel正規化はFP32のまま、保存直前に変換する。FP16変換で非有限値になった場合は停止。
+FP16キャッシュはmanifestに型を記録し、読み込み時に実tensorの型を検査した後FP32へ戻す。
+従来FP32のmanifestと既定チャネル順は維持する。既存cacheと同じ場所へ混在させず別ディレクトリを使う。
+
+これはチャネル順と保存型だけの追加であり、JetPilotの20ch生成アルゴリズムの完全互換化ではない。
+時間補間は従来のlinear、窓は(start,end]、座標処理も従来通り。
+`--voxel-normalization none` で既存の非ゼロ標準化を無効化できるが、JetPilotの
+固定mean/stdや時間補間なし・[start,end)への対応は別途必要。RGB用の学習正規化を20chに流用しない。
+activityマスクの既存実装はGEP RGB専用であり、この20ch変更で自動対応するものではない。
+
+追加テスト: `tests/test_voxel_layout_storage.py`（順序変換、極性別合計、FP16保存・読み込み、
+dtype/順序不一致の拒否）。MacではASTと標準ライブラリのCLI引数検査のみ実施。
+
 既存の **rectified GEP RGB イベントキャッシュ** と、同じ crop・解像度・教師の
 DINO cache は再利用できる。活動マスクは読み込み時に生成するため、マスク用の
 キャッシュ再生成は不要。voxel cache は使用不可。旧学習済み重みから抽出した

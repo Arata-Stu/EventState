@@ -104,6 +104,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--event-bins", type=int, default=10)
+    parser.add_argument("--channel-layout", choices=("time_major", "polarity_major"), default="time_major")
+    parser.add_argument("--event-cache-dtype", choices=("float32", "float16"), default="float32")
     parser.add_argument(
         "--voxel-normalization",
         choices=("none", "nonzero_standardize", "log1p"),
@@ -153,6 +155,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 percentile=args.percentile,
                 event_bins=args.event_bins,
                 voxel_normalization=args.voxel_normalization,
+                channel_layout=args.channel_layout,
+                event_cache_dtype=args.event_cache_dtype,
                 event_window_fraction=args.event_window_fraction,
                 rectify_events=args.rectify_events,
                 overwrite=args.overwrite,
@@ -182,6 +186,8 @@ def prepare_sequence(
     event_window_fraction: float,
     rectify_events: bool,
     overwrite: bool,
+    channel_layout: str = "time_major",
+    event_cache_dtype: str = "float32",
 ) -> dict[str, int]:
     validate_preparation_options(
         image_output_subdir=image_output_subdir,
@@ -191,6 +197,10 @@ def prepare_sequence(
         voxel_normalization=voxel_normalization,
         event_window_fraction=event_window_fraction,
     )
+    if channel_layout not in {"time_major", "polarity_major"}:
+        raise ValueError(f"Unknown channel layout: {channel_layout}")
+    if event_cache_dtype not in {"float16", "float32"}:
+        raise ValueError(f"Unknown event cache dtype: {event_cache_dtype}")
     require_opencv()
     image_sequence_root = (
         sequence_root / "images"
@@ -327,6 +337,7 @@ def prepare_sequence(
             width=alignment.width,
             polarity_split=True,
             normalization=voxel_normalization,
+            channel_layout=channel_layout,
         )
     representation_metadata = event_representation_metadata(representation)
 
@@ -363,6 +374,9 @@ def prepare_sequence(
         "input_fingerprint": input_fingerprint,
         "representation": representation_metadata,
     }
+    # Preserve legacy FP32 manifest identity for existing caches.
+    if event_cache_dtype != "float32":
+        cache_metadata["cache_dtype"] = event_cache_dtype
     cache_metadata.update(window_contract)
     event_marker = sequence_cache_dir / SUCCESS_MARKER_NAME
     if overwrite:
@@ -413,6 +427,7 @@ def prepare_sequence(
                     rectified=rectify_events,
                     input_fingerprint_digest=input_fingerprint["digest"],
                     manifest_digest=canonical_json_sha256(cache_metadata),
+                    cache_dtype=event_cache_dtype,
                     event_window_fraction=event_window_fraction,
                 )
                 counts["events_skipped"] += 1
@@ -433,10 +448,13 @@ def prepare_sequence(
                 start_time=window_start,
                 end_time=timestamp,
             )
+            stored_tensor = tensor.to(device="cpu", dtype=getattr(torch, event_cache_dtype)).contiguous()
+            if not torch.isfinite(stored_tensor).all():
+                raise ValueError("Non-finite event cache values after dtype conversion; use float32")
             payload = {
                 "format_version": EVENT_CACHE_FORMAT_VERSION,
                 "dataset": "DSEC",
-                "events": tensor.cpu().contiguous(),
+                "events": stored_tensor,
                 "frame_index": frame_index,
                 "timestamp": int(timestamp),
                 "previous_timestamp": int(previous_timestamp),

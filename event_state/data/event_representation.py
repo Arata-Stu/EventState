@@ -117,6 +117,8 @@ class EventVoxelizer:
     Channels are interleaved by temporal bin: ``negative_0, positive_0,
     negative_1, positive_1, ...``. Events vote linearly between adjacent time
     bins, which avoids a discontinuity at bin boundaries.
+    ``polarity_major`` instead orders positive bins first, then negative bins;
+    temporal interpolation and normalization are unchanged.
     """
 
     num_bins: int = 10
@@ -124,12 +126,15 @@ class EventVoxelizer:
     width: int = 640
     polarity_split: bool = True
     normalization: Normalization = "nonzero_standardize"
+    channel_layout: Literal["time_major", "polarity_major"] = "time_major"
 
     def __post_init__(self) -> None:
         if self.num_bins <= 0:
             raise ValueError("num_bins must be positive")
         if self.height <= 0 or self.width <= 0:
             raise ValueError("height and width must be positive")
+        if self.channel_layout not in {"time_major", "polarity_major"}:
+            raise ValueError(f"Unknown channel layout: {self.channel_layout}")
         if not self.polarity_split:
             raise NotImplementedError("The MVP requires polarity_split=true")
         if self.normalization not in {"none", "nonzero_standardize", "log1p"}:
@@ -191,6 +196,11 @@ class EventVoxelizer:
         spatial_index = y * self.width + x
         lower_channel = lower * 2 + polarity
         upper_channel = upper * 2 + polarity
+        if self.channel_layout == "polarity_major":
+            # JetPilot order: positive bins first, then negative bins.
+            polarity_offset = (~positive).to(torch.int64) * self.num_bins
+            lower_channel = polarity_offset + lower
+            upper_channel = polarity_offset + upper
         plane_size = self.height * self.width
         output.scatter_add_(0, lower_channel * plane_size + spatial_index, lower_weight)
         output.scatter_add_(0, upper_channel * plane_size + spatial_index, upper_weight)
