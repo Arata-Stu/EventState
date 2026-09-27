@@ -97,6 +97,29 @@ def _build_transform(
             raise ValueError(
                 "GEP event normalization length must match the three-channel representation"
             )
+    elif representation_type == "voxel_grid":
+        if _value(representation_config, "fixed_normalization_file"):
+            raise ValueError("Resolve the fixed normalization file before building dataloaders")
+        stats = _value(representation_config, "fixed_normalization")
+        if stats is None and _value(representation_config, "fixed_normalization_required", False):
+            raise ValueError("This voxel dataset requires fixed normalization coefficients")
+        if stats is not None:
+            from event_state.data.fixed_normalization import validate_fixed_normalization
+            from event_state.data.dsec import event_representation_metadata, event_window_contract
+            event_mean, event_std = validate_fixed_normalization(
+                stats, event_representation_metadata(build_event_representation(dataset_config)),
+                int(_value(dataset_config, "sensor_height")), int(_value(dataset_config, "sensor_width")),
+            )
+            fraction = float(_value(dataset_config, "event_window_fraction", 1.0))
+            if (stats.get("event_window_fraction") != fraction or
+                stats.get("event_window_boundary") != event_window_contract(fraction)["event_window_boundary"]):
+                raise ValueError("Fixed normalization event window does not match")
+            space = "rectified_event" if _value(dataset_config, "rectify_events", True) else "raw_event"
+            if stats.get("coordinate_space") != space:
+                raise ValueError("Fixed normalization coordinate space does not match")
+            if (tuple(_value(representation_config, "normalize_mean", ())) != event_mean or
+                tuple(_value(representation_config, "normalize_std", ())) != event_std):
+                raise ValueError("Embedded normalization and configured coefficients differ")
 
     return PairedSequenceTransform(
         height=int(_value(dataset_config, "input_height")),
@@ -385,6 +408,7 @@ def _dataset_options(
         ),
         "load_events": True,
         "load_images": not cache_features,
+        "activity_mask": bool(_value(dataset_config, "activity_mask", False)),
         **(
             {
                 "prepared_root": _value(dataset_config, "prepared_root"),
@@ -392,7 +416,7 @@ def _dataset_options(
                 "target_tasks": _as_optional_list(_value(dataset_config, "target_tasks")),
             }
             if str(_value(dataset_config, "name", "dsec")).lower() == "m3ed"
-            else {"activity_mask": bool(_value(dataset_config, "activity_mask", False))}
+            else {}
         ),
     }
 

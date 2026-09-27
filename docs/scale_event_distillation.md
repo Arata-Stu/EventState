@@ -81,6 +81,48 @@ Hybrid や dropout との比較では、その比較相手の sampling/dropout �
 
 ### DSEC voxelのチャネル順・保存型（20ch準備）
 
+#### 固定チャネル正規化
+
+新しい `dataset=dsec_det_train41_voxel20` は、入力ごとのvoxel標準化を無効にし、
+20chの固定mean/stdを必須とする。統計ファイル未指定では学習開始を拒否する。
+既存のGEP RGB設定とlegacy voxel設定は変更しない。
+
+`tools/compute_dsec_event_normalization.py` はリポジトリのDSEC-Det公式split定義から
+train41だけを選び、保存済みの未正規化voxel cacheを全フレーム読み込む。
+ゼロを含めた全画素について、チャネル別の母平均・母標準偏差をFP64で逐次集計する。
+std<1e-6のチャネルはstd=1とし、その番号を記録する。入力ごとの標準化済みcache、
+表現・窓・座標系が混在したcache、不完全なframe数・indexは拒否する。
+FP16保存なら、実際に学習で読み込むFP16丸め後の値から統計を取る。
+
+```bash
+python tools/compute_dsec_event_normalization.py \
+  --event-cache-dir /path/to/dsec_voxel20_unnormalized_cache \
+  --output /path/to/dsec_voxel20_normalization.json
+```
+
+生成JSONには20個のmean/std、チャネル順を含む表現仕様、窓境界、座標系、センサー寸法、
+train41系列名、フレーム数、各cache manifestのdigestを記録する。既存JSONは上書きしない。
+統計対象は空間crop/resize前の保存カウントで、学習augmentationによる再推定はしない。
+
+学習の指定:
+
+```text
+dataset=dsec_det_train41_voxel20
+dataset.event_cache_dir=/path/to/dsec_voxel20_unnormalized_cache
+dataset.representation.fixed_normalization_file=/path/to/dsec_voxel20_normalization.json
+```
+
+train.pyはlogging/checkpoint用configを作る前にJSONを解決し、係数・仕様・ファイルSHA256を
+configへ埋め込む。外部ファイルへの参照は解決後nullになり、checkpointを別PCへ移しても
+係数は残る。下流の既存feature exporterもcheckpointのnormalize_mean/stdを使用する。
+JetPilotではこのnormalize_meanをchannel_mean、normalize_stdをchannel_stddevへ渡す。
+正規化はFP32で一度だけ `(counts-mean)/std`。ゼロ画素も処理対象。
+時間窓・座標系・センサー寸法・表現仕様・係数不一致はdataloader構築時に拒否する。
+
+このpresetは20ch前処理・固定正規化の経路を提供するもので、JetPilotの補間なし・[start,end)への
+完全互換化や20chでのactivity損失対応を完了したものではない。実データでの統計計算・学習は未実行。
+統計の生成には全train41 cacheの読み込みが必要だが、新しい全量特徴cacheは作らない。
+
 `prepare_dsec.py --representation voxel_grid --event-bins 10` は20chを生成する。
 新しい `--channel-layout polarity_major` は正極性の古い→新しい10bin、その後に
 負極性の古い→新しい10binを配置する。既定の `time_major` は従来の負0,正0,負1,正1…を維持。
@@ -300,3 +342,32 @@ python -m pytest tests/test_scale_event.py tests/test_activity_losses.py \
 有限差分による勾配検証、既存損失との全1マスク時の一致、
 空領域、Semantic ignore 画素、検出 assignment の不変性、設定の同一性を含む。
 参照リポジトリを import したり、不在を理由にテストを skip したりしない。
+
+## M3EDのbaseline / hard / soft比較（2026-09-27追加）
+
+`tools/run_m3ed_activity_comparison.sh` は既存prepared GEP RGB/教師cacheを使う。
+M3EDSequenceDatasetもDSECと同じ変換器から正規化前の二値event_activityを返す。
+活動判定ロジックとdense cosine+MSEの重み和分母は変更しない。
+GPU 0はz/h全域、GPU 1はactive z/inactive h、GPU 2はactive zとsoft h（inactive1/active0.5）。
+全条件Random clip16/batch4/seed0、augmentation・dropoutなし、同じLSTM/DINO初期値。
+M3ED既存train4/validation1を設定検証で固定し、testは使用しない。fullは100k step、
+validation1000step毎。下流は全条件同じ最終stepで比較する。旧M3ED h-only Randomの結果と
+このbaselineを同一条件とは呼ばない（今回はzも蒸留する）。
+
+```bash
+bash tools/run_m3ed_activity_comparison.sh \
+  --prepared-root /home/iASL/Arata_repo/dataset/m3ed_cache/half_dagr \
+  --teacher-cache-dir /home/iASL/Arata_repo/dataset/m3ed_cache/dinov3_vits16_640x352 \
+  --checkpoint /home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth \
+  --gpus 0,1,2 --stage smoke
+```
+
+成功後はstage fullに変更。同一revisionのpreflight通過後は--skip-tests可。
+正規化統計は既定prepared_root/event_statistics.json（--event-statisticsで変更可）。
+train4だけから算出されたGEPの有限mean/正のstdを必須とし、出力先へ由来ごと保存する。
+既存入力cacheの上書き・削除は行わない。出力はoutputs/m3ed_activity_<stage>_<日時>、
+ログはlogs/<条件>.log。既存出力ディレクトリへの上書きは拒否する。
+
+サーバーpreflightにtests/test_m3ed_activity.pyを追加。白/黒フレームの活動判定が入力正規化に
+依存しないこと、mask有無で既存入力が同一なこと、全条件でsplitを検証することを確認する。
+MacではML依存テストを実行せず構文・dry-runのみ確認した。実データでの成功は未確認。

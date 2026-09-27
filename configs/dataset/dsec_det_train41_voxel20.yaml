@@ -1,0 +1,19 @@
+# Same train41 protocol; fixed normalization must be computed before training.
+# This is EventState's linear voxel representation, not full JetPilot parity.
+defaults:
+  - dsec_det_train41
+  - _self_
+
+activity_mask: false
+representation:
+  type: voxel_grid
+  channels: 20
+  event_bins: 10
+  polarity_split: true
+  channel_layout: polarity_major
+  voxel_normalization: none
+  fixed_normalization_required: true
+  fixed_normalization_file: null
+  fixed_normalization: null
+  normalize_mean: null
+  normalize_std: null

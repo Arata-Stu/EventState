@@ -25,6 +25,7 @@ from .cache_metadata import TEACHER_CACHE_FORMAT_VERSION
 from .dsec import normalize_event_window_fraction
 from .m3ed_downstream import M3ED_DOWNSTREAM_FORMAT_VERSION
 from .transforms import PairedSequenceTransform
+from .event_representation import GEPEventFrame
 
 
 M3ED_PREPARED_FORMAT_VERSION = 1
@@ -113,6 +114,7 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
         prepared_root: str | Path | None = None,
         target_cache_dir: str | Path | None = None,
         target_tasks: Sequence[str] | None = None,
+        activity_mask: bool = False,
     ) -> None:
         if sequence_length <= 0 or clip_stride <= 0:
             raise ValueError("sequence_length and clip_stride must be positive")
@@ -132,6 +134,9 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
         self.split = str(split)
         self.sequence_length = int(sequence_length)
         self.include_incomplete_clips = bool(include_incomplete_clips)
+        self.activity_mask = bool(activity_mask)
+        if self.activity_mask and (not load_events or not isinstance(event_representation, GEPEventFrame)):
+            raise ValueError("ScaleEvent activity requires loaded GEP RGB event frames")
         self.event_representation = event_representation
         self.transform = transform
         self.event_cache_dir = self.prepared_root
@@ -305,9 +310,10 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
             if self.load_images
             else None
         )
-        event_sequence, image_sequence = self.transform(
+        transformed = self.transform(
             event_sequence,
             image_sequence,
+            return_activity=self.activity_mask,
             sequence_key=(
                 f"{sequence_name}:epoch={augmentation_epoch}"
                 if self.transform.sequence_consistent
@@ -315,6 +321,7 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
             ),
         )
 
+        event_sequence, image_sequence = transformed[:2]
         sample: dict[str, Any] = {
             "timestamps": torch.tensor([item.timestamp for item in records], dtype=torch.int64),
             "frame_indices": torch.tensor(
@@ -326,6 +333,8 @@ class M3EDSequenceDataset(Dataset[dict[str, Any]]):
                 self._frames_by_sequence[sequence_name]
             ),
         }
+        if self.activity_mask:
+            sample["event_activity"] = transformed[2]
         if event_sequence is not None:
             sample["events"] = event_sequence
             sample["event_counts"] = torch.tensor(event_counts, dtype=torch.int64)

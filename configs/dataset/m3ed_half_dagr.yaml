@@ -1,4 +1,5 @@
 name: m3ed
+activity_mask: false
 root: null
 prepared_root: null
 target_cache_dir: null

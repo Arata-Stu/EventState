@@ -199,6 +199,20 @@ concatの入力次元増加を考慮し、同じfeature同士で事前学習条�
 
 ### 2026-09-27の継続方針
 
+最新のユーザー意図は次の2本柱へ具体化された（以下の過去の提案より優先）。
+
+1. 信号待ちシーンがあるM3EDで学習・評価する。
+2. 低アクティビティシーンを抽出したデータセットで評価する。
+
+狙いは停止前に観測した情報をhが停止中に保持し、発進後に更新できるかの検証。
+M3EDの実際の対象系列・停止区間・利用可能ラベル・既存splitとの対応はこれから確認する。
+既存のtrain/val/test分割を先に固定し、評価区間を学習へ混ぜない。低活動抽出は評価subsetとして扱い、
+低活動区間だけで事前学習する指示とは解釈しない。低活動評価の対象をDSEC/M3ED双方にするかは未確定。
+信号待ち/自車停止という場面ラベルと、イベント活動量の数値によるsubsetは区別する。
+区間選定はモデル結果を見ずに行い、停止前・停止中・発進後を記録する。
+continuous評価では停止前から状態を継承し、resetとの対照を用意する。区間の独立サンプル化で
+履歴を失わないmanifest方式を検討。M3EDキャッシュは引き続き保持、学習起動・抽出実装は未実施。
+
 ユーザーは比較の余地がある間はDSECを継続し、その後M3EDへ移る可能性を示した。
 M3EDへの移行・新しい学習はまだ未起動。以下は次の検証の提案順序。
 
@@ -215,7 +229,13 @@ hの制約緩和でh単独は約+0.70〜0.74 point回復するが、concatのsof
 GPU0=baseline_e2、GPU1=activity_only、GPU2=active_z_h_soft。各GPUは常に1ジョブ。
 Frozen concat Linear+CE、開発6/2、50 epoch、batch8、FP16を維持。既存特徴cacheを再利用。
 出力予定は `outputs/dsec_semantic_concat_seeds_20260927/<条件>/seed_<1|2>`。
-seed0や事前学習を再実行せず、testも評価しない。サーバー起動・完了は未確認。
+seed0や事前学習を再実行せず、testも評価しない。
+ユーザー提示ログでseed1→seed2の各3条件、全6ジョブのcomplete表示を確認（台帳§20）。
+出力ルートは `outputs/dsec_semantic_concat_seeds_20260927`。
+6件のvalidation JSONを受領、best epoch番号は未受領。3 head seedのconcat mIoU平均±標本SDは
+baseline=59.86771±0.06484%、hard=60.09768±0.02698%、soft=60.09124±0.05400%。
+hard/softは全head seedでbaselineを上回るが、soft−hard平均は−0.00643 pointでsoft優位は未確認。
+次は同じ二値マスクでactive/inactive別のval評価を行う提案。事前学習seedは固定であり効果の再現性全体は未検証。
 
 20ch事前学習の参考実装としてユーザーが `/Users/at/project/competition/JetPilot` を指定。
 読み取り調査のみ実施。ROS2の `jetpilot_e2e_inference/src/event_tensor_cuda_backend.cu` に
@@ -235,6 +255,13 @@ JetPilotのrosbag_extractor.pyではFP32集計後FP16保存、dataset.pyではFP
 学習側のrepresentation生成へlayoutを渡し、manifestの順序・保存dtypeを検査してFP32へ読み込む。
 JetPilotとの時間補間・窓境界・正規化の完全互換化と20ch学習起動は未実施。
 Macでは構文・CLI引数のstdlib検査のみ通過。追加Torchテストは未実行。
+ユーザー依頼により、20chの固定正規化経路も追加。
+`compute_dsec_event_normalization.py` は公式train41の未正規化voxel cacheのみから、
+ゼロ画素を含むチャネル別mean/stdをFP64逐次集計してJSON保存する。
+`dataset=dsec_det_train41_voxel20` と `dataset.representation.fixed_normalization_file` で適用。
+train.pyで係数と仕様をconfigへ埋め込んでからcheckpoint/logを作成し、学習・評価で固定使用。
+JetPilotへは同じ20個の係数を渡す。実際の統計生成・20ch学習は未実施。
+stdlibの契約検証3件を実行して通過。Torch/OmegaConfの数値・移植テストは追加済みだが未実行。
 
 1. 既存baseline_e2/activity_only（必要ならscale_event_fullも）の開発bestと既存cacheを使い、
    同一Semantic valでh/z/concatを評価。train8で再学習したfinal headをdev val評価に使わない。
@@ -320,3 +347,23 @@ paddingを意図的に残す場合だけ `--keep-padding` を付ける。PCAは�
 ```text
 /Users/at/Library/Mobile Documents/com~apple~CloudDocs/プレゼン/プレゼン/中間発表/自分/素材/
 ```
+
+### M3ED activity事前学習の起動対応（2026-09-27、未実行）
+
+ユーザーの次の希望はM3EDで損失を変えた事前学習と、信号待ち／低activity区間の評価。
+確認時にはactivityがDSEC限定でM3ED loaderがmaskを返していなかったため、今回対応を追加した。
+`tools/run_m3ed_activity_comparison.sh` でGPU順にbaseline_e2 / activity_only（hard）/
+active_z_h_soft（alpha=0.5）を起動する。既存のh-only M3ED checkpointの流用ではなく、
+3条件とも同じDINO初期値からz+hを学習する。Random、clip16、batch4、seed0、GEP RGB、
+augmentation/dropoutなし。既存train4/validation1固定、validation有効。full100k、smoke100step。
+20ch入力への変更は混ぜない。下流比較では同じ最終step checkpointを使う。
+
+M3ED loaderはDSECと同じPairedSequenceTransformで正規化前GEPからevent_activityを生成する。
+prepared/teacher cacheを読み取り専用で使い、raw不要。dataset.rootにもprepared_rootを渡せる
+（M3ED loaderはraw rootを参照しない）。大きな新規入力cacheは作らないがcheckpointは増える。
+正規化は既存prepared_root/event_statistics.jsonを既定で読み、train4だけの統計であることを
+検証する。欠落・別系列を含む場合は起動しない。実サーバーの統計ファイルは未確認なので、
+エラー時は由来を確認し、train4から計算した統計を指定する。過去runの漏洩を断定しない。
+
+Mac検証: AST4ファイル、shell構文、stdlibによるsmoke/full dry-runと不正統計拒否が通過。
+Torch/Hydraテストおよび実データ学習は未実行。サーバー同期後、まずsmokeのpreflightを実行。

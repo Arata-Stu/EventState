@@ -39,6 +39,8 @@ class PairedSequenceTransform:
         if self.event_mean is not None:
             if len(self.event_mean) != len(self.event_std):
                 raise ValueError("event_mean and event_std lengths differ")
+            if not all(math.isfinite(value) for value in (*self.event_mean, *self.event_std)):
+                raise ValueError("event normalization values must be finite")
             if any(value <= 0 for value in self.event_std):
                 raise ValueError("event_std values must be positive")
 

@@ -68,14 +68,14 @@ def validate_config(config: Any) -> None:
     if loss_kind == "scale_event" and not activity_enabled:
         raise ValueError("ScaleEvent loss requires dataset.activity_mask")
     if activity_enabled:
-        if str(_value(dataset, "name", "dsec")) != "dsec" or representation_type != "gep_rgb":
-            raise ValueError("ScaleEvent activity currently requires DSEC with gep_rgb")
+        if str(_value(dataset, "name", "dsec")) not in {"dsec", "m3ed"} or representation_type != "gep_rgb":
+            raise ValueError("ScaleEvent activity requires DSEC or M3ED with gep_rgb")
         if int(_value(teacher, "patch_size", 16)) != 16:
             raise ValueError("ScaleEvent activity requires patch size 16")
         if any(int(_value(dataset, key)) % 16 for key in ("input_height", "input_width")):
             raise ValueError("ScaleEvent input dimensions must be multiples of 16")
     strict_joint = str(_value(dataset, "pretraining_protocol", "")) == "dsec_joint_clean"
-    if activity_enabled or strict_joint:
+    if (activity_enabled and str(_value(dataset, "name", "dsec")) == "dsec") or strict_joint:
         import yaml
 
         from event_state.data.split_guard import (
@@ -98,6 +98,17 @@ def validate_config(config: Any) -> None:
                 detection_split, semantic_split,
                 validation_enabled=bool(_value(training, "validation_enabled", True)),
             )
+    if str(_value(dataset, "name", "dsec")) == "m3ed" and (
+        activity_enabled or str(_value(dataset, "pretraining_protocol", "")) == "m3ed_activity"
+    ):
+        import yaml
+
+        manifest = Path(__file__).resolve().parents[2] / "tools/manifests/m3ed_downstream_split.yaml"
+        split = yaml.safe_load(manifest.read_text())["semantic"]
+        for key, role in (("train_sequences", "train"), ("val_sequences", "validation")):
+            actual = list(_value(dataset, key) or [])
+            if len(actual) != len(set(actual)) or set(actual) != set(split[role]):
+                raise ValueError(f"M3ED activity requires the established {role} sequence split")
     if representation_type == "gep_rgb":
         expected_channels = 3
     elif representation_type == "voxel_grid":

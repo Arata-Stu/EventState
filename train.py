@@ -29,6 +29,8 @@ def _resume_path(value: str | None) -> Path | None:
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(config: DictConfig) -> None:
+    from event_state.data.fixed_normalization import resolve_fixed_normalization
+    resolve_fixed_normalization(config)
     resolved_yaml = OmegaConf.to_yaml(config, resolve=True)
     checkpoint_config = OmegaConf.to_container(config, resolve=True)
     resume_path = _resume_path(config.training.resume)
