@@ -16,6 +16,7 @@ SEED=0
 DRY_RUN=0
 RUN_TESTS=1
 SUITE="m3ed"
+SAMPLING="random"
 
 usage() {
   cat <<'EOF'
@@ -23,10 +24,14 @@ Usage: bash tools/run_m3ed_activity_comparison.sh
   --prepared-root PATH --teacher-cache-dir PATH --checkpoint PATH
   [--event-statistics PATH] [--gpus 0,1,2] [--stage smoke|full]
   [--output-root PATH] [--batch-size 4] [--num-workers 4] [--seed 0]
+  [--sampling random|hybrid]
   [--dry-run] [--skip-tests]
 
 GPU order: baseline_e2 / activity_only (hard) / active_z_h_soft (alpha=0.5).
-All: GEP RGB, Random BPTT, clip 16, batch 4, no augmentation/dropout.
+All: GEP RGB, clip 16, total batch 4, no augmentation/dropout.
+Random (default): independent clips. Hybrid: half random, half stream TBPTT,
+equal loss weights, state carried across stream clips and detached at boundaries.
+Hybrid requires an even total batch size and starts from DINO, not a Random run.
 Established train 4 / validation 1; no test input. Validation every 1000 steps.
 Smoke: 100 steps; full: 100000, newly initialized (not resumed from smoke).
 Normalization defaults to prepared-root/event_statistics.json, from train 4 only.
@@ -48,6 +53,7 @@ while [ "$#" -gt 0 ]; do
     --batch-size) BATCH_SIZE=${2:?}; shift 2 ;;
     --num-workers) NUM_WORKERS=${2:?}; shift 2 ;;
     --seed) SEED=${2:?}; shift 2 ;;
+    --sampling) SAMPLING=${2:?}; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --skip-tests) RUN_TESTS=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -70,6 +76,20 @@ for value in "$BATCH_SIZE" "$NUM_WORKERS" "$SEED" "${GPUS[@]}"; do
   case "$value" in *[!0-9]*|'') fail "numeric arguments must be non-negative integers" ;; esac
 done
 [ "$BATCH_SIZE" -gt 0 ] || fail "--batch-size must be positive"
+SAMPLING_ARGS=(training.sampling.mode=random "training.sampling.random_batch_size=$BATCH_SIZE")
+case "$SAMPLING" in
+  random) ;;
+  hybrid)
+    [ $((BATCH_SIZE % 2)) -eq 0 ] || fail "hybrid requires an even --batch-size (random + stream)"
+    HALF_BATCH=$((BATCH_SIZE / 2))
+    SAMPLING_ARGS=(training.sampling.mode=mixed
+      "training.sampling.random_batch_size=$HALF_BATCH"
+      "training.sampling.stream_batch_size=$HALF_BATCH"
+      training.sampling.random_weight=1.0 training.sampling.stream_weight=1.0
+      training.sampling.shuffle_sequences=true)
+    PREFIX=m3ed_activity_hybrid ;;
+  *) fail "--sampling must be random or hybrid" ;;
+esac
 [ "${GPUS[0]}" != "${GPUS[1]}" ] && [ "${GPUS[0]}" != "${GPUS[2]}" ] && \
   [ "${GPUS[1]}" != "${GPUS[2]}" ] || fail "GPU IDs must be distinct"
 [ -d "$ROOT" ] || fail "prepared M3ED root not found: $ROOT"
@@ -130,6 +150,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
   cp "$EVENT_STATISTICS" "$OUTPUT_ROOT/event_statistics.json"
   git rev-parse HEAD >> "$OUTPUT_ROOT/launch.txt"
   printf 'suite=%s\n' "$SUITE" >> "$OUTPUT_ROOT/launch.txt"
+  printf 'sampling=%s\n' "$SAMPLING" >> "$OUTPUT_ROOT/launch.txt"
   git diff --stat >> "$OUTPUT_ROOT/launch.txt"
   if [ "$RUN_TESTS" -eq 1 ]; then
     printf '[activity] Running preflight tests; log: %s/logs/preflight.log\n' "$OUTPUT_ROOT"
@@ -138,7 +159,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
       python -c 'import cv2, torch; print("OpenCV", cv2.__version__, "torch", torch.__version__)' || exit 1
       python -m pytest -q tests/test_scale_event.py tests/test_activity_losses.py \
         tests/test_activity_h_relaxation.py tests/test_m3ed.py tests/test_m3ed_activity.py \
-        tests/test_transforms.py tests/test_training_runtime.py
+        tests/test_transforms.py tests/test_training_runtime.py tests/test_stream_sampling.py
     ) > "$OUTPUT_ROOT/logs/preflight.log" 2>&1; then
       fail "preflight failed; see $OUTPUT_ROOT/logs/preflight.log (training not started)"
     fi
@@ -154,7 +175,7 @@ for index in 0 1 2; do
     "dataset.representation.normalize_mean=$NORMALIZE_MEAN"
     "dataset.representation.normalize_std=$NORMALIZE_STD"
     dataset.augmentation.enabled=false teacher.cache_features=true
-    training.sampling.mode=random "training.sampling.random_batch_size=$BATCH_SIZE"
+    "${SAMPLING_ARGS[@]}"
     training.event_dropout.enabled=false
     "teacher.cache_dir=$TEACHER_CACHE_DIR" "teacher.checkpoint=$CHECKPOINT"
     "training.batch_size=$BATCH_SIZE" "training.num_workers=$NUM_WORKERS"

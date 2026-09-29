@@ -1,9 +1,31 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-09-27
+最終更新: 2026-09-29
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
+
+## 最新状況（2026-09-29）
+
+M3ED activityの本番事前学習について、ユーザー提供ログでbaseline_e2 / activity_only /
+active_z_h_softの全3条件のcomplete表示を確認。出力ルートは
+`/home/iASL/Arata_repo/EventState/outputs/m3ed_activity_full_20260927_192110`。
+`--event-statistics /home/iASL/Arata_repo/dataset/m3ed_cache/half_dagr/event_statistics_train4.json
+--stage full --skip-tests` を指定。詳細は実験台帳§21。
+後続ログで全条件100k stepと最終checkpoint各277Mの存在、launch.txtのbatch4・seed0を確認。
+Random clip16、train4/validation1。保存config・ロード・下流精度は未確認。
+最終loss・勾配は有限だが、末尾にbaseline/soft各1件のoverflowあり。詳細は台帳§21。
+ユーザーは長い状態保持を学ばせるためHybridでも学習する方針を表明。
+`tools/run_m3ed_activity_comparison.sh --sampling hybrid` を追加。同じ3条件をGPU0/1/2で、
+Random2＋Stream2、clip16、等重み、100k、同じtrain4統計・split・DINO初期値から新規学習する。
+Streamはclip間で状態を保持しdetachする。勾配の範囲は16フレームのまま。
+出力prefixは `m3ed_activity_hybrid`。既定Randomは維持。Hybridは未起動。
+Macでは構文・両samplingのsmoke/full dry-run・不正引数拒否を確認。
+Torch/Hydra・streamテストはサーバーpreflightで実施する。
+次はサーバー同期→Hybrid smoke→full。その後同じ最終stepでFrozen Semantic比較、
+低活動subset・continuous/reset評価へ進む。下流起動報告はない。
+以下の2026-09-27時点の「M3ED未起動」「統計再計算→smoke」は過去の経緯であり、
+現在の状態はこの最新状況を優先する。M3EDキャッシュは引き続き保持する。
 
 ## 1. 研究の中心
 

@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-09-27
+最終更新: 2026-09-29
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
@@ -619,3 +619,66 @@ soft−hardはseed0 +0.02418、seed1 −0.02696、seed2 −0.01653 point、平�
 この3 head seedではsoft優位は確認できず、concatは実質同程度。h単独回復のseed0結果とは区別する。
 pretrainは条件ごとに単一seedのcheckpointで固定。事前学習seed・独立系列での再現性や低活動領域の記憶効果は未検証。
 次はbaseline/hard/softを同じ二値マスクでactive/inactive別に評価する提案。通常のval全体指標も併記。
+
+## 21. M3ED activity事前学習：本番完了報告（2026-09-29）
+
+ユーザー提示の `run_m3ed_activity --event-statistics .../event_statistics_train4.json
+--stage full --skip-tests` のログで、GPU 0/1/2の全3条件のcomplete表示を確認。
+ローカルのランチャー実装ではcompleteは各学習プロセスの終了コード0を意味する。
+最終stepのログ、checkpointの存在・ロード、保存config、下流指標は未確認。
+smoke/preflightの成功ログは今回提示されていない。
+
+| GPU | 条件 | z蒸留 | h蒸留 |
+|---|---|---|---|
+| 0 | baseline_e2 | 全領域 | 全領域 |
+| 1 | activity_only | activeのみ | inactiveのみ（hard） |
+| 2 | active_z_h_soft | activeのみ | inactive=1、active=0.5（soft） |
+
+現行ランチャーの設定は全条件cosine＋正規化二乗L2、GEP RGB、Random clip16、
+batch4、seed0、augmentation/dropoutなし、100,000 step。seed/batchは既定値であり、
+サーバー上の関数定義・launch.txt・保存configとは未照合。ScaleEventのGram損失は使わない。
+trainはcity_hall / horse / penno_big_loop / penno_small_loopの4系列、
+validationはucity_small_loop（いずれも `car_urban_day_` 接頭辞）。test不使用。
+正規化統計の指定先は
+`/home/iASL/Arata_repo/dataset/m3ed_cache/half_dagr/event_statistics_train4.json`。
+現行ランチャーはtrain4由来を検査し、統計を出力ルートへコピーする。
+
+確認済み出力ルート:
+`/home/iASL/Arata_repo/EventState/outputs/m3ed_activity_full_20260927_192110`
+
+設定上の保存先:
+
+- ログ: `<出力ルート>/logs/<条件名>.log`
+- 最終重み: `<出力ルート>/<条件名>/checkpoints/step_00100000.pt`（存在未確認）
+- 起動情報・統計: `<出力ルート>/launch.txt`、`<出力ルート>/event_statistics.json`
+
+今回の完了は事前学習であり、下流Semantic mIoUや低活動区間での改善を示すものではない。
+旧M3ED h-only/Hybrid結果とは蒸留枝・sampling・正規化が異なり得るため、今回の3条件を
+同じ最終step・下流条件で比較する。次は最終ログ・重みを確認し、新しい重みから特徴を抽出して
+Frozen Semantic validationを行う提案。その後、低活動subsetとcontinuous/resetの対照で
+状態保持を検証する。下流評価の起動は今回報告されていない。
+
+### 最終ログ確認とHybrid継続方針（2026-09-29追記）
+
+後続のユーザー提供ログで全条件100,000 stepと最終重み各277Mの存在を確認。
+ロード・下流評価は未実施。launch.txtでseed0、batch4、max_steps100000、GPU0/1/2、
+revision `af1b19b46b42b6d1bac1479990adb34bd6043578` を確認。保存configは未照合。
+split・出力パスは本節の通り。以下は最終stepの値であり全期間平均ではない。
+
+| 条件 | train loss | train h loss | train z loss | grad norm | val loss | val h projected cosine | val z projected cosine |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| baseline_e2 | 0.13234 | 0.063316 | 0.069024 | 0.2718 | 1.1097 | 0.81284 | 0.81727 |
+| activity_only | 0.12911 | 0.050691 | 0.078415 | 0.25835 | 0.87647 | 0.81772 | 0.83322 |
+| active_z_h_soft | 0.15159 | 0.070427 | 0.081165 | 0.45117 | 0.88558 | 0.81536 | 0.8273 |
+
+最終stepのloss・勾配は有限、skip=0。ただし提示末尾にはbaseline step99343、soft step99761の
+train_overflowが各1件ある。全期間のskip数は未集計。現行実装ではoverflow時にglobal_stepを進めない。
+最終trainのactive率はhard=0.55755、soft=0.26628、valは両方0.19479。
+最終trainのevent_countはbaseline/hard=116850、soft=47223であり同一batch比較ではない。
+対象領域・重みが異なるためval lossの大小を性能順位として扱わない。
+val低event群は534 frames、low_max=2877（中群533、高群533）。
+低群projected cosine（z/h）はbaseline=0.77346/0.76687、hard=0.79415/0.77293、
+soft=0.78584/0.77009。教師との整合の診断値であり長期記憶・下流精度の証明ではない。
+
+ユーザーは次にHybridでも学習する方針を表明。Randomの3条件を保持し、対応する
+baseline/hard/softをRandom2＋Stream2のHybridで新規学習する準備を追加。未起動。

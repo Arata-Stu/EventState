@@ -33,7 +33,8 @@ def test_m3ed_activity_uses_unnormalized_cache_and_preserves_inputs(tmp_path):
 
 
 @pytest.mark.parametrize("experiment", ["h_distill_lstm_zloss", "activity_dual", "activity_z_h_soft"])
-def test_m3ed_activity_configs_and_split_guard(experiment):
+@pytest.mark.parametrize("sampling", ["random", "mixed"])
+def test_m3ed_activity_configs_and_split_guard(experiment, sampling):
     from hydra import compose, initialize_config_dir
     from event_state.training.factory import validate_config
     from event_state.training.data import _dataset_options
@@ -43,7 +44,9 @@ def test_m3ed_activity_configs_and_split_guard(experiment):
         config = compose(config_name="config", overrides=[
             "dataset=m3ed_half_dagr", "model=lstm", f"experiment={experiment}",
             "+dataset.pretraining_protocol=m3ed_activity", "training.validation_enabled=true",
-            "training.batch_size=4", "training.sampling.random_batch_size=4",
+            "training.batch_size=4", f"training.sampling.mode={sampling}",
+            f"training.sampling.random_batch_size={2 if sampling == 'mixed' else 4}",
+            "training.sampling.stream_batch_size=2",
         ])
     validate_config(config)
     options = _dataset_options(config.dataset, config.teacher, None)

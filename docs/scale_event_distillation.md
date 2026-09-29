@@ -385,3 +385,16 @@ python tools/compute_m3ed_event_normalization.py \
 起動スクリプトに`--event-statistics <上記JSON>`をsmoke/fullとも追加する。
 旧M3ED結果と正規化係数が変わる可能性があるが、今回のbaseline/hard/softは全て同じ新統計で
 新規学習する。旧統計の実際の内容を確認するまでは過去実験の漏洩は断定できない。
+
+### Hybrid追加（2026-09-29）
+
+同じランチャーへ `--sampling hybrid` を指定すると3条件を既存mixed BPTT/TBPTTで学習する。
+既定はrandom。batch-sizeは合計clip数で、Hybridは偶数を必須として半分ずつ割り当てる。
+既定Random2＋Stream2、等重み、clip16・100k。Streamはclip間で状態を保持しdetachするため、
+勾配を遡る範囲は16フレームのまま。損失・split・正規化・augmentation/dropoutは既存比較と同じ。
+Random重みから継続せず同じDINO初期値から開始する。旧h-only Hybrid presetは使用しない。
+出力prefixは `m3ed_activity_hybrid`、launch.txtへsamplingを保存する。
+preflightにstream samplingテストを追加し、M3ED設定・splitテストをrandom/mixedへ拡張。
+Macでは構文・4通りのdry-run・不正引数拒否が通過。ML依存テストと実学習は未実施。
+下流はRandom/Hybrid × baseline/hard/softを同じ最終stepで比較し、低活動区間の
+continuous/reset評価で状態保持の寄与を検証する。
