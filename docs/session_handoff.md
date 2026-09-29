@@ -24,6 +24,14 @@ Macでは構文・両samplingのsmoke/full dry-run・不正引数拒否を確認
 Torch/Hydra・streamテストはサーバーpreflightで実施する。
 次はサーバー同期→Hybrid smoke→full。その後同じ最終stepでFrozen Semantic比較、
 低活動subset・continuous/reset評価へ進む。下流起動報告はない。
+ユーザーがRandom/Hybridの両事前学習完了後にSemantic Segmentation評価へ移行する方針を明示。
+Hybrid Stream経路をコード確認：各系列の最初の有効frame1から16刻みの非重複clipを読み、
+系列名ごとに状態を保持・detach。系列の選択順だけshuffleし、系列内順序は維持する。
+新系列・epoch境界でreset、Random側は独立clipでStream状態を変更しない。
+frame0は先行イベント窓がなく対象外。Streamでは末尾16未満の端数を除外するため、
+全フレームを必ず消費する仕様ではない。学習max_steps到達時も系列途中で終了し得る。
+stdlibだけで実samplerクラスを抽出し100 seed×3 epochの順序・被覆・lane継続を検証、通過。
+実データ・Torchによる状態継承の実行確認は今回未実施。コード上、想定した連続読み込みを妨げる不具合は見つからなかった。
 以下の2026-09-27時点の「M3ED未起動」「統計再計算→smoke」は過去の経緯であり、
 現在の状態はこの最新状況を優先する。M3EDキャッシュは引き続き保持する。
 
