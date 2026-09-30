@@ -21,6 +21,7 @@ from tqdm import tqdm
 from event_state.segmentation import load_m3ed_semantic_split
 from event_state.training import load_checkpoint, load_checkpoint_config_metadata
 from event_state.training.factory import build_evaluation_runtime
+from event_state.training.data import build_validation_dataloader
 
 
 FORMAT_VERSION = 1
@@ -116,8 +117,6 @@ def main() -> None:
     _set(config, "dataset.root", str(prepared_root))
     _set(config, "dataset.prepared_root", str(prepared_root))
     _set(config, "dataset.event_cache_dir", str(prepared_root))
-    _set(config, "dataset.val_sequences", list(sequences))
-    _set(config, "dataset.val_split", args.role)
     _set(config, "teacher.cache_features", True)
     _set(config, "teacher.cache_dir", str(teacher_cache))
     if args.teacher_checkpoint is not None:
@@ -142,6 +141,12 @@ def main() -> None:
     runtime.model.eval()
     for parameter in runtime.model.parameters():
         parameter.requires_grad_(False)
+    # Validate the checkpoint's pretraining split above before selecting the
+    # downstream extraction role. Never relabel train sequences as pretrain val.
+    extraction_config = OmegaConf.create(OmegaConf.to_container(config, resolve=True))
+    _set(extraction_config, "dataset.val_sequences", list(sequences))
+    _set(extraction_config, "dataset.val_split", args.role)
+    extraction_loader = build_validation_dataloader(extraction_config)
     checkpoint_digest = _sha256(checkpoint)
     requested = set(args.features)
     grid_height = int(config.dataset.input_height) // int(config.teacher.patch_size)
@@ -184,7 +189,7 @@ def main() -> None:
         else contextlib.nullcontext()
     )
     with torch.inference_mode(), autocast:
-        for batch in tqdm(runtime.validation_loader, desc=f"M3ED semantic cache {args.role}"):
+        for batch in tqdm(extraction_loader, desc=f"M3ED semantic cache {args.role}"):
             sequence = str(batch["sequence_name"][0])
             if sequence != current_sequence or _batch_bool(batch, "is_sequence_start"):
                 current_sequence = sequence

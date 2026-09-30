@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-09-29
+最終更新: 2026-09-30
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
@@ -682,3 +682,30 @@ soft=0.78584/0.77009。教師との整合の診断値であり長期記憶・下
 
 ユーザーは次にHybridでも学習する方針を表明。Randomの3条件を保持し、対応する
 baseline/hard/softをRandom2＋Stream2のHybridで新規学習する準備を追加。未起動。
+
+## 22. M3ED Hybrid activity完了報告とSemantic移行（2026-09-30）
+
+ユーザー提示の `--sampling hybrid --gpus 0,1,2 --stage full --skip-tests` ログで
+baseline_e2 / activity_only / active_z_h_softの全complete表示を確認。
+出力: `/home/iASL/Arata_repo/EventState/outputs/m3ed_activity_hybrid_full_20260929_131030`。
+設定上はseed0、train4/validation1（§21と同じ）、Random2＋Stream2、clip16、100k step、
+augmentation/dropoutなし、train4正規化統計。保存launch/configは未受領。
+Hybridの最終stepログ・checkpoint存在とロード・学習指標は未確認。正常終了報告と区別する。
+設定上の最終重みは `<出力>/<条件>/checkpoints/step_00100000.pt`、ログは `logs/<条件>.log`。
+
+ユーザーはRandom/Hybridの完了を受けSemantic Segmentationへ移行する意向。
+`tools/run_m3ed_semantic_activity_comparison.sh` を準備。全6 checkpointの存在を起動前に確認し、
+Randomの3条件をGPU0/1/2で実行→全完了後Hybridの3条件を実行。各GPUは1ジョブ。
+各モデルのtrain/validationでcontinuous z/hを一度抽出し、Frozen Linear+CEのh/z/concatを
+順次学習する（計18 head）。seed0、50 epoch、batch8、FP16、5 epochごとval選択。
+既存4系列train / ucity_small_loop validation、InternImage疑似ラベル11クラス。test不使用。
+
+予定出力: `/home/iASL/Arata_repo/EventState/outputs/m3ed_semantic_activity_random_hybrid_20260930/<random|hybrid>/<条件>/<h|z|concat>/seed_0/validation_metrics.json`。
+予定cache: `/home/iASL/Arata_repo/dataset/m3ed_cache/semantic_features/activity_random_hybrid_20260930/<random|hybrid>/<条件>`。
+新しい専用cacheへ保存し、既存cacheは保持。実行前に空き容量を確認する。
+下流起動・結果は未報告。Macでは構文とdry-run（抽出12コマンド・head18コマンド）を確認。
+
+特徴抽出の修正: 旧exporterはtrain抽出時に事前学習val設定を書き換えてからruntimeを作り、
+M3ED activityの固定split検査に拒否される。checkpointの元splitを検証・ロードした後に、
+独立した抽出configで対象roleのloaderを作るよう変更した。事前学習split検査は維持。
+ML依存の実行検証はサーバーで未実施。

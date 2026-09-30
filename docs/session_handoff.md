@@ -1,11 +1,24 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-09-29
+最終更新: 2026-09-30
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-09-29）
+## 最新状況（2026-09-30）
+
+Hybrid全3条件もユーザー提示ログでcompleteを確認。出力は
+`outputs/m3ed_activity_hybrid_full_20260929_131030`。最終step・重みの存在とロードは未確認。
+Randomは最終100k・各277M確認済み。ユーザーの指示で下流Semanticへ移行する（台帳§22）。
+`tools/run_m3ed_semantic_activity_comparison.sh` を準備：全6最終checkpointの存在確認、
+Random3条件→Hybrid3条件、各GPU1ジョブ。各モデルのcontinuous z/hを共用しh/z/concat計18 head。
+Frozen Linear+CE、seed0、50 epoch、batch8、FP16、既存train4/validation1・11クラス疑似ラベル。
+test不使用。出力prefixは `outputs/m3ed_semantic_activity_random_hybrid_20260930`、
+cacheは `m3ed_cache/semantic_features/activity_random_hybrid_20260930`。空き容量確認後サーバーで実行。
+exporterのtrain抽出が事前学習split検査に拒否される問題を修正（元split検証後に抽出loaderを構築）。
+Macの構文・dry-runは通過、ML依存検証・下流起動は未実施。以下の未起動記述は過去の経緯。
+
+### 2026-09-29までの経緯
 
 M3ED activityの本番事前学習について、ユーザー提供ログでbaseline_e2 / activity_only /
 active_z_h_softの全3条件のcomplete表示を確認。出力ルートは
