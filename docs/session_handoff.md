@@ -7,6 +7,10 @@
 
 ## 最新状況（2026-09-30）
 
+ユーザーの整理dry-runで指定4組・計12条件の中間checkpoint 1,080個、290.75 GiB（logical size）が
+削除候補と確認できた。各条件90個、通常24.28 GiB、z-only22.99 GiB、Hybrid各24.50 GiB。
+まだdry-runで削除未確認。次は同じ4組へ--apply→dfで回収確認→容量に応じ下流--resume-cache。
+
 ユーザーが過去cache/checkpointの取捨選択・削除を許可。まず完了済み事前学習の中間重みを整理する。
 `tools/prune_intermediate_checkpoints.py` を追加（既定dry-run、--applyで削除）。
 対象提案はdsec_activity_full_20260923_000937、dsec_activity_h_relaxation_full_20260925_182735、
