@@ -10,6 +10,7 @@ TEACHER=/home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c6
 CACHE_ROOT="$DATA/semantic_features/activity_random_hybrid_20260930"
 OUTPUT_ROOT=outputs/m3ed_semantic_activity_random_hybrid_20260930
 DRY_RUN=0
+RESUME_CACHE=0
 while (($#)); do
   case "$1" in
     --random-root) RANDOM_ROOT=${2:?}; shift 2 ;;
@@ -17,8 +18,10 @@ while (($#)); do
     --cache-root) CACHE_ROOT=${2:?}; shift 2 ;;
     --output-root) OUTPUT_ROOT=${2:?}; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --resume-cache) RESUME_CACHE=1; shift ;;
     -h|--help)
-      echo 'Usage: bash tools/run_m3ed_semantic_activity_comparison.sh [--random-root PATH] [--hybrid-root PATH] [--cache-root PATH] [--output-root PATH] [--dry-run]'
+      echo 'Usage: bash tools/run_m3ed_semantic_activity_comparison.sh [--random-root PATH] [--hybrid-root PATH] [--cache-root PATH] [--output-root PATH] [--resume-cache] [--dry-run]'
+      echo '--resume-cache reuses partial feature files and appends logs; requires no existing head runs.'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -39,9 +42,17 @@ if ((!DRY_RUN)); then
     [[ -d "$path" ]] || { echo "Missing data: $path" >&2; exit 1; }
   done
   [[ -f "$TEACHER" ]] || { echo "Missing teacher: $TEACHER" >&2; exit 1; }
-  [[ ! -e "$OUTPUT_ROOT" && ! -e "$CACHE_ROOT" ]] || {
-    echo 'Use new --output-root and --cache-root paths; existing runs are preserved.' >&2; exit 1;
-  }
+  if ((RESUME_CACHE)); then
+    for mode in random hybrid; do
+      [[ ! -e "$OUTPUT_ROOT/$mode" ]] || {
+        echo 'Head output exists. Use a new --output-root with --resume-cache to preserve it.' >&2; exit 1;
+      }
+    done
+  else
+    [[ ! -e "$OUTPUT_ROOT" && ! -e "$CACHE_ROOT" ]] || {
+      echo 'Existing paths: use --resume-cache for an interrupted extraction, or new paths.' >&2; exit 1;
+    }
+  fi
   mkdir -p "$OUTPUT_ROOT/logs" "$CACHE_ROOT"
 fi
 worker() {
@@ -79,7 +90,7 @@ for mode in random hybrid; do
     if ((DRY_RUN)); then
       worker "$mode" "$root" "$gpu"
     else
-      worker "$mode" "$root" "$gpu" >"$OUTPUT_ROOT/logs/${mode}_${name}.log" 2>&1 &
+      worker "$mode" "$root" "$gpu" >>"$OUTPUT_ROOT/logs/${mode}_${name}.log" 2>&1 &
       pids+=("$!")
     fi
   done

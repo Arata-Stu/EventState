@@ -7,6 +7,30 @@
 
 ## 最新状況（2026-09-30）
 
+ユーザーが過去cache/checkpointの取捨選択・削除を許可。まず完了済み事前学習の中間重みを整理する。
+`tools/prune_intermediate_checkpoints.py` を追加（既定dry-run、--applyで削除）。
+対象提案はdsec_activity_full_20260923_000937、dsec_activity_h_relaxation_full_20260925_182735、
+m3ed_activity_full_20260927_192110、m3ed_activity_hybrid_full_20260929_131030の4組。
+各checkpoints内に100k最終重みのZIP構造・data.pklがある場合のみ、100k未満のstep重みを
+1万step間隔へ間引く。10k刻み・最終・最新・best・非stepファイル・symlinkを保持する。
+ZIP確認はTorchロード保証ではない。ログ/指標/下流head/cacheには触れない。
+削除候補と結果をoutputs/checkpoint_prune_<timestamp>.jsonlへ保存。
+一時fixtureでdry-run不変、削除対象、未完了run/cache/best保護とauditをstdlib検証済み。
+サーバー削除・回収容量は未確認。容量確認後に--resume-cacheで下流抽出を再開する。
+
+追加ログで容量枯渇を確認：特徴のtorch.save中にiostream error、/home空き831M（100%）、
+inode使用1%。新規Random特徴cacheは各23G、合計68G。削除・移動は未実施。
+次は別filesystemの空きと事前学習checkpoint群の容量を確認し、容量確保後に再開する。
+ランチャーに --resume-cache を追加（途中特徴再利用・ログ追記、既存head出力は上書き拒否）。
+系列forwardは状態を再構築するため先頭から実施する。構文・dry-run通過、実サーバー再開は未実施。
+以下の「原因未確定」は追加ログ受領前の記録。
+
+下流ランチャーをユーザーが起動したが、Random全3条件がfailedで終了しHybridへ未移行。
+起動前/homeは空き68G・使用率98%。容量不足はユーザーの推測で、例外ログ未受領のため未確定。
+次は `outputs/m3ed_semantic_activity_random_hybrid_20260930/logs/random_<条件>.log` 末尾と
+停止後df（容量/inode）・新規cacheのduを確認。再実行は既存ルート拒否になるため診断後に準備する。
+入力・教師・target等のM3ED既存cacheは削除しない。下記「下流未起動」は起動前の記録。
+
 Hybrid全3条件もユーザー提示ログでcompleteを確認。出力は
 `outputs/m3ed_activity_hybrid_full_20260929_131030`。最終step・重みの存在とロードは未確認。
 Randomは最終100k・各277M確認済み。ユーザーの指示で下流Semanticへ移行する（台帳§22）。

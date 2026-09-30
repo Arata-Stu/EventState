@@ -709,3 +709,23 @@ Randomの3条件をGPU0/1/2で実行→全完了後Hybridの3条件を実行。�
 M3ED activityの固定split検査に拒否される。checkpointの元splitを検証・ロードした後に、
 独立した抽出configで対象roleのloaderを作るよう変更した。事前学習split検査は維持。
 ML依存の実行検証はサーバーで未実施。
+
+### 下流初回起動の失敗（2026-09-30）
+
+ユーザーが上記ランチャーを実行し、Randomのbaseline_e2 / activity_only /
+active_z_h_softの全3ジョブでfailed表示。Hybrid下流へは進んでいない。
+直前のdfは/home 3.5T、使用3.2T、空き68G、使用率98%。ユーザーは容量不足を推測しているが、
+各ログの例外・停止時点・停止後容量は未受領のため原因未確定。条件・seed・split・保存先は本節通り。
+新規特徴cacheの作成量とhead開始有無も未確認。次は各logs/random_<条件>.log末尾、
+df -h / df -i、特徴cacheのduを確認する。既存M3ED入力・教師・target cacheは保持する。
+現ランチャーは既存出力/cacheルートへの再実行を拒否するので、そのまま再起動しない。
+exporterには同一checkpointの保存済み特徴を保持する処理があるが、continuous状態再構築のため
+系列のforwardは先頭から必要。原因と容量を確認後、既存cacheを活かす再開手順を用意する。
+
+後続ログで特徴保存中のtorch.save iostream error / unexpected posを受領。
+/homeは空き831M・100%使用、inodeは1%使用。新規Random cacheは各条件23G、合計68G。
+ディスク容量枯渇による保存失敗と判断。各条件の抽出完了率・head開始有無は未確認。
+既存cacheは削除せず、次は他filesystemの空きと事前学習checkpoint群の容量を確認する。
+削除・移動は未実施。ランチャーへ --resume-cache を追加：保存済み特徴の再利用とログ追記を許可、
+既存head出力があれば上書きせず拒否。headの学習再開を行うオプションではない。
+shell構文とresume-cache dry-runを確認。容量確保前には再実行しない。
