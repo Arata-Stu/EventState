@@ -1,0 +1,19 @@
+# @package _global_
+# Full-region z-only control. LSTM is present but receives no training gradient.
+experiment:
+  name: z_distill_lstm
+
+loss:
+  kind: dense
+  h_distill:
+    enabled: false
+    cosine_weight: 1.0
+    mse_weight: 1.0
+  z_objective:
+    type: direct_dino
+    weight: 1.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
+
+dataset:
+  activity_mask: false

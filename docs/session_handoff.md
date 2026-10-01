@@ -1,11 +1,113 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-09-30
+最終更新: 2026-10-01
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-09-30）
+## 最新状況（2026-10-01）
+
+### 今後の研究方針（ユーザー指定）
+
+ユーザーが4条件のaugmentation/dropoutなしを承認し、実行準備を依頼。
+`tools/run_hybrid_target_ablation.py` を追加（既定smoke、--stage full、--dry-run、--skip-tests）。
+GPU0=DSEC z-only、GPU1=DSEC z+h、GPU2=M3ED z-only→M3ED h-only（同GPU順次）。
+Hybrid、seed0、全域cosine+二乗L2、DSEC Random4+Stream4/clip8、M3ED2+2/clip16、FP16。
+100k step、warmup1000。smokeは100step/warmup10で、fullへ重みを継続しない。
+DSEC train41・val無効、M3ED train4/val1・train4統計を検証してコピー、val周期1000。
+モデル構成は全てLSTMで揃え、新しいz_distill_lstm presetはh損失無効。z-onlyのhは下流不使用。
+全領域のz+hは既存h_distill_lstm_zloss、h-onlyはh_distill_lstm presetを使う。
+出力は `outputs/hybrid_targets_<smoke|full>_<日時>/<dsec_z_only|dsec_z_h|m3ed_z_only|m3ed_h_only>`。
+ログはルートlogs、起動コマンド全体はlaunch.json。保存は1万stepごと、最終step_00100000.ptを下流へ使う。
+既存出力上書き拒否。起動前20GiB空きを要求。下流特徴の容量はこの予算に含めない。
+事前学習のみを起動するランチャーであり、下流抽出は自動起動しない。完了後に最終重みと容量を確認し、
+DSEC Detection/Semantic、M3ED Semanticの不足probeを実施する。
+Macではstdlibテスト2件（両stageの計画/不正値拒否・模擬子プロセスでGPU順次実行/上書き拒否）と
+AST検査が通過。Hydra/Torchの設定・勾配テストを追加し、サーバーsmoke前にpreflightで実行する。
+実学習・ML依存テストは未実行。サーバーでは変更ファイル一式を同期しsmoke→fullの順に実施。
+
+ユーザーは不足4条件＋下流タスクを進める案を提示：DSEC Hybrid z-only/z+h、
+M3ED Hybrid z-only/h-only。基準batch（DSEC8、M3ED4）、全域蒸留、事前学習augmentation/dropoutなしで
+蒸留対象を比較する方針案。DSEC既存Hybrid h-onlyは設定照合後再利用、M3ED既存Hybrid baseline_e2も再利用。
+新規4条件の起動は未実施。z-onlyもsamplingを合わせるが状態保持を学ぶ条件ではない。
+下流はDSEC Detection/Semantic、M3ED SemanticでFrozen probe、z-only→z、他→z/h/concat。
+ユーザーからaugmentationの効果について質問あり。台帳§7ではDSEC augの下流完了報告はあるが
+mAP未転記のため効果未判定。サーバーのoutputs/dsec_detection_frozen_hybrid_aug_online配下の
+test_metrics.jsonを取得して比較する。既知の事前学習loss悪化のみでaug無効とは判断しない。
+event dropoutの小幅改善と空間augmentationは別要因として扱う。
+
+今後の時系列モデル事前学習はHybridを標準とする。Random-onlyの新規比較は原則追加せず、
+既存結果をablationとして保持する。Hybrid内のRandom枝は維持し、pure Streamへの変更ではない。
+系列境界のreset、clip境界のdetachも維持する。これは研究方針であり既存再現用configの既定値は未変更。
+ユーザーは初期DSEC-Det実験のHybridでの再検証と、3 GPUを1学習に使う大batch検証を検討している。
+過去値はE0 z=37.852%、E1 h=38.693%、E2 h=36.869%、Hybrid h-only=39.209% mAP。
+従ってh-only Hybridは既評価だが、z+h/活動分担の結論をHybridへ一般化する検証は残っている。
+提案順序：まず従来batch/clip/splitでHybrid h-only・全域z+h・activity候補を比較、
+次に有力条件を固定してeffective batchを比較する。全て未起動。
+現在のtrain.py/training経路にはDDP・distributed sampler実装なし。3 GPUの既存運用は独立3実験。
+gradient_accumulationは実装済みだが、Streamでは連続clipを同じ更新に蓄積するため、
+独立系列を増やすDDP batch拡大と同一ではない。DDPには系列をrankごとに分けるsampler、
+状態のrank内保持、全rankの更新同期・保存/評価制御が必要。
+batch拡大とHybrid導入を同時に変えず、総観測frame数とoptimizer更新数を併記する。
+既存testを繰り返し設定選択に使わず、Detection valを用いる。低活動continuous/reset評価も残す。
+
+### 論文ablationの計画（2026-10-01、未起動）
+
+ユーザーはDSEC/M3EDを基盤として、(1)global batch 1倍/3倍と1 GPU/3 GPU、
+(2)Random/Hybrid、(3)蒸留対象z/h/z+h、(4)タスク、(5)Scratch/Fine-tuning/Frozenを整理したい。
+特にh-only蒸留後のzと、z+h蒸留後のz/h/concatを調べる意向。
+Hybridを主設定、Randomはsampling ablationとし、条件の揃った既存結果を優先利用する。
+Randomの劣位・Frozenの優位・M3EDでHybrid効果が大きいことは予想であり、全設定への確定事項ではない。
+
+中心となる表は事前学習蒸留対象×下流入力。z-only→z、h-only→z/h/concat、
+z+h→z/h/concatの計7 headをdataset/taskごとに比較する。
+z-onlyの未学習temporalをh/concatの主比較に入れない。h-onlyでもh lossからencoderへ勾配が流れ、
+raw zは学習される。z projectorは未学習なのでその出力をz probeとして使わない。
+concatは次元/パラメータ数が増えるので、同じ入力同士で比較し容量差にも注意する。
+全域蒸留の対象比較と、activity hard/softの領域分担比較は別の軸として扱う。
+
+追加実験の優先順位案:
+1. 既存h-only Random/Hybridのcheckpoint・正規化・splitを照合し、まずz probe、必要ならconcatを追加。
+   DSECではh-only hとHybrid hが既評価。M3EDの旧h-onlyは新train4統計と異なり得るため、
+   最新z+h結果との厳密比較には設定照合後に必要なh-onlyだけ再学習する。
+2. Hybrid・基準batchで蒸留対象×probeの不足欄を埋める。DSEC Detection/Semantic、M3ED Semanticを主対象。
+   同じpretrain checkpointを複数タスクへ転用し、下流FTしたbackboneを別タスクへ混ぜない。
+3. 代表条件でglobal batchを比較。従来基準はDSEC8/M3ED4で、3倍候補は24/12（下流batch8と区別）。
+   GPU数とglobal batchを同時に変えた比較は複合効果。DDP動作確認は可能な範囲で同一global batchも確認。
+   同じ100k stepでは3倍の入力を消費するので、総frame予算を揃える比較と最大性能探索を分ける。
+   学習率・schedule・総更新数・総frame数・Random/Stream比・系列数・GPU時間を記録する。
+   M3ED train4では1系列1streamの現samplerでstream batch6を構成できない。
+   系列重複、区間分割、勾配累積はそれぞれ独立性/履歴/更新間隔を変えるので単純な3倍DDPとは呼ばない。
+   この設計とDDP実装が確定するまでは3 GPUの本学習を起動しない。
+4. 有力条件のhead seed追加、低活動subsetと同じheadのcontinuous/reset対照を実施する。
+
+Hybrid効果は同条件の絶対差（point）を主とし、相対改善率100*(Hybrid-Random)/Randomも併記。
+dataset間では共通Semantic・同じhead/lossで比較するが、ラベル品質/分布等も違うため、
+差を停止頻度だけに帰属しない。停止区間や活動率別の検証が必要。
+Scratch/FT/FrozenはDSEC Detectionで既存証拠あり、追加優先度は低い。
+最終HybridやM3EDへの一般化を主張する場合のみ代表条件で追加確認する。
+過去スコアは条件付きで有効。大batchで改善なしでも普遍的な最高値とはしない。
+
+### M3ED下流結果の詳細
+
+ユーザーの --resume-cache 実行ログでRandom3条件→Hybrid3条件の全completeを確認。
+Frozen Semantic h/z/concat計18 headが完了した報告（詳細は台帳§22）。
+出力: `outputs/m3ed_semantic_activity_random_hybrid_20260930/<random|hybrid>/<条件>/<h|z|concat>/seed_0/validation_metrics.json`。
+seed0・Linear+CE・50 epoch・batch8・FP16・continuous・既存train4/validation1。
+18件のJSONを受領し台帳§23へ記録。全件3,218,555,646評価pixels、11クラスIoU平均も整合。
+mIoU（%、h/z/concat）はRandom baseline=34.62334/35.46450/35.22061、
+Random hard=35.84324/36.23875/36.30305、Random soft=35.29993/35.97274/35.95024、
+Hybrid baseline=34.97230/35.66049/35.51019、Hybrid hard=35.94215/36.54401/36.50717、
+Hybrid soft=36.08211/36.99275/36.78864。
+Hybridは同条件Randomを全9比較で上回る。最高はHybrid soft z=36.99275%、
+同じHybrid baseline z比+1.33227 point。単一pretrain/head seed・単一val系列で有意差未検証。
+hは全モデルでz未満、concatのz超えはRandom hardのみ。長期記憶改善はまだ証明されない。
+best epochはJSONの0始まりを+1で解釈。hは6件中5件がepoch50、concatは5件がepoch5。
+次の提案は低活動subset・同じheadによるcontinuous/reset評価、必要に応じhead seed追加。
+resetは特徴再計算が必要。追加評価は未起動。
+下記の停止・削除・再開待ちは過去の経緯。削除実績・現在空き容量は未確認。
+
+### 2026-09-30の容量整理・再開経緯
 
 ユーザーの整理dry-runで指定4組・計12条件の中間checkpoint 1,080個、290.75 GiB（logical size）が
 削除候補と確認できた。各条件90個、通常24.28 GiB、z-only22.99 GiB、Hybrid各24.50 GiB。

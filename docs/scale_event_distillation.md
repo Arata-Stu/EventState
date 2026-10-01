@@ -398,3 +398,17 @@ preflightにstream samplingテストを追加し、M3ED設定・splitテスト�
 Macでは構文・4通りのdry-run・不正引数拒否が通過。ML依存テストと実学習は未実施。
 下流はRandom/Hybrid × baseline/hard/softを同じ最終stepで比較し、低活動区間の
 continuous/reset評価で状態保持の寄与を検証する。
+
+### 蒸留対象の基本比較を補完する4条件（2026-10-01）
+
+activity比較とは別に、全域蒸留のz-only/h-only/z+h表の不足分を
+`python tools/run_hybrid_target_ablation.py --stage smoke` で開始できる。
+GPU0=DSEC z-only、GPU1=DSEC z+h、GPU2=M3ED z-onlyの後h-only。
+全てHybrid、augmentation/dropoutなし、DSEC batch8/clip8、M3ED batch4/clip16、seed0。
+GPU数による大batch比較ではなく、各条件1GPU。Stream/Randomは半分ずつ、等重み。
+新規preset z_distill_lstmはLSTM構成を保ってh損失だけ無効、activity_mask=false。
+h-onlyもz+hも従来の全域損失presetを使い、ScaleEvent/活動マスクは使用しない。
+本番は--stage full（100k）、同revisionのpreflight通過後は--skip-testsを付けられる。
+1万stepごとのcheckpoint、M3EDのvalidationは1000stepごと。fullはDINO初期値から新規学習。
+出力ルートはhybrid_targets_<stage>_<日時>。既存入力・教師cacheは再利用し変更しない。
+下流は同じ最終100kでFrozen probeを別途実行する。z-onlyはzのみ、h-only/z+hはz/h/concat。
