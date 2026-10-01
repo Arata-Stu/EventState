@@ -817,3 +817,16 @@ checkpoint・cacheのパスは§22参照。
 同じh/headと同じ評価フレームで状態だけを変える。resetは特徴再計算が必要。
 全体精度の再現性にはhead seed1/2を追加し、pretrain seed検証とは区別する。
 追加評価・学習は未起動。
+
+## 24. Hybrid蒸留対象4条件の起動失敗報告（2026-10-01）
+
+- コマンド: `python tools/run_hybrid_target_ablation.py --stage full --skip-tests`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_targets_full_20261001_230705`。
+- GPU0 DSEC z-only、GPU1 DSEC z+h、GPU2 M3ED z-onlyの起動表示後、
+  ランチャーexecute内で子プロセスの非ゼロ終了によるRuntimeErrorに到達。
+  最終例外本文・子プロセスログは未受領で、失敗条件・原因・到達stepは不明。
+- 起動スクリプトの既定計画: seed0、Hybrid、augmentation/dropoutなし、
+  DSEC train41・validation無効、M3ED train4/validation1。
+  実行時launch.json・保存configは未確認。M3ED h-onlyの起動表示は未受領。
+- 1条件の失敗時にランチャーは残りの実行中プロセスを終了させる。
+  成功結果や精度の報告ではない。次はlogs/*.log末尾の取得・原因確認。

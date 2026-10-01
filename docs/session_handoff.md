@@ -7,7 +7,33 @@
 
 ## 最新状況（2026-10-01）
 
+Hybrid蒸留対象4条件のfull起動後、ランチャーが子プロセスの非ゼロ終了を検出して停止した報告あり。
+出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_targets_full_20261001_230705`。
+`--stage full --skip-tests`、DSEC z-only/z+h・M3ED z-onlyの起動表示まで確認。
+提示tracebackは最終RuntimeError本文がなく、失敗条件・終了コード・学習側原因は未確認。
+ランチャーは1条件失敗時に他の実行中プロセスも終了させる設計。全4条件完了とは扱わない。
+次は同出力のlogs/*.log末尾を取得し原因を特定する。修正・再実行・下流起動は未実施。
+
 ### 今後の研究方針（ユーザー指定）
+
+ユーザーが事前学習後の下流一括shと、成功したモデルの新規下流cache自動削除を明示承認。
+`tools/run_hybrid_target_downstream.sh`（stdlib Python本体あり）を追加。
+必須: --pretrain-root <hybrid_targets_full実出力> --output-root <新規結果> --cache-root <新規専用scratch>。
+標準は今回4モデル、DSEC Semantic/Detection・M3ED Semanticの計12 headを順次実行。
+既存比較モデルも含める場合 --dsec-h-checkpoint と --m3ed-zh-checkpoint を追加し計21 head。
+既存h-onlyの設定整合は別途確認。既存M3ED z+hの結果は取得済みで、再実行は必須ではない。
+デフォルトGPU0、--gpuで変更。容量優先のため同時に1モデルのみ。z-onlyはz、他はz/h共用→z/h/concat。
+Frozen、seed0、50epoch、FP16、Semantic Linear+CE/batch8、Detection dsec-det/batch16。
+DSECはtrain/valのみ（Semantic6/2、Detection41/6）、M3ED train4/validation1。testは実行しない。
+Detectionはrectified→公式座標へ変換し評価。モデル成功後に専用cache全体を削除。
+所有marker・run identity・symlink拒否で削除範囲を固定し、全headのbest/last ZIP CRCと
+有限なvalidation指標を確認してから削除する。完全なTorchロード保証ではない。
+結果/ログ/重みはoutput-rootへ保持。M3ED入力・教師・ラベルや既存特徴cacheは削除対象外。
+--resumeは同一設定・入力checkpoint hashを検査して完了モデル/工程をskipし、headはlast.ptから再開。
+既存trainerの再開方式を使うため、中断なし実行との乱数列の完全一致は保証しない。
+失敗時はそのモデルのcacheを保持。DSEC1モデル分のrectified/公式座標特徴等のピーク容量は必要。
+Macではstdlib4テスト（CLI計画、削除保護、結果検証、失敗→再開の模擬処理）とshell構文を検証。
+実データ・GPU実行は未実施。事前学習完了後に新規専用パスを指定して起動する。
 
 ユーザーが4条件のaugmentation/dropoutなしを承認し、実行準備を依頼。
 `tools/run_hybrid_target_ablation.py` を追加（既定smoke、--stage full、--dry-run、--skip-tests）。
