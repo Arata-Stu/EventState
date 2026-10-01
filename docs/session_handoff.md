@@ -10,9 +10,12 @@
 Hybrid蒸留対象4条件のfull起動後、ランチャーが子プロセスの非ゼロ終了を検出して停止した報告あり。
 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_targets_full_20261001_230705`。
 `--stage full --skip-tests`、DSEC z-only/z+h・M3ED z-onlyの起動表示まで確認。
-提示tracebackは最終RuntimeError本文がなく、失敗条件・終了コード・学習側原因は未確認。
+追加ログでDSEC z+hのHydra合成エラーを確認: dataset.activity_maskがstructに存在せずoverride失敗。
+DSEC z-only/M3ED z-onlyはruntime/cache検証開始まで確認、学習step到達は未確認。
+ランチャーを `++dataset.activity_mask=false` に修正し、キー有無の両方に対応。
 ランチャーは1条件失敗時に他の実行中プロセスも終了させる設計。全4条件完了とは扱わない。
-次は同出力のlogs/*.log末尾を取得し原因を特定する。修正・再実行・下流起動は未実施。
+次は修正版をサーバーへ同期し、preflight付きsmoke→成功後fullを新規出力へ実行する。
+サーバー再実行・下流起動は未実施。
 
 ### 今後の研究方針（ユーザー指定）
 

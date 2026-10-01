@@ -76,7 +76,7 @@ def build_plan(args):
                'dataset=' + ('dsec_det_train41' if is_dsec else 'm3ed_half_dagr'),
                'model=lstm', f'experiment={experiment}', f'seed={args.seed}',
                f'teacher.checkpoint={teacher}', 'teacher.cache_features=true',
-               'dataset.activity_mask=false', 'dataset.augmentation.enabled=false',
+               '++dataset.activity_mask=false', 'dataset.augmentation.enabled=false',
                'training.event_dropout.enabled=false', 'training.sampling.mode=mixed',
                f'training.sampling.random_batch_size={branch_batch}',
                f'training.sampling.stream_batch_size={branch_batch}',

@@ -830,3 +830,13 @@ checkpoint・cacheのパスは§22参照。
   実行時launch.json・保存configは未確認。M3ED h-onlyの起動表示は未受領。
 - 1条件の失敗時にランチャーは残りの実行中プロセスを終了させる。
   成功結果や精度の報告ではない。次はlogs/*.log末尾の取得・原因確認。
+
+追加ログによる原因確定:
+- DSEC z+hはHydraの `Could not override 'dataset.activity_mask'` で設定合成に失敗。
+  dsec_det_train41とh_distill_lstm_zlossには同キーがなく、通常overrideが拒否された。
+- DSEC z-onlyはtrain41のthun_00_aのcache検証、M3ED z-onlyはruntime検証開始まで確認。
+  学習step・checkpoint生成は未確認。残りプロセスはランチャーの失敗時停止対象。
+- 起動指定を `++dataset.activity_mask=false` に修正。既存キーの上書きと未定義キーの
+  追加を両立させ、他条件と同じactivity無効を維持する。容量不足を示すログではない。
+- サーバーでpreflight付きsmokeを再実行し、成功後fullを新規出力へ実行する。
+  修正後のサーバー実学習は未確認。

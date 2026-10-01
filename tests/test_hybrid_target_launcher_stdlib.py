@@ -37,7 +37,8 @@ class LauncherTests(unittest.TestCase):
                 self.assertIn('training.max_steps=' + steps, job['command'])
                 self.assertIn('training.sampling.mode=mixed', job['command'])
                 self.assertIn('training.resume=null', job['command'])
-                self.assertIn('dataset.activity_mask=false', job['command'])
+                # DSEC z+h lacks the key; other presets already define it.
+                self.assertIn('++dataset.activity_mask=false', job['command'])
         self.args.gpus = '0,0,2'
         with self.assertRaises(ValueError):
             build_plan(self.args)
