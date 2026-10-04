@@ -1,11 +1,28 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-01
+最終更新: 2026-10-04
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-01）
+## 最新状況（2026-10-04）
+
+ユーザー提供ログでHybrid新規4条件のfull全complete/all completeを確認（台帳§25）。
+出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_targets_full_20261001_231617`。
+DSEC z-only/z+h、M3ED z-only/h-onlyのプロセス正常終了。
+追加lsで全4条件のstep_00100000.pt存在を確認（265M/280M/265M/275M）。ロード・lossは未確認。
+/home空き91G（98%使用）。現下流shはDSECモデル内でSemantic＋Detectionの変換前後cacheを
+全head成功まで保持するため、91Gで足りるとは未確認。既存cache容量を調べてから12 headを実行する。
+下流は未起動。activity損失重みのablationは今回4条件＋下流の後の候補として保留。
+追加du報告: DSEC教師410G/events275G、Semantic特徴112G、Detection特徴activity_20260923_hが372G。
+M3ED Semantic特徴は323G、うち評価済みactivity_random_hybrid_20260930が258G（Random/Hybrid各129G）。
+容量整理の第一候補はこの258Gの再生成可能な特徴のみ。結果・head/事前学習重み・入力/教師/targetは保持。
+削除実施は未確認。追加duでDSEC Detectionは3条件各124G（rectified64G＋dsec_det61G）と確認。
+同次元・同frame数なら今回z+hのDetectionは約248–250G、Semantic等を含め開始空き330G以上が目安。
+厳密な上限ではない。M3ED特徴削除後の想定349Gなら収まる見込みだが実df確認が必要。
+続報dfで/home空き348G・使用率90%を確認。上記の容量確認待ちは解消。
+推定上は下流12 headを開始可能。実ピーク容量・下流起動/完了は未確認。
+以下の230705 run失敗・再実行待ちは過去の経緯で、今回の正常終了とは区別する。
 
 Hybrid蒸留対象4条件のfull起動後、ランチャーが子プロセスの非ゼロ終了を検出して停止した報告あり。
 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_targets_full_20261001_230705`。

@@ -840,3 +840,42 @@ checkpoint・cacheのパスは§22参照。
   追加を両立させ、他条件と同じactivity無効を維持する。容量不足を示すログではない。
 - サーバーでpreflight付きsmokeを再実行し、成功後fullを新規出力へ実行する。
   修正後のサーバー実学習は未確認。
+
+## 25. Hybrid蒸留対象4条件のfull正常終了報告（2026-10-04受領）
+
+- コマンド: `python tools/run_hybrid_target_ablation.py --stage full --skip-tests`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_targets_full_20261001_231617`。
+- DSEC z-only/z+h、M3ED z-only/h-onlyの全completeおよびall completeをユーザー提供ログで確認。
+  GPU0=DSEC z-only、GPU1=DSEC z+h、GPU2=M3ED z-only→h-onlyの順次実行。
+- ランチャー既定条件: seed0、Hybrid、全域蒸留、augmentation/dropoutなし、100k step。
+  DSEC train41・validation無効、batch8/clip8、M3ED train4/validation1・batch4/clip16。
+  実保存config/launch.jsonは未受領であり、条件は起動コードに基づく。
+- プロセス正常終了の確認であり、最終step・checkpointロード・lossの有限性・下流精度は未確認。
+  次は最終重みと容量を確認し、準備済み下流shで今回4モデルの12 headを学習・validation評価。
+  下流実行報告はまだない。230705 runのHydra失敗とは別run。
+
+追加のls/df報告（2026-10-04）:
+- 全4条件の`checkpoints/step_00100000.pt`存在を確認。
+  DSEC z+h=280M、DSEC z-only=265M、M3ED h-only=275M、M3ED z-only=265M（ls -lh表示）。
+  ファイル名と存在の確認であり、内部step・Torchロード・lossの確認ではない。
+- `/dev/sdb1` (/home): 3.5T中3.2T使用、空き91G、使用率98%。
+  下流cacheのピーク必要量は未測定。現ランチャーはDSECのSemanticとDetection変換前後の
+  cacheを同一モデルの全head成功まで保持するため、容量が足りるとはまだ判断しない。
+
+追加du報告: DSEC_cache計1.2T（教師410G、events275G、Semantic特徴112G、
+Detection特徴activity_20260923_h 372G）。M3ED Semantic特徴計323G、
+うちactivity_random_hybrid_20260930が258G（random/hybrid各129G）、
+旧hybrid_dropout/hybrid_no_dropout/random_no_dropoutが各22G。
+評価済みM3ED activity特徴258Gを整理候補とするが、削除・容量回収は未確認。
+DSEC Detectionの単一条件容量は未確認。入力・教師・target・結果・checkpointは保持する。
+
+Detection内訳の追加確認: baseline_e2/activity_only/scale_event_fullは各124G、
+それぞれrectified約64G＋dsec_det約61G（du丸め表示）。hのみの既存cacheを基準に、
+同じ特徴次元・対象frame数なら今回z+hのDetectionは約248–250Gと概算する。
+Semantic特徴・head重み等を加味し、開始時空き330G以上を運用上の目安とする
+（厳密な必要量や上限ではない）。M3ED特徴258G削除後の想定空き349Gなら収まる見込みだが、
+削除実績・現在dfは未受領。他ジョブによる容量増加もこの概算に含まない。
+
+続報df: `/dev/sdb1`は3.5T中3.0T使用、空き348G、使用率90%を確認。
+容量回復は確認済み。削除対象自体の一覧は未受領。
+前記概算では下流12 headを開始可能な範囲。下流起動・実ピーク容量・完了は未確認。
