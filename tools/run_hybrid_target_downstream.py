@@ -135,6 +135,9 @@ def main():
     p.add_argument('--teacher-checkpoint', type=Path, default=Path('/home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth'))
     p.add_argument('--dsec-h-checkpoint', type=Path, help='Optional existing matched Hybrid h-only; adds both tasks')
     p.add_argument('--m3ed-zh-checkpoint', type=Path, help='Optional existing Hybrid full-region z+h')
+    p.add_argument('--only', nargs='+', choices=['dsec_z_only', 'dsec_z_h', 'm3ed_z_only',
+                   'm3ed_h_only', 'dsec_h_only', 'm3ed_z_h'],
+                   help='Run only selected models in a NEW output/cache root')
     p.add_argument('--gpu', type=int, default=0)
     p.add_argument('--resume', action='store_true')
     p.add_argument('--dry-run', action='store_true')
@@ -151,6 +154,11 @@ def main():
     for name, checkpoint in [('dsec_h_only', a.dsec_h_checkpoint), ('m3ed_z_h', a.m3ed_zh_checkpoint)]:
         if checkpoint:
             models.append((name, checkpoint.resolve()))
+    if a.only:
+        missing = set(a.only) - {name for name, _ in models}
+        if missing:
+            p.error(f'Missing checkpoint option for selected models: {sorted(missing)}')
+        models = [(name, checkpoint) for name, checkpoint in models if name in a.only]
     if a.dry_run:
         for name, checkpoint in models:
             stages, _ = model_plan(name, checkpoint, data, teacher, scratch / name, output / name)
@@ -163,8 +171,12 @@ def main():
             raise ValueError(f'Input checkpoint cannot be inside scratch root: {path}')
         if not path.is_file():
             raise FileNotFoundError(path)
-    for rel in ('DSEC_cache/events/gep_rgb', 'DSEC/task_labels/semantic', 'DSEC/dsec_det_labels',
-                'm3ed_cache/half_dagr', 'm3ed_cache/dinov3_vits16_640x352', 'm3ed_cache/m3ed_downstream'):
+    required_dirs = []
+    if any(name.startswith('dsec') for name, _ in models):
+        required_dirs += ['DSEC_cache/events/gep_rgb', 'DSEC/task_labels/semantic', 'DSEC/dsec_det_labels']
+    if any(name.startswith('m3ed') for name, _ in models):
+        required_dirs += ['m3ed_cache/half_dagr', 'm3ed_cache/dinov3_vits16_640x352', 'm3ed_cache/m3ed_downstream']
+    for rel in required_dirs:
         if not (data / rel).is_dir():
             raise FileNotFoundError(data / rel)
     identity = dict(version=VERSION, output=str(output), scratch=str(scratch), data=str(data),

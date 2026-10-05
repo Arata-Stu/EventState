@@ -1,11 +1,34 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-04
+最終更新: 2026-10-06
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-04）
+## 最新状況（2026-10-06）
+
+Hybrid新規4モデルの下流12 headが全complete、モデルごとのcache removed、all completeの報告あり。
+出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_target_downstream_20261004`（台帳§26）。
+DSEC z-only=Semantic/Detection各z、DSEC z+h=各z/h/concat、M3ED z-only=z、h-only=z/h/concat。
+既存比較モデルを加えるオプションは未指定。DSEC h-onlyとM3ED z+hの9 headは今回に含まない。
+全12評価JSONを受領し台帳§27とdocs/evaluation_records/hybrid_target_downstream_20261004_metrics.jsonへ保存。
+DSEC Det z-only z=34.97487%、z+h z/h/concat=34.57715/35.55526/37.06807%。
+DSEC Sem z-only z=59.55237%、z+h z/h/concat=59.70888/59.39196/60.09714%。
+M3ED Sem z-only z=34.85108%、h-only z/h/concat=36.09034/36.17936/36.38303%。
+M3ED h-onlyのzはz-only比+1.23926 point、同h-only内h−zは+0.08902。
+既存全域z+h（§23）よりh-onlyが同じ入力3比較で高い。activity soft z=36.99275が依然最高。
+DSEC concat利得は入力次元/容量差を含む。長期記憶効果・単一seedの有意差は未証明。
+次はDSEC既存Hybrid h-onlyの設定と同validation指標を照合し不足probeを埋める。
+ユーザーが次の評価実行を希望。下流runnerに`--only dsec_h_only`を追加し、
+`--dsec-h-checkpoint`指定で既存4モデルを再実行せずDSEC Semantic/Detection各z/h/concat計6 headを実行可能。
+新しいoutput/cacheルートを使う（完了済みrunへモデルを追加してresumeするとidentity不一致）。
+outputs/dsec_hybrid_aug/hybrid_noaug_cache/checkpoints/step_00100000.pt（276M）と保存configをユーザー提示で確認。
+seed0/h-only/Hybrid4+4/clip8/train41/正規化/教師/モデル/optimizer/100k/no aug/no dropoutは
+今回の起動設定と整合。checkpoint保存周期のみ旧1000対新10000、コードrevision一致は未確認。
+空き348Gを再確認。下流6 headを新規outputs/hybrid_h_only_downstream_20261006へ実行する段階。
+cacheはdataset/downstream_scratch/hybrid_h_only_20261006。新規評価は未起動。
+モデル選択のdry-run・未指定checkpoint拒否を含むstdlib5テストが通過。
+以下の下流未起動・容量確認待ちは過去の経緯。
 
 ユーザー提供ログでHybrid新規4条件のfull全complete/all completeを確認（台帳§25）。
 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_targets_full_20261001_231617`。

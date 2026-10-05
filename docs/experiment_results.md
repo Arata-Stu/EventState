@@ -879,3 +879,103 @@ Semantic特徴・head重み等を加味し、開始時空き330G以上を運用�
 続報df: `/dev/sdb1`は3.5T中3.0T使用、空き348G、使用率90%を確認。
 容量回復は確認済み。削除対象自体の一覧は未受領。
 前記概算では下流12 headを開始可能な範囲。下流起動・実ピーク容量・完了は未確認。
+
+## 26. Hybrid蒸留対象4モデルの下流評価完了（2026-10-06受領）
+
+- 事前学習: `outputs/hybrid_targets_full_20261001_231617`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_target_downstream_20261004`。
+- 実行: `tools/run_hybrid_target_downstream.sh`、追加比較モデルのオプションなし。
+  専用cache: `/home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_targets_20261004`。
+- DSEC z-only: Semantic/Detection各z（2 head）、DSEC z+h: 各z/h/concat（6 head）、
+  M3ED z-only: Semantic z（1 head）、M3ED h-only: Semantic z/h/concat（3 head）。
+  全12 head、4モデルのcomplete and cache removed、およびall completeを提供ログで確認。
+- スクリプト条件: Frozen、head seed0、50 epoch、FP16。Semantic Linear+CE/batch8、
+  Detection dsec-det/batch16。DSEC Semantic train6/val2、Detection train41/val6、
+  M3ED train4/validation1、test不使用。実保存configは未受領。
+- 完了ログはランチャー所定のbest/last checkpoint ZIP CRC、有限なvalidation指標等の検査と
+  モデル単位の専用cache削除を通過したことを示す。サーバー成果物の直接検証は未実施。
+- 精度JSONは未受領で、mAP/mIoU・best epoch・条件間優劣は未判定。
+  次は`<model>/<task>/<feature>/seed_0/validation_metrics.json`全12件を取得する。
+  既存DSEC h-onlyとM3ED z+hの9 headは今回の実行に含まれない。
+
+
+## 27. Hybrid蒸留対象×下流入力の評価数値（2026-10-06）
+
+§26の全12 validation JSONをユーザー添付から受領。
+元の全桁数・AP内訳・クラスIoUを含むJSONは
+[保存した評価JSON](evaluation_records/hybrid_target_downstream_20261004_metrics.json)に保存。
+サーバー出力ルート: `/home/iASL/Arata_repo/EventState/outputs/hybrid_target_downstream_20261004`。
+各JSON: `<model>/<task>/<feature>/seed_0/validation_metrics.json`。
+事前学習seed0/Hybrid/no augmentation/no dropout、Frozen head seed0・50 epoch、
+Semantic Linear+CE/batch8、Detection dsec-det/batch16、FP16（§26の起動設定）。
+DSEC Semantic train6/val2、Detection train41/val6、M3ED train4/validation1。
+実保存config未照合。test値と混ぜない。
+
+Semantic全8件の11クラスIoU平均とmIoUが一致（誤差1e-12未満）。
+DSEC Semanticの評価pixelsは全4件633,036,800、M3EDは全4件3,218,555,646。
+Detection全4件はrole=val/protocol=dsec-det/coordinate_space=dsec_det_distorted。
+値は百分率、best epochはJSONの0始まりに1を加算。DSEC JSONにepochはない。
+
+| モデル | タスク | 下流入力 | mAPまたはmIoU (%) | best epoch |
+|---|---|---|---:|---:|
+| dsec_z_h | detection | concat | 37.06807168 | 未記載 |
+| dsec_z_h | detection | h | 35.55525783 | 未記載 |
+| dsec_z_h | detection | z | 34.57714747 | 未記載 |
+| dsec_z_h | semantic | concat | 60.09713701 | 未記載 |
+| dsec_z_h | semantic | h | 59.39195553 | 未記載 |
+| dsec_z_h | semantic | z | 59.70888412 | 未記載 |
+| dsec_z_only | detection | z | 34.97486703 | 未記載 |
+| dsec_z_only | semantic | z | 59.55236888 | 未記載 |
+| m3ed_h_only | semantic | concat | 36.38302655 | 15 |
+| m3ed_h_only | semantic | h | 36.17935854 | 50 |
+| m3ed_h_only | semantic | z | 36.09033648 | 20 |
+| m3ed_z_only | semantic | z | 34.85107752 | 15 |
+
+M3EDの全域z+h既存Hybrid baseline_e2（§23）を加えた基本表:
+
+| 蒸留対象 | z mIoU (%) | h mIoU (%) | concat mIoU (%) |
+|---|---:|---:|---:|
+| z-only | 34.85108 | 対象外 | 対象外 |
+| h-only | 36.09034 | 36.17936 | 36.38303 |
+| z+h（既存§23） | 35.66049 | 34.97230 | 35.51019 |
+
+既存z+hは同じtrain4/validation1、評価pixels、Hybrid、seed0、最終100k、Linear+CE、
+50epoch/batch8/FP16/continuousの記録。別runの再利用であり保存configの完全照合は未実施。
+DSEC h-onlyは今回未評価、既存の同val条件の指標を取得・照合するまで欠測扱い。
+
+解釈（差はpercentage point）:
+- M3ED h-onlyのzはz-onlyのz比+1.23926。hだけの蒸留でも共有encoderのzに有用な特徴が
+  学習されることと整合的。単一seedなので再現性・有意差は未検証。
+- 同じh-only内のh−zは+0.08902、concat−zは+0.29269。z側の改善に比べ小さく、
+  長期状態保持の寄与そのものはcontinuous/reset対照などで検証が必要。
+- M3ED h-onlyは既存全域z+hを同じ入力の3比較すべてで上回る。
+  activity soft z=36.99275（§23）は今回h-only最高concat=36.38303を+0.60973上回り、
+  同じz入力でもh-only z比+0.90242。activity soft hは今回h-only hより低い。
+  全域z+h蒸留が常に最良という結論にはならない。
+- DSEC Detection: z+h concat=37.06807、z-only z=34.97487との差+2.09320。
+  z+hのz単独は34.57715でz-only比−0.39772。concatはz+hのh比+1.51281。
+- DSEC Semantic: z+h concat=60.09714で今回最高、z-only z比+0.54477。
+  z+h zはz-only z比+0.15652、同モデルhはzより低い。
+- concatは入力次元とheadパラメータ数が増える。concatの利得をそのまま長期記憶の効果と呼ばない。
+  dataset/taskごとに適した蒸留対象・下流入力が異なる兆候であり、普遍的優位は主張しない。
+
+次の優先事項: DSEC既存Hybrid h-onlyのcheckpoint/設定/validation結果を照合して
+両タスクのz/h/concatの不足欄を埋める。単一seedの小差を踏まえて有力条件のseed追加を検討。
+activity重みablationは別軸として保留、今回数値から自動で追加学習を開始しない。
+
+## 28. DSEC Hybrid h-only既存重みの比較条件確認（2026-10-06）
+
+ユーザー提示のlsと.hydra/config.yamlから、
+`outputs/dsec_hybrid_aug/hybrid_noaug_cache/checkpoints/step_00100000.pt`（276M）の存在を確認。
+seed0、h損失cosine/MSE各1、z目的なし、mixed Random4+Stream4・等重み、batch8/clip8、
+100k、FP16、gradient accumulation1、augmentation/event dropout無効、LSTM dropout0。
+DSEC train41の系列リスト・GEP正規化・448x640・DINO教師/cache・384次元LSTMと
+optimizer AdamW lr1e-4/weight decay0.05/encoder lr mult0.1・warmup1000は
+今回の新規DSEC比較条件のローカル起動設定と一致。
+保存周期は旧1000、新10000で異なる。学習コードrevision・重み内部stepの一致は未検証。
+dfで空き348G・使用率90%を再確認。新規事前学習はせず同重みをFrozen評価に再利用する。
+予定: `--only dsec_h_only --dsec-h-checkpoint <上記重み>`でSemantic/Detection各z/h/concat、
+seed0、同じvalidation条件の6 headを実行。
+出力: `outputs/hybrid_h_only_downstream_20261006`、専用cache:
+`/home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_h_only_20261006`。
+既存4モデルの下流runと分離。実行・結果はまだ未報告。

@@ -1,4 +1,6 @@
 import json
+import io
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import re
 import tempfile
@@ -12,6 +14,23 @@ from tools.run_hybrid_target_downstream import main
 
 
 class DownstreamTests(unittest.TestCase):
+    def test_selected_h_only_dry_run(self):
+        argv = ['runner', '--pretrain-root', '/unused', '--output-root', '/new-output',
+                '--cache-root', '/new-cache', '--only', 'dsec_h_only', '--dry-run']
+        with patch('sys.argv', argv), redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                main()
+        self.assertEqual(error.exception.code, 2)
+        output = io.StringIO()
+        with patch('sys.argv', argv + ['--dsec-h-checkpoint', '/old-h.pt']), redirect_stdout(output):
+            main()
+        plan = output.getvalue()
+        self.assertEqual(plan.count('tools/train_dsec_'), 6)
+        self.assertEqual(plan.count('tools/evaluate_dsec_'), 6)
+        self.assertNotIn('m3ed', plan)
+        self.assertNotIn('dsec_z_only', plan)
+        self.assertNotIn('dsec_z_h', plan)
+
     def test_plans_and_cli_arguments(self):
         counts = []
         for name in ('dsec_z_only', 'dsec_z_h', 'm3ed_z_only', 'm3ed_h_only', 'dsec_h_only', 'm3ed_z_h'):
