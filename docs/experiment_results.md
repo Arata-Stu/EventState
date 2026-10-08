@@ -979,3 +979,18 @@ seed0、同じvalidation条件の6 headを実行。
 出力: `outputs/hybrid_h_only_downstream_20261006`、専用cache:
 `/home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_h_only_20261006`。
 既存4モデルの下流runと分離。実行・結果はまだ未報告。
+
+## 29. DSEC Hybrid h-only追加6 headの評価完了（2026-10-08受領）
+
+- ユーザー実行: `tools/run_hybrid_target_downstream.sh --only dsec_h_only`、
+  事前学習重みは§28の`outputs/dsec_hybrid_aug/hybrid_noaug_cache/checkpoints/step_00100000.pt`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_h_only_downstream_20261006`。
+  専用cache: `/home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_h_only_20261006`。
+- DSEC Semantic/Detection各z/h/concatの学習・validation評価工程、
+  `complete and cache removed: dsec_h_only`と`all complete`を提供ログで確認。
+  ランチャー所定の結果検査と専用モデルcache削除を通過。成果物の直接検証は未実施。
+- 設定: Frozen、head seed0、50epoch、FP16、Semantic Linear+CE/batch8/train6-val2、
+  Detection dsec-det/batch16/train41-val6。事前学習seed0/Hybrid4+4/clip8/no aug/no dropout。
+  testは実行しない。評価JSONの数値は未受領で、mIoU/mAP・優劣は未判定。
+- 次は`dsec_h_only/<semantic|detection>/<z|h|concat>/seed_0/validation_metrics.json`
+  全6件を取得して§27のDSEC両タスクの表を補完する。

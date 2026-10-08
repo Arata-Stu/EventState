@@ -1,11 +1,18 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-06
+最終更新: 2026-10-08
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-06）
+## 最新状況（2026-10-08）
+
+DSEC Hybrid h-only追加6 headの全評価工程、complete and cache removed、all completeを
+ユーザー提供ログで確認。出力: outputs/hybrid_h_only_downstream_20261006（台帳§29）。
+Semantic/Detection各z/h/concat、既存100k h-only重みを使用。評価JSONの数値は未受領。
+次は同出力内の6 validation_metrics.jsonを取得し、§27のDSEC両表のh-only行を埋める。
+これで今回12 head＋追加6 headは実行完了、既存M3ED z+hの3件を加えた21欄の数値整理が可能になる。
+以下の追加評価未起動・候補確認待ちは過去の経緯。
 
 Hybrid新規4モデルの下流12 headが全complete、モデルごとのcache removed、all completeの報告あり。
 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_target_downstream_20261004`（台帳§26）。
