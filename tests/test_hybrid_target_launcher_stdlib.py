@@ -65,6 +65,19 @@ class LauncherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_plan(self.args)
 
+    def test_activity_alpha_plan(self):
+        self.args.suite = 'activity-alpha'
+        for stage in ('smoke', 'full'):
+            self.args.stage = stage
+            _, _, jobs = build_plan(self.args)
+            self.assertEqual([j['name'] for j in jobs],
+                ['dsec_alpha_0', 'dsec_alpha_05', 'dsec_alpha_1', 'm3ed_alpha_1'])
+            self.assertEqual([j['gpu'] for j in jobs], ['0', '1', '2', '2'])
+            for job, alpha in zip(jobs, [0.0, .5, 1.0, 1.0]):
+                self.assertIn('++dataset.activity_mask=true', job['command'])
+                self.assertIn(f'++loss.h_distill.activity_active_weight={alpha}', job['command'])
+                self.assertIn('training.sampling.mode=mixed', job['command'])
+
 
 if __name__ == '__main__':
     unittest.main()

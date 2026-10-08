@@ -129,6 +129,7 @@ def model_plan(name, checkpoint, data, teacher, cache, output):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--pretrain-root', type=Path, required=True)
+    p.add_argument('--suite', choices=['targets', 'activity-alpha'], default='targets')
     p.add_argument('--output-root', type=Path, required=True)
     p.add_argument('--cache-root', type=Path, required=True, help='NEW dedicated scratch directory; owned model caches are deleted on success')
     p.add_argument('--data-root', type=Path, default=Path('/home/iASL/Arata_repo/dataset'))
@@ -136,7 +137,8 @@ def main():
     p.add_argument('--dsec-h-checkpoint', type=Path, help='Optional existing matched Hybrid h-only; adds both tasks')
     p.add_argument('--m3ed-zh-checkpoint', type=Path, help='Optional existing Hybrid full-region z+h')
     p.add_argument('--only', nargs='+', choices=['dsec_z_only', 'dsec_z_h', 'm3ed_z_only',
-                   'm3ed_h_only', 'dsec_h_only', 'm3ed_z_h'],
+                   'm3ed_h_only', 'dsec_h_only', 'm3ed_z_h', 'dsec_alpha_0',
+                   'dsec_alpha_05', 'dsec_alpha_1', 'm3ed_alpha_1'],
                    help='Run only selected models in a NEW output/cache root')
     p.add_argument('--gpu', type=int, default=0)
     p.add_argument('--resume', action='store_true')
@@ -151,6 +153,9 @@ def main():
         p.error('Cache/output/input roots must not overlap unsafely')
     models = [(n, root / n / 'checkpoints/step_00100000.pt') for n in
               ('dsec_z_only', 'dsec_z_h', 'm3ed_z_only', 'm3ed_h_only')]
+    if a.suite == 'activity-alpha':
+        models = [(n, root / n / 'checkpoints/step_00100000.pt') for n in
+                  ('dsec_alpha_0', 'dsec_alpha_05', 'dsec_alpha_1', 'm3ed_alpha_1')]
     for name, checkpoint in [('dsec_h_only', a.dsec_h_checkpoint), ('m3ed_z_h', a.m3ed_zh_checkpoint)]:
         if checkpoint:
             models.append((name, checkpoint.resolve()))

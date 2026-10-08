@@ -994,3 +994,49 @@ seed0、同じvalidation条件の6 headを実行。
   testは実行しない。評価JSONの数値は未受領で、mIoU/mAP・優劣は未判定。
 - 次は`dsec_h_only/<semantic|detection>/<z|h|concat>/seed_0/validation_metrics.json`
   全6件を取得して§27のDSEC両タスクの表を補完する。
+
+
+## 30. DSEC h-only評価数値とHybrid基本比較表の完成（2026-10-08）
+
+§29の6 validation JSONを受領。全桁数・クラス別指標は
+[元評価JSON](evaluation_records/hybrid_h_only_downstream_20261006_metrics.json)に保存。
+出力は`/home/iASL/Arata_repo/EventState/outputs/hybrid_h_only_downstream_20261006/`
+`dsec_h_only/<task>/<feature>/seed_0/validation_metrics.json`。
+条件は§28–29: pretrain/head seed0、Hybrid、100k、no aug/dropout、Frozen、head50epoch/FP16。
+Semantic Linear+CE/batch8/train6-val2、Detection dsec-det/batch16/train41-val6。
+全6件role=val、Detection座標dsec_det_distorted。Semantic全3件633,036,800 pixels、
+11クラスIoU平均とmIoU一致を確認（誤差1e-12未満）。epochはJSONに含まれない。
+
+§27と統合した比較表。単位%、各列は下流head入力、行は蒸留対象。
+
+| task | 蒸留モデル | z | h | concat |
+|---|---|---:|---:|---:|
+| detection | dsec_z_only | 34.97487 | 対象外 | 対象外 |
+| detection | dsec_h_only | 34.36370 | 36.08733 | 35.67439 |
+| detection | dsec_z_h | 34.57715 | 35.55526 | 37.06807 |
+| semantic | dsec_z_only | 59.55237 | 対象外 | 対象外 |
+| semantic | dsec_h_only | 59.42277 | 60.17204 | 60.23975 |
+| semantic | dsec_z_h | 59.70888 | 59.39196 | 60.09714 |
+
+M3ED Semantic（§27、z+hのみ§23の既存Hybrid baseline_e2）:
+
+| 蒸留対象 | z | h | concat |
+|---|---:|---:|---:|
+| z-only | 34.85108 | 対象外 | 対象外 |
+| h-only | 36.09034 | 36.17936 | 36.38303 |
+| z+h | 35.66049 | 34.97230 | 35.51019 |
+
+解釈:
+- 3タスク×7有効欄=21欄の単一seed validation値が揃った。今回18 head＋既存M3ED3件。
+- DSEC Detection最高はz+h→concat=37.06807。h-onlyではh=36.08733が最高、
+  z=34.36370比+1.72363 point、concat=35.67439はh比−0.41294。
+- DSEC Semantic最高はh-only→concat=60.23975。z+h→concatとの差は+0.14261 pointと小さい。
+  h-only内h−z=+0.74927、concat−h=+0.06771。concatの明確な優位は未確定。
+- h-only→zのz-only→zに対する差はDSEC Det−0.61117、DSEC Sem−0.12960、
+  M3ED Sem+1.23926 point。h蒸留がzを一律に改善するとはいえない。
+- 同じh-onlyモデルではhがzを3タスクとも上回った。ただし長期記憶の因果的効果の
+  証明には同じheadのcontinuous/reset対照が必要。concatには入力次元とhead容量の差がある。
+- 単一seed、DSEC h-onlyは旧run再利用（§28の主要設定照合済みだがrevision一致未確認）、
+  M3ED z+hも既存run再利用。testスコア39.209%と今回val36.08733%を直接比較しない。
+- 次の研究候補は有力条件のseed追加、continuous/reset、Hybridでのactivity重みablation。
+  基本表は完成。新規学習は未起動。

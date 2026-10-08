@@ -14,6 +14,18 @@ from tools.run_hybrid_target_downstream import main
 
 
 class DownstreamTests(unittest.TestCase):
+    def test_activity_alpha_suite(self):
+        argv = ['runner', '--pretrain-root', '/pretrain', '--output-root', '/new-output',
+                '--cache-root', '/new-cache', '--suite', 'activity-alpha', '--dry-run']
+        output = io.StringIO()
+        with patch('sys.argv', argv), redirect_stdout(output):
+            main()
+        plan = output.getvalue()
+        self.assertEqual(plan.count('tools/train_dsec_'), 18)
+        self.assertEqual(plan.count('tools/train_m3ed_'), 3)
+        self.assertNotIn('m3ed_alpha_0', plan)
+        self.assertNotIn('dsec_z_only', plan)
+
     def test_selected_h_only_dry_run(self):
         argv = ['runner', '--pretrain-root', '/unused', '--output-root', '/new-output',
                 '--cache-root', '/new-cache', '--only', 'dsec_h_only', '--dry-run']

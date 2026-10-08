@@ -412,3 +412,31 @@ h-onlyもz+hも従来の全域損失presetを使い、ScaleEvent/活動マスク
 1万stepごとのcheckpoint、M3EDのvalidationは1000stepごと。fullはDINO初期値から新規学習。
 出力ルートはhybrid_targets_<stage>_<日時>。既存入力・教師cacheは再利用し変更しない。
 下流は同じ最終100kでFrozen probeを別途実行する。z-onlyはzのみ、h-only/z+hはz/h/concat。
+
+### Hybrid activity alpha比較（2026-10-08準備、未実行）
+
+`python tools/run_hybrid_target_ablation.py --suite activity-alpha --stage smoke`。
+GPU0 DSEC alpha0、GPU1 DSEC alpha0.5、GPU2 DSEC alpha1の後M3ED alpha1。
+M3ED alpha0/0.5は既存Hybrid activity_only/active_z_h_soft（台帳§23）を再利用。
+全条件active z固定、hはinactive1/active alphaで重み和正規化する。
+alpha1はhのみ全域化しzはactiveのままなので、全域z+h baselineとは異なる。
+Hybrid、seed0、no augmentation/dropout、DSEC Random4+Stream4/clip8、M3ED2+2/clip16。
+smoke100step、成功後`--stage full --skip-tests`でDINOから100k新規学習、保存10k毎。
+出力は`outputs/hybrid_activity_alpha_full_<日時>`、各条件は
+`dsec_alpha_0/dsec_alpha_05/dsec_alpha_1/m3ed_alpha_1`。
+
+事前学習後は、実際の出力パスを指定して以下を実行する。
+
+```bash
+bash tools/run_hybrid_target_downstream.sh \
+  --suite activity-alpha \
+  --pretrain-root outputs/hybrid_activity_alpha_full_<日時> \
+  --output-root outputs/hybrid_activity_alpha_downstream_<日時> \
+  --cache-root /home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_activity_alpha_<日時>
+```
+
+新規21 head（DSEC Semantic/Detection各alphaでz/h/concat、M3ED alpha1でz/h/concat）。
+既存M3ED6 headと合わせ27欄。Frozen seed0/50epoch、validationのみ、test未使用。
+新規専用cacheをモデルごとに削除し容量の累積を抑える。実行前df確認、目安空き330G以上。
+中断は同一コマンドに`--resume`。今回のsuiteではbaseline/既存M3ED alpha0/0.5は再実行しない。
+stdlib9テスト通過、Hydra/Torch検証はサーバーpreflightに追加済みでMacでは未実行。

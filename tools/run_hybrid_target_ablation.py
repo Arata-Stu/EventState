@@ -23,6 +23,8 @@ TRAIN4 = {"car_urban_day_" + x for x in
 def arguments():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--stage', choices=['smoke', 'full'], default='smoke')
+    p.add_argument('--suite', choices=['targets', 'activity-alpha'], default='targets',
+                   help='activity-alpha: DSEC alpha=0/0.5/1 and missing M3ED alpha=1')
     p.add_argument('--data-root', type=Path, default=Path('/home/iASL/Arata_repo/dataset'))
     p.add_argument('--teacher-checkpoint', type=Path, default=Path(
         '/home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth'))
@@ -59,8 +61,10 @@ def build_plan(args):
     if (stats.get('representation') != 'gep_rgb' or len(mean) != 3 or len(std) != 3
             or not all(math.isfinite(x) for x in mean + std) or min(std) <= 0):
         raise ValueError('Invalid GEP normalization')
+    suite = getattr(args, 'suite', 'targets')
+    prefix = 'hybrid_activity_alpha' if suite == 'activity-alpha' else 'hybrid_targets'
     output = (args.output_root or PROJECT / 'outputs' /
-              f'hybrid_targets_{args.stage}_{datetime.datetime.now():%Y%m%d_%H%M%S}').resolve()
+              f'{prefix}_{args.stage}_{datetime.datetime.now():%Y%m%d_%H%M%S}').resolve()
     if output.exists():
         raise ValueError(f'Output exists; choose a fresh directory: {output}')
     full = args.stage == 'full'
@@ -69,6 +73,11 @@ def build_plan(args):
              ('dsec_z_h', 'dsec', 'h_distill_lstm_zloss', gpus[1]),
              ('m3ed_z_only', 'm3ed', 'z_distill_lstm', gpus[2]),
              ('m3ed_h_only', 'm3ed', 'h_distill_lstm', gpus[2])]
+    if suite == 'activity-alpha':
+        specs = [('dsec_alpha_0', 'dsec', 'activity_dual', gpus[0]),
+                 ('dsec_alpha_05', 'dsec', 'activity_z_h_soft', gpus[1]),
+                 ('dsec_alpha_1', 'dsec', 'activity_z_h_all', gpus[2]),
+                 ('m3ed_alpha_1', 'm3ed', 'activity_z_h_all', gpus[2])]
     for name, dataset, experiment, gpu in specs:
         is_dsec = dataset == 'dsec'
         branch_batch = 4 if is_dsec else 2
@@ -76,7 +85,8 @@ def build_plan(args):
                'dataset=' + ('dsec_det_train41' if is_dsec else 'm3ed_half_dagr'),
                'model=lstm', f'experiment={experiment}', f'seed={args.seed}',
                f'teacher.checkpoint={teacher}', 'teacher.cache_features=true',
-               '++dataset.activity_mask=false', 'dataset.augmentation.enabled=false',
+               '++dataset.activity_mask=' + str(suite == 'activity-alpha').lower(),
+               'dataset.augmentation.enabled=false',
                'training.event_dropout.enabled=false', 'training.sampling.mode=mixed',
                f'training.sampling.random_batch_size={branch_batch}',
                f'training.sampling.stream_batch_size={branch_batch}',
@@ -104,6 +114,9 @@ def build_plan(args):
                     'dataset.representation.normalize_mean=' + json.dumps(mean, separators=(',', ':')),
                     'dataset.representation.normalize_std=' + json.dumps(std, separators=(',', ':'))]
         jobs.append(dict(name=name, gpu=gpu, command=cmd))
+        if suite == 'activity-alpha':
+            alpha = {'activity_dual': 0.0, 'activity_z_h_soft': 0.5, 'activity_z_h_all': 1.0}[experiment]
+            cmd.append(f'++loss.h_distill.activity_active_weight={alpha}')
     return output, stats_path, jobs
 
 

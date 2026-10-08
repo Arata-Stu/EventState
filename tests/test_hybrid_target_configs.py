@@ -9,7 +9,8 @@ import torch
 from tools.run_hybrid_target_ablation import TRAIN4, build_plan
 
 
-def test_four_target_configs(tmp_path):
+@pytest.mark.parametrize('suite', ['targets', 'activity-alpha'])
+def test_four_target_configs(tmp_path, suite):
     from hydra import compose, initialize_config_dir
     from event_state.training.factory import validate_config
 
@@ -22,7 +23,7 @@ def test_four_target_configs(tmp_path):
         dict(sequences=sorted(TRAIN4), representation='gep_rgb',
              normalize_mean=[0.1, 0.2, 0.3], normalize_std=[0.4, 0.5, 0.6])))
     args = SimpleNamespace(gpus='0,1,2', seed=0, num_workers=4, data_root=tmp_path,
-        teacher_checkpoint=teacher, event_statistics=None, output_root=tmp_path / 'out', stage='full')
+        teacher_checkpoint=teacher, event_statistics=None, output_root=tmp_path / 'out', stage='full', suite=suite)
     _, _, jobs = build_plan(args)
     root = Path(__file__).resolve().parents[1]
     for job in jobs:
@@ -30,7 +31,11 @@ def test_four_target_configs(tmp_path):
             cfg = compose(config_name='config', overrides=job['command'][2:])
         validate_config(cfg)
         assert cfg.model.temporal.type == 'lstm'
-        assert not cfg.dataset.activity_mask
+        assert cfg.dataset.activity_mask == (suite == 'activity-alpha')
+        if suite == 'activity-alpha':
+            expected = {'dsec_alpha_0': 0, 'dsec_alpha_05': .5, 'dsec_alpha_1': 1, 'm3ed_alpha_1': 1}
+            assert cfg.loss.h_distill.activity_active_weight == expected[job['name']]
+            assert cfg.loss.kind == 'dense'
         assert not cfg.dataset.augmentation.enabled
         assert not cfg.training.event_dropout.enabled
         assert cfg.training.sampling.mode == 'mixed'

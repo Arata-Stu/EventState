@@ -7,11 +7,27 @@
 
 ## 最新状況（2026-10-08）
 
+ユーザーが次のactivity重みablationへ進むことを承認。既存ランチャーに`--suite activity-alpha`を追加。
+新規4条件: GPU0 DSEC alpha0、GPU1 DSEC alpha0.5、GPU2 DSEC alpha1→M3ED alpha1。
+M3ED Hybrid alpha0/0.5は§23の既存結果を再利用。Random DSECの旧結果は主比較へ混ぜない。
+zはactiveのみ、h重みはinactive1/active alpha、重み和正規化。alpha1も全域z+hとは別条件。
+Hybrid/no augmentation/no dropout/seed0、DSEC8/clip8、M3ED4/clip16、full100k、checkpoint10k。
+事前学習出力prefixはhybrid_activity_alpha_<stage>_<timestamp>。
+下流shも`--suite activity-alpha`対応: 新規4モデルの計21 head（DSEC18＋M3ED3）、valのみ。
+新規output/cacheルートで順次処理、全head成功後のモデルcache削除・resumeを継承。
+既存M3ED6件と合わせたalpha表は27欄。activity thresholdや全体のz/h loss比は今回変えない。
+stdlib9テスト通過。Hydra/Torch合成検証を両suiteへ拡張しサーバーpreflightで実行。
+MacではMLテスト/学習未実行。次は同期→smoke（skip-testsなし）→full→下流。
+
 DSEC Hybrid h-only追加6 headの全評価工程、complete and cache removed、all completeを
 ユーザー提供ログで確認。出力: outputs/hybrid_h_only_downstream_20261006（台帳§29）。
-Semantic/Detection各z/h/concat、既存100k h-only重みを使用。評価JSONの数値は未受領。
-次は同出力内の6 validation_metrics.jsonを取得し、§27のDSEC両表のh-only行を埋める。
-これで今回12 head＋追加6 headは実行完了、既存M3ED z+hの3件を加えた21欄の数値整理が可能になる。
+Semantic/Detection各z/h/concat、既存100k h-only重みを使用。全6評価JSON受領（台帳§30）。
+DSEC h-only Det z/h/concat=34.36370/36.08733/35.67439%、Sem=59.42277/60.17204/60.23975%。
+元JSONはdocs/evaluation_records/hybrid_h_only_downstream_20261006_metrics.jsonへ保存。
+今回18 head＋既存M3ED z+h3件で3タスク×7欄の単一seed validation基本表が完成。
+Det最高はz+h concat37.06807、DSEC Sem最高はh-only concat60.23975（z+h concat比+0.14261）。
+h-onlyのhはzを全3タスクで上回るが、h-onlyのzがz-onlyのzを上回るのはM3EDのみ。
+長期記憶因果・小差の有意性は未証明。次候補はseed追加/reset対照/activity重みablation、未起動。
 以下の追加評価未起動・候補確認待ちは過去の経緯。
 
 Hybrid新規4モデルの下流12 headが全complete、モデルごとのcache removed、all completeの報告あり。

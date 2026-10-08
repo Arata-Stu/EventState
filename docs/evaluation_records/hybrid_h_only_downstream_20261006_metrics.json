@@ -1,0 +1,150 @@
+{
+  "source": "User-pasted validation JSON received 2026-10-08",
+  "server_root": "/home/iASL/Arata_repo/EventState/outputs/hybrid_h_only_downstream_20261006",
+  "metrics": {
+    "dsec_h_only/detection/concat/seed_0/validation_metrics.json": {
+      "AP50": 0.6510948537093183,
+      "AP75": 0.34798864241308264,
+      "AP_car": 0.42355946080672907,
+      "AP_large": 0.6728568756473102,
+      "AP_medium": 0.3738892409997894,
+      "AP_pedestrian": 0.28992836177291226,
+      "AP_small": 0.12924472627084302,
+      "mAP": 0.35674391128982064,
+      "coordinate_space": "dsec_det_distorted",
+      "feature": "concat",
+      "protocol": "dsec-det",
+      "role": "val"
+    },
+    "dsec_h_only/detection/h/seed_0/validation_metrics.json": {
+      "AP50": 0.6503302869096487,
+      "AP75": 0.3587225783220089,
+      "AP_car": 0.43124820097809585,
+      "AP_large": 0.6611974289764085,
+      "AP_medium": 0.37192126144286536,
+      "AP_pedestrian": 0.2904983579444869,
+      "AP_small": 0.0959649554498526,
+      "mAP": 0.36087327946129144,
+      "coordinate_space": "dsec_det_distorted",
+      "feature": "h",
+      "protocol": "dsec-det",
+      "role": "val"
+    },
+    "dsec_h_only/detection/z/seed_0/validation_metrics.json": {
+      "AP50": 0.6073996769720499,
+      "AP75": 0.33225733174769795,
+      "AP_car": 0.41984052936962724,
+      "AP_large": 0.6290493261440856,
+      "AP_medium": 0.35431167520909906,
+      "AP_pedestrian": 0.26743349352520107,
+      "AP_small": 0.08702344668651381,
+      "mAP": 0.34363701144741415,
+      "coordinate_space": "dsec_det_distorted",
+      "feature": "z",
+      "protocol": "dsec-det",
+      "role": "val"
+    },
+    "dsec_h_only/semantic/concat/seed_0/validation_metrics.json": {
+      "class_IoU": [
+        0.9419550252312047,
+        0.8183399730183648,
+        0.28963469685821364,
+        0.2766454400288459,
+        0.19292592818815937,
+        0.9347778405174415,
+        0.7106087601780217,
+        0.8241708877292035,
+        0.8004922442791302,
+        0.4647988314339326,
+        0.37202282203021153
+      ],
+      "classes": [
+        "background",
+        "building",
+        "fence",
+        "person",
+        "pole",
+        "road",
+        "sidewalk",
+        "vegetation",
+        "car",
+        "wall",
+        "traffic_sign"
+      ],
+      "evaluated_pixels": 633036800,
+      "feature": "concat",
+      "mIoU": 0.60239749540843,
+      "mean_class_accuracy": 0.6853465570769856,
+      "pixel_accuracy": 0.9168916214665561,
+      "role": "val"
+    },
+    "dsec_h_only/semantic/h/seed_0/validation_metrics.json": {
+      "class_IoU": [
+        0.9435662323139253,
+        0.8185377035891702,
+        0.2979752353937496,
+        0.2723848702234736,
+        0.18488021505158814,
+        0.9341884003379818,
+        0.7055455963288665,
+        0.8268067521677256,
+        0.7946756622877859,
+        0.4670282466900325,
+        0.3733358051049549
+      ],
+      "classes": [
+        "background",
+        "building",
+        "fence",
+        "person",
+        "pole",
+        "road",
+        "sidewalk",
+        "vegetation",
+        "car",
+        "wall",
+        "traffic_sign"
+      ],
+      "evaluated_pixels": 633036800,
+      "feature": "h",
+      "mIoU": 0.6017204290444776,
+      "mean_class_accuracy": 0.6827605727030067,
+      "pixel_accuracy": 0.9171295349654238,
+      "role": "val"
+    },
+    "dsec_h_only/semantic/z/seed_0/validation_metrics.json": {
+      "class_IoU": [
+        0.9374355183100699,
+        0.8099250082898123,
+        0.28031582624114526,
+        0.2730169805044662,
+        0.19037497115341562,
+        0.9314485570820561,
+        0.6982959194691376,
+        0.8153590701126312,
+        0.7941027981260986,
+        0.4441908310010199,
+        0.3620393175758172
+      ],
+      "classes": [
+        "background",
+        "building",
+        "fence",
+        "person",
+        "pole",
+        "road",
+        "sidewalk",
+        "vegetation",
+        "car",
+        "wall",
+        "traffic_sign"
+      ],
+      "evaluated_pixels": 633036800,
+      "feature": "z",
+      "mIoU": 0.594227708896879,
+      "mean_class_accuracy": 0.6780075706094834,
+      "pixel_accuracy": 0.9128792907458144,
+      "role": "val"
+    }
+  }
+}
