@@ -1040,3 +1040,18 @@ M3ED Semantic（§27、z+hのみ§23の既存Hybrid baseline_e2）:
   M3ED z+hも既存run再利用。testスコア39.209%と今回val36.08733%を直接比較しない。
 - 次の研究候補は有力条件のseed追加、continuous/reset、Hybridでのactivity重みablation。
   基本表は完成。新規学習は未起動。
+
+## 31. Hybrid activity重みablationのfull正常終了（2026-10-11受領）
+
+- コマンド: `python tools/run_hybrid_target_ablation.py --suite activity-alpha --stage full --skip-tests`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_activity_alpha_full_20261009_021017`。
+- GPU0 DSEC alpha0、GPU1 DSEC alpha0.5、GPU2 DSEC alpha1→M3ED alpha1。
+  全4条件のcompleteおよびall completeをユーザー提供ログで確認。
+- 起動設定: seed0、Hybrid、no augmentation/dropout、100k、FP16、zはactive領域のみ、
+  hはinactive1/active alphaの重み和正規化。DSEC batch8/clip8/train41/val無効、
+  M3ED batch4/clip16/train4-validation1。保存config・実step・loss・checkpointは未受領。
+- 次は最終`<model>/checkpoints/step_00100000.pt`4件と空き容量を確認し、
+  下流`--suite activity-alpha`でDSEC18＋M3ED3の計21 headを学習・validation評価。
+  予定出力`outputs/hybrid_activity_alpha_downstream_20261011`、専用cache
+  `/home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_activity_alpha_20261011`。
+- 下流未起動・精度未判定。M3ED alpha0/0.5は§23の既存6 headを再利用予定。

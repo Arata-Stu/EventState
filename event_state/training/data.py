@@ -122,8 +122,10 @@ def _build_transform(
                 raise ValueError("Embedded normalization and configured coefficients differ")
 
     return PairedSequenceTransform(
-        height=int(_value(dataset_config, "input_height")),
-        width=int(_value(dataset_config, "input_width")),
+        height=int(_value(dataset_config, "content_height", _value(dataset_config, "input_height"))),
+        width=int(_value(dataset_config, "content_width", _value(dataset_config, "input_width"))),
+        output_height=int(_value(dataset_config, "input_height")),
+        output_width=int(_value(dataset_config, "input_width")),
         training=augmentation_enabled,
         scale=tuple(float(item) for item in _value(augmentation, "scale", (1.0, 1.0))),
         horizontal_flip_probability=(

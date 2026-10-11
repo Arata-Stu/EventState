@@ -1,11 +1,60 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-08
+最終更新: 2026-10-12
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-08）
+## 最新状況（2026-10-12）
+
+2026-10-12: ユーザーがRGB DINOv3固定教師→20ch event encoder蒸留を選択。
+320×240、DSEC train41、z蒸留、temporal identityでencoder単体重みを作る準備を追加。
+`configs/experiment/voxel20_encoder_320.yaml` と `tools/run_voxel20_encoder.sh`。
+rawオンラインvoxel/オンライン教師により全量cache不要。raw逐次固定統計ツールとencoder exportを追加。
+学習augmentation/dropoutなし、Hybrid4+4、clip8、100k、checkpoint10k。
+再帰状態はないのでHybridの記憶効果を測る実験ではない。
+EventStateの時間線形補間+bilinear縮小を使用し、kartの補間なし40ms tensorとは未互換。
+入力契約と固定係数を重みに添付。手順・制約は `docs/voxel20_encoder_320.md`。
+Mac静的確認のみ、サーバーpreflight→統計→100step smoke→fullが次の作業。学習未起動。
+
+2026-10-12追記: ユーザーがkart等への重み移植と学習後の動画可視化を要求。
+exportにEventState非依存の `event_encoder_model.py` を同梱するよう追加。
+公式固定版DINOv3＋torchでstrictロード、入力前処理とtokens/map出力APIを提供。
+`tools/visualize_voxel20_encoder.py` はexport重みからRGB/events/z-PCA動画を逐次生成。
+基底・色範囲は動画内固定、全量特徴cache不要。移植先実動作と動画生成は未検証。
+サーバーpreflightにはportable load/前処理一致/出力一致/欠損キー拒否テストを追加。
+
+2026-10-12追記: 160×120学習を追加。ランチャー第3引数160で選択、既定320。
+全画角を160×120へresizeし、RGB/eventsとも上下4px raw-zero paddingして160×128入力。
+80 tokens、feature map384×8×10。padding後にイベント固定正規化を適用。
+content寸法とモデル入力寸法を分けてcheckpoint/exportに保存。portable loader/動画も両解像度対応。
+同じresize前train41統計を再利用可能。padding境界patchも蒸留lossに含む。
+Mac静的確認のみ、サーバーのTorchテストとsmokeは未実行。
+
+以下は検討時点の経緯。
+
+2026-10-12: ユーザーは20ch tensor入力ViTの事前学習重み作成を以前から希望し、storageを懸念。
+大量の既存cache削除や全量20ch cache生成は今回まだ決定していない。
+コード上DSECはevent_cache_dir=nullならrawイベントから各窓をvoxel化できる。
+既存GEP/教師cacheを残し、raw→20chオンライン生成で容量を抑える案を検討する。
+固定正規化統計ツールは現状全train41のvoxel cacheを読む仕様なので、raw逐次統計経路の追加が必要。
+教師cacheは入力表現と独立だが教師時刻/幾何整合を維持する。JetPilot完全互換は未実装。
+20ch旧experimentはnonzero_standardizeを上書きするため固定正規化presetとの組合せに注意。
+ユーザー指定のkartを読み取り確認: openeb_tensor_cuda_async.yamlは20ch/212x120、
+10bin/極性別/polarity_major/時間補間なし/40ms窓/4ms stride。
+kart RGB経路は424x240→212x120 resize→正規化→224x128中央padding（左右6/上下4）。
+このpadding契約はRGB経路のもの、20ch学習へは明示的な実装/教師対応の検証が必要。
+212x120の20ch FP16は約0.970MiB/frame、10万frame約94.8GiB（付帯情報を除く）。
+480x640全量保存の約1/12.1。低解像度ならcache方式も再検討可能だが総frame数と教師整合が未確定。
+入力patch embeddingは20ch化に伴い再初期化、全体scratchとは異なる。学習・容量整理は未実施。
+
+activity-alphaの新規4条件fullが全complete/all completeとユーザー報告（台帳§31）。
+出力: outputs/hybrid_activity_alpha_full_20261009_021017。
+DSEC alpha0/0.5/1、M3ED alpha1の正常終了。最終checkpoint存在・ロード・lossは未確認。
+次は100k重み4件と現在の空き容量を確認し、下流shの--suite activity-alphaで21 headを実行。
+予定出力outputs/hybrid_activity_alpha_downstream_20261011、専用scratch hybrid_activity_alpha_20261011。
+下流は未起動。M3ED alpha0/0.5の既存6 head再利用を含め27欄を比較する。
+以下の未実行記述は準備時点の経緯。
 
 ユーザーが次のactivity重みablationへ進むことを承認。既存ランチャーに`--suite activity-alpha`を追加。
 新規4条件: GPU0 DSEC alpha0、GPU1 DSEC alpha0.5、GPU2 DSEC alpha1→M3ED alpha1。

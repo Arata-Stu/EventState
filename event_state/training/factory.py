@@ -138,6 +138,13 @@ def validate_config(config: Any) -> None:
 
     height = int(_value(dataset, "input_height"))
     width = int(_value(dataset, "input_width"))
+    content_h = int(_value(dataset, "content_height", height))
+    content_w = int(_value(dataset, "content_width", width))
+    if not (0 < content_h <= height and 0 < content_w <= width):
+        raise ValueError("Content dimensions must fit within model input dimensions")
+    if (content_h, content_w) != (height, width):
+        if bool(_value(teacher, "cache_features", False)) or bool(_value(dataset, "activity_mask", False)):
+            raise ValueError("Padded content requires online teacher and no activity mask")
     patch_size = int(_value(teacher, "patch_size", 16))
     if height % patch_size or width % patch_size:
         raise ValueError("Input height and width must be divisible by the teacher patch size")

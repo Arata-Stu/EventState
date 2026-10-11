@@ -27,7 +27,12 @@ class PairedSequenceTransform:
     sequence_consistent: bool = False
     seed: int = 0
 
+    output_height: int | None = None
+    output_width: int | None = None
+
     def __post_init__(self) -> None:
+        if (self.output_height or self.height) < self.height or (self.output_width or self.width) < self.width:
+            raise ValueError("Output padding size must not shrink the content")
         if self.height <= 0 or self.width <= 0:
             raise ValueError("Target height and width must be positive")
         if not (0 < self.scale[0] <= self.scale[1] <= 1.0):
@@ -91,6 +96,14 @@ class PairedSequenceTransform:
             activity = activity.flatten(1)
         events = self._apply(events, top, left, crop_h, crop_w, flip)
         images = self._apply(images, top, left, crop_h, crop_w, flip)
+        out_h, out_w = self.output_height or self.height, self.output_width or self.width
+        dh, dw = out_h - self.height, out_w - self.width
+        if dh or dw:
+            if return_activity:
+                raise ValueError("Activity masks do not support padded inputs")
+            padding = (dw // 2, dw - dw // 2, dh // 2, dh - dh // 2)
+            events = F.pad(events, padding) if events is not None else None
+            images = F.pad(images, padding) if images is not None else None
         if events is not None and self.event_mean is not None:
             if events.shape[1] != len(self.event_mean):
                 raise ValueError(
