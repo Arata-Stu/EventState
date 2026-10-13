@@ -1,11 +1,29 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-12
+最終更新: 2026-10-14
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-12）
+## 最新状況（2026-10-14）
+
+ユーザーが一旦activity ablationから20ch固定RGB教師蒸留の実行へ進むことを希望。
+直近の解像度要望に合わせ、まず160×120（上下padding後160×128）の手順を提示。
+サーバーでpreflight→未作成ならraw train41統計生成→100step smoke→100k full。
+GPU0・単体encoderのz蒸留、LSTMなし、オンラインイベント/教師、全量cache不要。
+既存alpha結果は保存済み、追加seed/reset検証は後続候補として残す。20ch実行ログはまだ未受領。
+
+activity-alpha下流21 headが全complete、各モデルcache removed、all completeとユーザー報告（台帳§32）。
+出力 `outputs/hybrid_activity_alpha_downstream_20261011`。
+DSEC alpha0/0.5/1 × Semantic/Detection × z/h/concat=18、M3ED alpha1 × z/h/concat=3。
+全21評価JSONを受領し元JSON保存・台帳§33に既存M3ED6件を含む27欄を記録。
+今回α表の最高: DSEC Det α1 z=36.91390、DSEC Sem α0.5 concat=60.32212、M3ED α1 z=37.14701%。
+DSEC Detの既存全領域z+h concat37.06807は維持、M3EDは旧soft z36.99275比+0.15426 point。
+DSEC Sem α0.5 concatとα0 concat差は+0.02777 pointで単一seedの優位未確定。
+次候補は有力αのseed追加・continuous/reset対照。20ch準備と別のGEP系評価として管理。
+今回 `$PRETRAIN` の展開値は未確認（予定はhybrid_activity_alpha_full_20261009_021017）。
+以下のactivity-alpha「下流未起動」は過去の準備記録。今回の完了報告で更新。
+
 
 2026-10-12: ユーザーがRGB DINOv3固定教師→20ch event encoder蒸留を選択。
 320×240、DSEC train41、z蒸留、temporal identityでencoder単体重みを作る準備を追加。

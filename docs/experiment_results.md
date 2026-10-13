@@ -1055,3 +1055,79 @@ M3ED Semantic（§27、z+hのみ§23の既存Hybrid baseline_e2）:
   予定出力`outputs/hybrid_activity_alpha_downstream_20261011`、専用cache
   `/home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_activity_alpha_20261011`。
 - 下流未起動・精度未判定。M3ED alpha0/0.5は§23の既存6 headを再利用予定。
+
+## 32. Hybrid activity-alpha下流21 headの正常終了（2026-10-14受領）
+
+- ユーザー提供コマンド: `bash tools/run_hybrid_target_downstream.sh --suite activity-alpha --pretrain-root "$PRETRAIN" --output-root outputs/hybrid_activity_alpha_downstream_20261011 --cache-root /home/iASL/Arata_repo/dataset/downstream_scratch/hybrid_activity_alpha_20261011`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/hybrid_activity_alpha_downstream_20261011`。
+- dsec_alpha_0 / dsec_alpha_05 / dsec_alpha_1の各Semantic・Detection×z/h/concat=18 head、
+  m3ed_alpha_1のSemantic×z/h/concat=3 head、合計21 head。
+- 全4モデルで `complete and cache removed`、最後に `all complete` を確認。
+  DSECはtrain/eval各工程、M3EDはvalidationを含むtrain工程が正常終了したとの報告。
+- 現行runnerの設定: frozen backbone、seed0、50 epochs、FP16。
+  DSEC Semanticはdevelopment train/val・linear CE・batch8、Detectionはdsec-det train/val・batch16。
+  M3ED Semanticはtrain/validation・linear CE・batch8、5 epochごとvalidation。
+  実行時config・ソースrevisionは未受領のため、これらは現行runnerに基づく条件。
+- 事前学習は§31のHybrid/no augmentation/dropout、z activeのみ・h inactive1/active alphaの計画。
+  `$PRETRAIN` 展開値は今回のログにない。予定は `outputs/hybrid_activity_alpha_full_20261009_021017`。
+- 評価数値は未受領。精度向上や最適alphaはまだ判定しない。
+  次は21件の `*/{semantic,detection}/{z,h,concat}/seed_0/validation_metrics.json` を収集。
+  M3ED既存alpha0/0.5の6件（§23）と合わせて27欄の比較表を作る。
+
+## 33. Hybrid activity-alpha下流21評価JSONと27欄の比較（2026-10-14）
+
+- §32の全21件を受領。元JSONの全指標は
+  `docs/evaluation_records/hybrid_activity_alpha_downstream_20261011_metrics.json` に保存。
+- 出力root: `/home/iASL/Arata_repo/EventState/outputs/hybrid_activity_alpha_downstream_20261011`。
+  各パスは `<model>/<semantic|detection>/<z|h|concat>/seed_0/validation_metrics.json`。
+- seed0、frozen head、Hybrid、no augmentation/dropout。下流設定・事前学習の留保は§32参照。
+  DSEC Semantic development val、Detection dsec-det val（distorted座標）、M3ED validation。
+  DSEC Semantic evaluated_pixels=633036800、M3ED=3218555646、11クラス。
+- M3ED α0/0.5は§23のHybrid activity_only/active_z_h_softを再利用。
+  旧root `outputs/m3ed_semantic_activity_random_hybrid_20260930/hybrid`、seed0。
+  同一runでの再学習ではなく、保存config/revisionの完全一致は未確認。
+- αはhの活動領域の重み（非活動領域=1）、重み和正規化。zは全条件で活動領域のみ。
+  α1は全領域z+h baselineとは異なる。数値は百分率、差はpercentage point。
+
+DSEC Detection mAP (%)
+
+| α | z | h | concat |
+|---|---:|---:|---:|
+| 0 | 35.46801 | 34.05292 | 35.43747 |
+| 0.5 | 34.90223 | 35.43286 | 35.81328 |
+| 1 | 36.91390 | 36.10036 | 36.29305 |
+
+DSEC Semantic mIoU (%)
+
+| α | z | h | concat |
+|---|---:|---:|---:|
+| 0 | 59.90588 | 59.24951 | 60.29435 |
+| 0.5 | 59.90830 | 59.85391 | 60.32212 |
+| 1 | 59.81535 | 59.57582 | 60.20561 |
+
+M3ED Semantic mIoU (%)
+
+| α | z | h | concat |
+|---|---:|---:|---:|
+| 0 | 36.54401 | 35.94215 | 36.50717 |
+| 0.5 | 36.99275 | 36.08211 | 36.78864 |
+| 1 | 37.14701 | 36.35754 | 36.97560 |
+
+観察と解釈:
+- 今回のα比較内ではDSEC Det α1→z=36.91390、DSEC Sem α0.5→concat=60.32212、
+  M3ED Sem α1→z=37.14701が最高。
+- DSEC Detはα1が同じhead入力のα0/0.5を全3入力で上回る。
+  zのα1−α0=+1.44589 point。既存全領域z+h concat37.06807（§30）はなお0.15417 point高い。
+- M3EDはα0→0.5→1で各入力の値が単調増加。zのα1−α0=+0.60301、
+  α1−α0.5=+0.15426 point。この比較系列で従来最高soft z36.99275を更新。
+- DSEC Sem concatのα0.5−α0=+0.02777 pointと小さい。
+  既存h-only concat60.23975比も+0.08237 pointで、α0.5の優位は未確定。
+- 非活動領域だけのh蒸留が常に有利という仮説は今回の値では支持されない。
+  hの活動領域にも教師信号を与える設定がDet/M3EDで有望。
+  ただし正規化分母も変わるため単純なloss強度増加ではなく監督分布の変更。
+- α1では両データセットの全3タスクでzがhを上回る。DSEC Semanticではconcatがzより高い。
+  これは時間状態が不要という因果証明ではなく、下流入力ごとの性能差。
+- M3ED α1 best epochはz=15、h=50、concat=5（JSONの0始まりepoch=14/49/4）。
+  50epoch終了時の値を一律比較したものではなく、validation選択best head。
+- 単一seedであり、有意差・test性能・停止時間による因果効果は未判定。
+  次の確認候補はα1/0.5のseed追加、continuous/reset対照。
