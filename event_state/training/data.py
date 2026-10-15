@@ -60,6 +60,8 @@ def build_event_representation(dataset_config: Any) -> Any:
         )
     if representation_type == "voxel_grid":
         return EventVoxelizer(
+            temporal_interpolation=str(_value(representation_config, "temporal_interpolation", "linear")),
+            window_us=int(_value(representation_config, "window_us", 40000)),
             num_bins=int(_value(representation_config, "event_bins", 10)),
             height=height,
             width=width,
@@ -111,8 +113,14 @@ def _build_transform(
                 int(_value(dataset_config, "sensor_height")), int(_value(dataset_config, "sensor_width")),
             )
             fraction = float(_value(dataset_config, "event_window_fraction", 1.0))
+            expected_boundary = ("[start,end)" if _value(representation_config, "temporal_interpolation", "linear") == "none"
+                                 else event_window_contract(fraction)["event_window_boundary"])
+            if stats.get("event_resize_mode", "bilinear") != _value(dataset_config, "event_resize_mode", "bilinear"):
+                raise ValueError("Normalization spatial mode mismatch")
+            if _value(dataset_config, "event_resize_mode", "bilinear") == "sum_pool" and stats.get("content_size") != [int(_value(dataset_config, "content_height", _value(dataset_config, "input_height"))), int(_value(dataset_config, "content_width", _value(dataset_config, "input_width")))]:
+                raise ValueError("Histogram normalization resolution mismatch")
             if (stats.get("event_window_fraction") != fraction or
-                stats.get("event_window_boundary") != event_window_contract(fraction)["event_window_boundary"]):
+                stats.get("event_window_boundary") != expected_boundary):
                 raise ValueError("Fixed normalization event window does not match")
             space = "rectified_event" if _value(dataset_config, "rectify_events", True) else "raw_event"
             if stats.get("coordinate_space") != space:
@@ -122,6 +130,7 @@ def _build_transform(
                 raise ValueError("Embedded normalization and configured coefficients differ")
 
     return PairedSequenceTransform(
+        event_resize_mode=str(_value(dataset_config, "event_resize_mode", "bilinear")),
         height=int(_value(dataset_config, "content_height", _value(dataset_config, "input_height"))),
         width=int(_value(dataset_config, "content_width", _value(dataset_config, "input_width"))),
         output_height=int(_value(dataset_config, "input_height")),

@@ -12,6 +12,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--temporal-interpolation', choices=['linear', 'none'], default='linear')
+    p.add_argument('--resolution', type=int, choices=[160, 320], default=160)
     a = p.parse_args()
     if a.output.exists():
         raise FileExistsError(a.output)
@@ -26,7 +28,7 @@ def main():
     if len(set(sequences)) != 41 or set(sequences) & (set(split['val']) | set(split['test'])):
         raise ValueError('Expected disjoint official train41')
     voxel = EventVoxelizer(num_bins=10, height=480, width=640,
-                           channel_layout='polarity_major', normalization='none')
+                           channel_layout='polarity_major', normalization='none', temporal_interpolation=a.temporal_interpolation)
     count = frames = 0
     mean = torch.zeros(20, dtype=torch.float64)
     m2 = torch.zeros_like(mean)
@@ -41,6 +43,9 @@ def main():
                 if record.frame_index == 0:
                     continue
                 tensor, _ = dataset._load_event_frame(record)
+                if a.temporal_interpolation == 'none':
+                    factor = 640 // a.resolution
+                    tensor = torch.nn.functional.avg_pool2d(tensor, factor, stride=factor) * factor**2
                 values = tensor.double().flatten(1)
                 if not torch.isfinite(values).all() or (values < 0).any():
                     raise ValueError('Invalid voxel counts')
@@ -63,12 +68,15 @@ def main():
     std[constant] = 1.0
     result = dict(format='eventstate_fixed_normalization_v1',
         representation=event_representation_metadata(voxel), sensor_size=[480, 640],
-        event_window_boundary=event_window_contract(1.0)['event_window_boundary'],
+        event_window_boundary=('[start,end)' if a.temporal_interpolation == 'none' else event_window_contract(1.0)['event_window_boundary']),
         event_window_fraction=1.0, coordinate_space='rectified_event', spatial_quantization='nearest_integer_numpy_rint',
         includes_zero_pixels=True, statistics_stage='raw_counts_before_spatial_transform',
         split='dsec_det_train41', sequences=sequences, sources=sources, frames=frames,
         pixels_per_channel=count, mean=mean.tolist(), std=std.tolist(), std_floor=1e-6,
         constant_channels=constant.nonzero().flatten().tolist())
+    if a.temporal_interpolation == 'none':
+        result.update(event_resize_mode='sum_pool', content_size=[a.resolution * 3 // 4, a.resolution],
+                      statistics_stage='histogram_after_sum_pool_before_padding')
     a.output.parent.mkdir(parents=True, exist_ok=True)
     with a.output.open('x') as f:
         json.dump(result, f, indent=2)

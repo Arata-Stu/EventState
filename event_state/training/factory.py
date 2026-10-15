@@ -138,6 +138,12 @@ def validate_config(config: Any) -> None:
 
     height = int(_value(dataset, "input_height"))
     width = int(_value(dataset, "input_width"))
+    histogram = _value(representation, "temporal_interpolation", "linear") == "none"
+    if histogram:
+        if (_value(dataset, "event_cache_dir") or bool(_value(teacher, "cache_features", False))
+                or bool(_value(_value(dataset, "augmentation", {}), "enabled", False))
+                or _value(dataset, "event_resize_mode") != "sum_pool"):
+            raise ValueError("Histogram training requires online events/teacher, sum_pool and no augmentation")
     content_h = int(_value(dataset, "content_height", height))
     content_w = int(_value(dataset, "content_width", width))
     if not (0 < content_h <= height and 0 < content_w <= width):

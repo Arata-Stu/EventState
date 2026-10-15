@@ -153,3 +153,53 @@ portable loaderはmetadataからcontent=160×120とmodel input=160×128を復元
 動画ツールは重みから解像度を判定し、paddingを含む入力・特徴を表示する。
 raw読み出しとVGA voxel化の処理は共通であり、全実行時間がパッチ数の比率で減るとは限らない。
 Mac構文確認済み、GPU smokeとTorchのpadding/loader一致テストはサーバーで実行する。
+
+## kart向け時間補間なし（2026-10-15追加）
+
+既存linear版と別条件としてランチャー第4引数 `none` を追加。
+40ms窓、10bin、`[start,end)`、positive10ch→negative10ch、binへの整数カウント。
+整数microsecondの読み出し境界も合わせる。teacherは窓終了時刻に対応するRGB。
+640×480のcountを整数比sum poolingしてcontent解像度へ縮小し、padding後に固定正規化。
+これは同じ座標イベント集合をOpenEBのfloor座標縮小で直接集計した結果と一致する規約。
+RGBは従来のbilinear resize。DSECのrectificationは維持されるため、kartのraw座標カメラと
+同じ校正にはならない。窓位置もDSEC RGB終了時刻とdriverの4ms周期で異なる。
+ROS/実カメラまで完全一致したという意味ではない。
+
+**linear版の統計/重みは流用しない。** histogram統計は解像度ごとに別ファイル。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+python -m pytest -q tests/test_histogram_encoder.py tests/test_voxel20_encoder.py \
+  tests/test_fixed_normalization.py tests/test_models.py tests/test_transforms.py
+
+python tools/compute_dsec_raw_voxel_normalization.py \
+  --root /home/iASL/Arata_repo/dataset/DSEC \
+  --temporal-interpolation none --resolution 160 \
+  --output /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats.json
+
+GPU=0 bash tools/run_voxel20_encoder.sh smoke \
+  /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats.json 160 none
+# smoke成功後
+GPU=0 bash tools/run_voxel20_encoder.sh full \
+  /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats.json 160 none
+```
+
+320版は統計生成/ファイル名/ランチャーの160を320へ置換する。
+出力prefixは `voxel20_encoder_160_histogram_...` / `voxel20_encoder_320_histogram_...`。
+既存linear版は第4引数省略で維持される。実行中の学習は停止しない。
+
+kartへ最新コードとexportを配置した後、サーバーで同じ重みの出力比較を実行できる。
+
+```bash
+python tools/verify_kart_histogram_encoder.py \
+  --weights /path/to/event_encoder.pt \
+  --kart-root /path/to/kart \
+  --dinov3-repo /path/to/pinned/dinov3 \
+  --device cuda --output outputs/kart_histogram_parity.json
+```
+
+この比較は人工VGA countと学習済み重みを使い、EventStateの前処理/encoderとkart adapterの
+入力・patch tokenを比較する。校正、ROS転送、OpenEB CUDA集計の実行検証は含まない。
+Macでは構文確認とkart stdlib契約2テスト通過、Torchテストは未実行。
+kart既存EVSテストはMacのPyYAML不足で起動できず、サーバー/ROS環境で再実行が必要。

@@ -39,7 +39,24 @@ class PortableEventEncoder(nn.Module):
             raise ValueError('This portable recipe requires equal source/target aspect ratios')
         if not torch.isfinite(counts).all() or (counts < 0).any():
             raise ValueError('Counts must be finite and nonnegative')
-        resized = F.interpolate(counts.float(), size=self.content_shape, mode='bilinear', align_corners=False)
+        if self.metadata['dataset'].get('event_resize_mode', 'bilinear') == 'sum_pool':
+            h, w = self.sensor_shape
+            ch, cw = self.content_shape
+            if h % ch or w % cw:
+                raise ValueError('Histogram requires integer spatial scale')
+            factor = (h // ch, w // cw)
+            resized = F.avg_pool2d(counts.float(), factor, stride=factor) * (factor[0] * factor[1])
+        else:
+            resized = F.interpolate(counts.float(), size=self.content_shape, mode='bilinear', align_corners=False)
+        return self.prepare_content(resized)
+
+    def prepare_content(self, counts):
+        """Unnormalized model-resolution counts -> padding + normalization."""
+        if counts.ndim != 4 or tuple(counts.shape[1:]) != (self.input_shape[0], *self.content_shape):
+            raise ValueError('Content tensor shape mismatch')
+        if not torch.isfinite(counts).all() or (counts < 0).any():
+            raise ValueError('Counts must be finite and nonnegative')
+        resized = counts.float()
         dh, dw = self.input_shape[1] - self.content_shape[0], self.input_shape[2] - self.content_shape[1]
         if dh < 0 or dw < 0:
             raise ValueError('Content larger than padded input')

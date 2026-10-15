@@ -1,0 +1,50 @@
+# @package _global_
+# Standalone encoder distillation; EventState linear voxels, NOT kart histogram parity.
+experiment:
+  name: voxel20_encoder_320_histogram
+dataset:
+  event_resize_mode: sum_pool
+  representation:
+    temporal_interpolation: none
+    window_us: 40000
+  input_height: 240
+  input_width: 320
+  event_cache_dir: null
+  activity_mask: false
+  augmentation:
+    enabled: false
+model:
+  event_encoder:
+    in_channels: 20
+    pretrained_init: true
+    patch_init: random
+  temporal:
+    type: identity
+    input_dim: 384
+    output_dim: 384
+teacher:
+  frozen: true
+  cache_features: false
+  cache_dir: null
+loss:
+  kind: dense
+  h_distill:
+    enabled: false
+  z_objective:
+    type: direct_dino
+    weight: 1.0
+    cosine_weight: 1.0
+    mse_weight: 1.0
+training:
+  validation_enabled: false
+  event_dropout:
+    enabled: false
+  sampling:
+    mode: mixed
+    random_batch_size: 4
+    stream_batch_size: 4
+    random_weight: 1.0
+    stream_weight: 1.0
+    shuffle_sequences: true
+  batch_size: 8
+  checkpoint_every: 10000

@@ -1,11 +1,45 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-14
+最終更新: 2026-10-15
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-14）
+## 最新状況（2026-10-15）
+
+ユーザーから20ch学習が現在実行中との報告。runパス・step・linear/histogramの別は未受領。
+次はtrain.logのloss/z_cosine/z_projected_cosineの区間平均と学習率・skip状況を確認。
+学習lossの停滞だけで下流性能や汎化の収束とは判断しない。
+
+
+ユーザー指示: kart/OpenEBの時間補間なしを維持し、モデル解像度対応＋EventState補間なし学習を追加。
+160/320 histogram preset: 40ms/10bin/[start,end)、sum pooling縮小、padding→固定正規化。
+新規統計は解像度別、linear版JSON/重みは混用不可。ランチャー第4引数none、既定linear。
+kartにevs_model/evs_contractとportable loaderを追加。モデルJSON→OpenEB full config生成、
+センサmoduleにevs_tensor_config明示指定を追加（mission転送は未追加）。
+契約2テスト/静的検証通過、既存EVSテストはMac PyYAML不足。Torch/GPU/ROSは未実施。
+詳しい実行手順: docs/voxel20_encoder_320.md、docs/kart_evs_encoder_integration.md。
+今回OpenEB driverソース/既定configは変更なし。実行中linear学習の停止なし。
+DSEC rectificationとkart raw座標の差は残り、完全なセンサ入力一致とは主張しない。
+
+
+ユーザー指示でkartのDINOv3固定版をEventStateのadc254450203739c8149213a7a69d8d905b4fcfaへ統一。
+e2e.repos/contract.pyとkartのpolicy/README/testを変更、stdlib contract3テスト通過。
+実checkout/モデルロード/ONNX/Jetsonは未検証。旧RGB成果物のSPEC拒否を維持し移行条件を文書化。
+以下のkart未変更/commit相違は変更前の調査記録。EVS入力仕様の対応は別途必要。
+
+
+ユーザーは20ch学習完了後、kartのRGB DINOv3 E2Eを模倣してEVS encoderを実装する方針。
+kart現行コードを読み取り、接続計画をdocs/kart_evs_encoder_integration.mdへ保存。
+OpenEB既定tensorと学習表現は未一致（補間/bin・空間処理・窓・正規化）。
+DINOv3固定commitもkartとEventStateで異なる。EVS用入力契約とモデル版を明示して接続する。
+今回kart側は未変更。20ch smoke終了のユーザー報告あり、ログ/exportは未受領。
+fullコマンド提示済み、起動/完了は未確認。
+
+
+20chサーバーpreflightの4テストファイルが `15 passed in 3.58s`（ユーザー提供ログ、台帳§34）。
+/home空き333G。次は未作成ならraw train41固定統計生成→160版100step smoke。
+実DSEC/GPU学習・exportはまだ未確認。以下のpreflight未実施記述は今回の報告で更新。
 
 ユーザーが一旦activity ablationから20ch固定RGB教師蒸留の実行へ進むことを希望。
 直近の解像度要望に合わせ、まず160×120（上下padding後160×128）の手順を提示。

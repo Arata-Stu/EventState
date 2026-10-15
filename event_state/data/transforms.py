@@ -27,6 +27,7 @@ class PairedSequenceTransform:
     sequence_consistent: bool = False
     seed: int = 0
 
+    event_resize_mode: str = "bilinear"
     output_height: int | None = None
     output_width: int | None = None
 
@@ -94,7 +95,16 @@ class PairedSequenceTransform:
             if flip:
                 activity = activity.flip(-1)
             activity = activity.flatten(1)
-        events = self._apply(events, top, left, crop_h, crop_w, flip)
+        if self.event_resize_mode == "sum_pool" and events is not None:
+            if self.training or return_activity or crop_h % self.height or crop_w % self.width:
+                raise ValueError("Histogram pooling requires deterministic integer-ratio geometry")
+            source = events[..., top:top + crop_h, left:left + crop_w]
+            factor = (crop_h // self.height, crop_w // self.width)
+            events = F.avg_pool2d(source, factor, stride=factor) * (factor[0] * factor[1])
+        elif self.event_resize_mode == "bilinear":
+            events = self._apply(events, top, left, crop_h, crop_w, flip)
+        elif self.event_resize_mode != "sum_pool":
+            raise ValueError("Unknown event resize mode")
         images = self._apply(images, top, left, crop_h, crop_w, flip)
         out_h, out_w = self.output_height or self.height, self.output_width or self.width
         dh, dw = out_h - self.height, out_w - self.width

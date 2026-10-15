@@ -116,6 +116,8 @@ def event_representation_metadata(event_representation: Any) -> dict[str, Any]:
                 else "negative_0,positive_0,..."
             ),
             "normalization": str(event_representation.normalization),
+            **({"temporal_interpolation": "none", "window_us": event_representation.window_us,
+                "window_boundary": "[start,end)"} if event_representation.temporal_interpolation == "none" else {}),
         }
     raise TypeError(
         "Cached DSEC events require GEPEventFrame or EventVoxelizer so their "
@@ -1001,6 +1003,9 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         return self._readers[sequence_name]
 
     def _load_event_frame(self, record: DSECFrame) -> tuple[Tensor, int]:
+        histogram = getattr(self.event_representation, "temporal_interpolation", "linear") == "none"
+        if histogram and self.event_cache_dir is not None:
+            raise ValueError("Histogram preset requires online events; legacy caches are incompatible")
         if self.event_cache_dir is not None:
             cache_path = self.event_cache_dir / record.sequence_name / f"{record.timestamp}.pt"
             payload = _safe_torch_load(cache_path)
@@ -1028,7 +1033,12 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
             record.timestamp,
             self.event_window_fraction,
         )
-        events = self._reader(record.sequence_name).slice(window_start, record.timestamp)
+        if histogram:
+            window_start = record.timestamp - self.event_representation.window_us
+            # Reader uses (start,end]; integer microseconds shift yields [start,end).
+            events = self._reader(record.sequence_name).slice(window_start - 1, record.timestamp - 1)
+        else:
+            events = self._reader(record.sequence_name).slice(window_start, record.timestamp)
         tensor = self.event_representation(
             *(torch.from_numpy(events[key]) for key in ("x", "y", "t", "p")),
             start_time=window_start,

@@ -1131,3 +1131,14 @@ M3ED Semantic mIoU (%)
   50epoch終了時の値を一律比較したものではなく、validation選択best head。
 - 単一seedであり、有意差・test性能・停止時間による因果効果は未判定。
   次の確認候補はα1/0.5のseed追加、continuous/reset対照。
+
+## 34. 20ch encoder事前テスト通過（2026-10-14受領）
+
+- ユーザーのGPUサーバー `/home/iASL/Arata_repo/EventState`、env環境で
+  `python -m pytest -q tests/test_voxel20_encoder.py tests/test_fixed_normalization.py tests/test_models.py tests/test_transforms.py` を実行。
+- 提供ログ: `15 passed in 3.58s`。同時点の `/home` は3.5T中3.0T使用、空き333G、91%。
+- これは事前テストの成功であり、実DSEC入力・GPU学習・学習済み重みexport成功を示すものではない。
+- 対象計画: DSEC train41、seed0、20ch、160×120→padding160×128、固定RGB教師、z蒸留。
+  正規化統計生成・100step smoke・100k fullの完了報告はまだない。精度評価split/指標は今回なし。
+- 次はraw train41から `DSEC_cache/voxel20_linear_train41_stats.json` を未作成なら生成し、
+  `tools/run_voxel20_encoder.sh smoke <stats> 160` を実行する。

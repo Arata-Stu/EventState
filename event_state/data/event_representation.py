@@ -68,8 +68,8 @@ class GEPEventFrame:
             & (x < self.width)
             & (y >= 0)
             & (y < self.height)
-            & (t > float(start_time))
-            & (t <= float(end_time))
+            & ((t >= float(start_time)) if self.temporal_interpolation == "none" else (t > float(start_time)))
+            & ((t < float(end_time)) if self.temporal_interpolation == "none" else (t <= float(end_time)))
         )
         x, y, p = x[valid], y[valid], p[valid]
 
@@ -127,8 +127,12 @@ class EventVoxelizer:
     polarity_split: bool = True
     normalization: Normalization = "nonzero_standardize"
     channel_layout: Literal["time_major", "polarity_major"] = "time_major"
+    temporal_interpolation: str = "linear"
+    window_us: int = 40000
 
     def __post_init__(self) -> None:
+        if self.temporal_interpolation not in {"linear", "none"} or self.window_us <= 0:
+            raise ValueError("Invalid temporal interpolation/window")
         if self.num_bins <= 0:
             raise ValueError("num_bins must be positive")
         if self.height <= 0 or self.width <= 0:
@@ -185,6 +189,15 @@ class EventVoxelizer:
             return output.view(self.channels, self.height, self.width)
 
         x, y, t, positive = x[valid], y[valid], t[valid], positive[valid]
+        if self.temporal_interpolation == "none":
+            bins = ((t - float(start_time)) * self.num_bins / float(end_time - start_time)).floor().long()
+            polarity = positive.long()
+            channels = bins * 2 + polarity
+            if self.channel_layout == "polarity_major":
+                channels = (~positive).long() * self.num_bins + bins
+            indices = channels * (self.height * self.width) + y * self.width + x
+            output.scatter_add_(0, indices, torch.ones_like(t, dtype=torch.float32))
+            return self._normalize(output.view(self.channels, self.height, self.width))
         temporal_position = (t - float(start_time)) * (self.num_bins - 1)
         temporal_position /= float(end_time - start_time)
         lower = temporal_position.floor().to(torch.int64).clamp_(0, self.num_bins - 1)
