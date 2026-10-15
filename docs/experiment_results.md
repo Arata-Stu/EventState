@@ -1142,3 +1142,26 @@ M3ED Semantic mIoU (%)
   正規化統計生成・100step smoke・100k fullの完了報告はまだない。精度評価split/指標は今回なし。
 - 次はraw train41から `DSEC_cache/voxel20_linear_train41_stats.json` を未作成なら生成し、
   `tools/run_voxel20_encoder.sh smoke <stats> 160` を実行する。
+
+## 35. 20ch 160版 fullの63,100 step途中経過（2026-10-15）
+
+- run: `/home/iASL/Arata_repo/EventState/outputs/voxel20_encoder_160_full_20261014_181246`。
+- ユーザーがtrain.logを50記録ずつ平均した直近5区間を提供。最新63,100/計画100,000 step。
+- 計画条件: seed0、DSEC train41、160×120→160×128、20ch、固定RGB教師、z/projector蒸留、identity temporal。
+  run名・起動時期から既存linear版と推定、保存configは未受領。histogram版結果として扱わない。
+- trainの記録step平均でありvalidationではない。各区間50記録、通常20step間隔。
+
+| step範囲 | loss | z cosine | projected z cosine |
+|---|---:|---:|---:|
+| 58120–59100 | 0.21193 | 0.0618 | 0.9294 |
+| 59120–60100 | 0.20916 | 0.0644 | 0.9303 |
+| 60120–61100 | 0.20225 | 0.0644 | 0.9326 |
+| 61120–62100 | 0.21019 | 0.0637 | 0.9299 |
+| 62120–63100 | 0.20459 | 0.0587 | 0.9318 |
+
+- 最初の区間比lossは約3.46%低下。中間に戻りがあり単調ではない。
+  projector後cosineは約0.93で安定し、局所的には改善が緩やか。完全収束の判断材料は不足。
+- 学習はprojector後を教師へ合わせるため、生zの教師とのcosineが低くてもencoder失敗とは断定しない。
+  0.93はexportする生encoder単体の類似度ではない。kart移植時の有用性はhead学習/下流で評価する。
+- 学習率・gradient/overflow・validation・学習初期の推移は未受領。
+  この集計だけを根拠に早期停止せず、計画100k継続を提案。

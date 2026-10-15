@@ -7,7 +7,10 @@
 
 ## 最新状況（2026-10-15）
 
-ユーザーから20ch学習が現在実行中との報告。runパス・step・linear/histogramの別は未受領。
+20ch `outputs/voxel20_encoder_160_full_20261014_181246` が63,100stepまで進行（台帳§35）。
+直近区間loss0.20225–0.21193、projected cosine約0.93、生z cosine約0.06。
+linear版と推定、保存config未照合。局所的に安定/緩やかな改善で完全収束とは断定しない。
+0.93はprojector後でありexport encoder単体の教師類似度ではない。100k継続を提案。
 次はtrain.logのloss/z_cosine/z_projected_cosineの区間平均と学習率・skip状況を確認。
 学習lossの停滞だけで下流性能や汎化の収束とは判断しない。
 
