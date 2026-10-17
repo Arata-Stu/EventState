@@ -28,7 +28,7 @@ esac
 [[ -f "$STATS" && -f "$TEACHER" && -d "$DATA_ROOT" ]] || { echo 'Missing stats/teacher/dataset' >&2; exit 2; }
 OUTPUT="outputs/voxel20_encoder_${RESOLUTION}${SUFFIX}_${STAGE}_$(date +%Y%m%d_%H%M%S)"
 [[ ! -e "$OUTPUT" ]] || { echo 'Output exists' >&2; exit 2; }
-CUDA_VISIBLE_DEVICES='' python -m pytest -q tests/test_histogram_encoder.py tests/test_voxel20_encoder.py tests/test_fixed_normalization.py tests/test_models.py tests/test_transforms.py
+CUDA_VISIBLE_DEVICES='' python -m pytest -q tests/test_event_representation.py tests/test_histogram_encoder.py tests/test_voxel20_encoder.py tests/test_fixed_normalization.py tests/test_models.py tests/test_transforms.py
 mkdir -p "$OUTPUT"
 cp "$STATS" "$OUTPUT/normalization.json"
 git rev-parse HEAD > "$OUTPUT/revision.txt"

@@ -176,13 +176,13 @@ python -m pytest -q tests/test_histogram_encoder.py tests/test_voxel20_encoder.p
 python tools/compute_dsec_raw_voxel_normalization.py \
   --root /home/iASL/Arata_repo/dataset/DSEC \
   --temporal-interpolation none --resolution 160 \
-  --output /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats.json
+  --output /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats_v2.json
 
 GPU=0 bash tools/run_voxel20_encoder.sh smoke \
-  /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats.json 160 none
+  /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats_v2.json 160 none
 # smoke成功後
 GPU=0 bash tools/run_voxel20_encoder.sh full \
-  /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats.json 160 none
+  /home/iASL/Arata_repo/dataset/DSEC_cache/voxel20_histogram_160_train41_stats_v2.json 160 none
 ```
 
 320版は統計生成/ファイル名/ランチャーの160を320へ置換する。
@@ -203,3 +203,7 @@ python tools/verify_kart_histogram_encoder.py \
 入力・patch tokenを比較する。校正、ROS転送、OpenEB CUDA集計の実行検証は含まない。
 Macでは構文確認とkart stdlib契約2テスト通過、Torchテストは未実行。
 kart既存EVSテストはMacのPyYAML不足で起動できず、サーバー/ROS環境で再実行が必要。
+
+2026-10-17修正: histogram_version=2は時間境界[start,end)を正しく適用する。
+旧histogram統計JSONは開始境界のイベント欠落の可能性があるため流用せず再生成する。
+GEP/linearの境界は従来通り(start,end]。

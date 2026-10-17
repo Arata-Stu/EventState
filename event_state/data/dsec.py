@@ -116,7 +116,7 @@ def event_representation_metadata(event_representation: Any) -> dict[str, Any]:
                 else "negative_0,positive_0,..."
             ),
             "normalization": str(event_representation.normalization),
-            **({"temporal_interpolation": "none", "window_us": event_representation.window_us,
+            **({"temporal_interpolation": "none", "histogram_version": 2, "window_us": event_representation.window_us,
                 "window_boundary": "[start,end)"} if event_representation.temporal_interpolation == "none" else {}),
         }
     raise TypeError(

@@ -1,11 +1,17 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-15
+最終更新: 2026-10-17
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-15）
+## 最新状況（2026-10-17）
+
+histogram fullはpreflight 1 failed/17 passedで学習未開始（台帳§36）。
+誤ってGEPへ入った時間境界分岐をvoxelへ移動。none=[start,end)、GEP/linear=(start,end]。
+旧histogram統計は不適合としてhistogram_version=2で拒否、新規v2統計を生成する。
+ローカル修正済み・静的確認済み、サーバー同期→Torchテスト→v2統計→smoke→fullが次。
+
 
 20ch `outputs/voxel20_encoder_160_full_20261014_181246` が63,100stepまで進行（台帳§35）。
 直近区間loss0.20225–0.21193、projected cosine約0.93、生z cosine約0.06。

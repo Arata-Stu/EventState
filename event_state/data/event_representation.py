@@ -68,8 +68,8 @@ class GEPEventFrame:
             & (x < self.width)
             & (y >= 0)
             & (y < self.height)
-            & ((t >= float(start_time)) if self.temporal_interpolation == "none" else (t > float(start_time)))
-            & ((t < float(end_time)) if self.temporal_interpolation == "none" else (t <= float(end_time)))
+            & (t > float(start_time))
+            & (t <= float(end_time))
         )
         x, y, p = x[valid], y[valid], p[valid]
 
@@ -182,8 +182,8 @@ class EventVoxelizer:
             & (x < self.width)
             & (y >= 0)
             & (y < self.height)
-            & (t > float(start_time))
-            & (t <= float(end_time))
+            & ((t >= float(start_time)) if self.temporal_interpolation == "none" else (t > float(start_time)))
+            & ((t < float(end_time)) if self.temporal_interpolation == "none" else (t <= float(end_time)))
         )
         if not torch.any(valid):
             return output.view(self.channels, self.height, self.width)

@@ -1165,3 +1165,16 @@ M3ED Semantic mIoU (%)
   0.93はexportする生encoder単体の類似度ではない。kart移植時の有用性はhead学習/下流で評価する。
 - 学習率・gradient/overflow・validation・学習初期の推移は未受領。
   この集計だけを根拠に早期停止せず、計画100k継続を提案。
+
+## 36. histogram fullの事前テスト失敗と境界修正（2026-10-17）
+
+- ユーザーが `run_voxel20_encoder.sh full <voxel20_histogram_160_train41_stats.json> 160 none` を実行。
+  `test_histogram_boundaries_polarity_and_empty` でbin0が期待2に対して1、1 failed/17 passed。
+  preflightで停止し、この起動では学習未開始。新run出力は未報告。
+- 原因: temporal_interpolationによる時間境界分岐がGEPEventFrameへ誤挿入され、
+  EventVoxelizerには旧(start,end]が残った。GEPに存在しない属性参照の回帰も判明。
+- GEP/linearは(start,end]を維持、noneのみ[start,end)へ修正。
+  両極性/両channel layoutの終了時刻除外とGEP/linear互換テストを追加。
+- noneのrepresentation metadataへhistogram_version=2を追加し、旧統計を一致判定で拒否。
+  修正前の統計は開始時刻イベントを落としている可能性があり、v2の新規JSONへ再生成が必要。
+- MacではAST/bash/diff確認のみ。サーバーTorch再テスト待ち。精度結果なし。

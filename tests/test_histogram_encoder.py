@@ -42,3 +42,29 @@ def test_sum_pool_matches_direct_floor_binning(width):
     pad=(actual.shape[-2]-height)//2
     torch.testing.assert_close(actual[0,:,pad:pad+height],expected,rtol=0,atol=0)
     assert actual.sum()==300
+
+
+@pytest.mark.parametrize('layout', ['polarity_major', 'time_major'])
+@pytest.mark.parametrize('polarity', [0, 1])
+def test_exclusive_end_cannot_leak_to_another_channel(layout, polarity):
+    voxel = EventVoxelizer(height=1, width=1, normalization='none',
+                           channel_layout=layout, temporal_interpolation='none')
+    xy = torch.zeros(1)
+    for timestamp, expected in [(0, 1), (40000, 0)]:
+        result = voxel(xy, xy, torch.tensor([timestamp]), torch.tensor([polarity]),
+                       start_time=0, end_time=40000)
+        assert result.sum().item() == expected
+
+
+def test_legacy_gep_and_linear_keep_right_closed_window():
+    from event_state.data.event_representation import GEPEventFrame
+    xy = torch.zeros(1)
+    p = torch.ones(1)
+    for representation in [GEPEventFrame(height=1, width=1),
+                           EventVoxelizer(height=1, width=1, normalization='none')]:
+        empty = torch.empty(0)
+        background = representation(empty, empty, empty, empty, start_time=0, end_time=40000)
+        at_start = representation(xy, xy, torch.tensor([0]), p, start_time=0, end_time=40000)
+        at_end = representation(xy, xy, torch.tensor([40000]), p, start_time=0, end_time=40000)
+        torch.testing.assert_close(at_start, background)
+        assert not torch.equal(at_end, background)
