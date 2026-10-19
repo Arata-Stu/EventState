@@ -1,11 +1,40 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-17
+最終更新: 2026-10-19
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-17）
+## 最新状況（2026-10-19）
+
+ユーザーが次の優先項目として(1)状態保持/reset比較、(2)活動別評価を希望。
+初期の提案スコープはDSEC/M3ED Semantic validation、既存Hybrid h-only/z+hのbackboneとheadを固定。
+continuous（系列境界のみreset）対frame reset（各フレーム前にh/c双方をreset）を同一フレームで比較。
+z/h/concatを評価し、zを状態操作に対する対照にする。系列先頭から未ラベルフレームも通す。
+同じ活動マスクで全画素/active/inactiveのconfusion matrixと画素数・クラスsupportを集計。
+低活動フレーム別はtrainで固定した閾値を使用し、val精度で閾値を調整しない。
+低活動は物理的停止の真値ではない。固定headのreset劣化は学習済みモデルの履歴依存を示すが、
+状態なしで再学習したモデルに対する優位性とは区別する。
+容量対策はvalidationのみ、モデル/方策単位で逐次処理、原則オンライン集計または一時cache再利用。
+コード確認: DSEC semantic cacheはcontinuous/frameとinclude-activityあり。
+M3ED semantic cacheはcontinuous固定、既存semantic evaluatorには活動別集計がなく追加実装が必要。
+統合評価を実装: tools/run_semantic_state_probe.sh/.py、evaluate_semantic_state_probe.py。
+M3ED cacheへframe reset/activity保存、活動別metricと入力同一性検査を追加。
+4モデル×2方策×3head=24評価、validation cache逐次生成・所有cacheのみ成功後削除。
+低活動フレームは今回train閾値推定を行わず、事前固定10%以下（CLI変更可）。
+手順: docs/semantic_state_probe.md。Macはstdlibテスト/AST/bash/dry-run検証、Torch/GPUはサーバー待ち。
+実験は未起動。実重みでcontinuous値の再現とz不変性を確認してから解釈する。
+
+ユーザーから20ch学習完了の報告あり（台帳§37）。linear/histogramのどちらか、run名・最終step・exportは未確認。
+20chはkart向けsubタスクとして区切り、論文本体の次の優先順位を相談中。
+提案は既存重みのcontinuous/reset比較と活動別評価→有力条件のpretrain seed追加→3GPU/batch拡大比較。
+この順序は提案であり、新しい実験の実行承認・起動はまだない。
+
+実験一覧をdocs/experiment_list.mdへ作成。22系列を整理し、test/val・旧実験/新実験・完了/未確認を分離。
+元数値の正本はexperiment_results.md。M3ED α1 z37.14701はα系列内最高であり、
+旧Hybrid dropout Linear+CE37.611やDice38.392を含む全実験の最高値ではない。
+以下の20ch未完了記述は過去時点の記録。今回の完了報告の対象runは未特定。
+
 
 histogram fullはpreflight 1 failed/17 passedで学習未開始（台帳§36）。
 誤ってGEPへ入った時間境界分岐をvoxelへ移動。none=[start,end)、GEP/linear=(start,end]。

@@ -67,11 +67,13 @@ class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
         sequences: Sequence[str],
         feature: str,
         horizontal_flip_probability: float = 0.0,
+        load_activity: bool = False,
     ) -> None:
         if feature not in {"z", "h", "concat"}:
             raise ValueError("feature must be z, h, or concat")
         if not 0.0 <= horizontal_flip_probability <= 1.0:
             raise ValueError("horizontal-flip-probability must be in [0, 1]")
+        self.load_activity = load_activity
         self.feature = feature
         self.horizontal_flip_probability = float(horizontal_flip_probability)
         self.label_size: tuple[int, int] | None = None
@@ -165,10 +167,21 @@ class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
             timestamp = int(source["timestamps"][frame_index])
         if tuple(label.shape) != self.label_size:
             raise ValueError(f"Semantic label size mismatch: {targets_path}")
+        activity = None
+        if self.load_activity:
+            from event_state.losses.activity_weighting import require_activity
+            activity = require_activity(payload, value.shape[-2:])
+            activity = activity.repeat_interleave(self.patch_size, 0).repeat_interleave(self.patch_size, 1)
+            activity = activity[:label.shape[0], :label.shape[1]]
+            if activity.shape != label.shape:
+                raise ValueError("Activity mask does not cover semantic labels")
         if torch.rand(()) < self.horizontal_flip_probability:
             value = value.flip(-1)
             label = label.flip(-1)
+            if activity is not None:
+                activity = activity.flip(-1)
         return {
+            **({"event_activity": activity} if activity is not None else {}),
             "feature": value.float(),
             "label": label,
             "sequence_name": sequence,

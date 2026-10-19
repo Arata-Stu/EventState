@@ -1178,3 +1178,10 @@ M3ED Semantic mIoU (%)
 - noneのrepresentation metadataへhistogram_version=2を追加し、旧統計を一致判定で拒否。
   修正前の統計は開始時刻イベントを落としている可能性があり、v2の新規JSONへ再生成が必要。
 - MacではAST/bash/diff確認のみ。サーバーTorch再テスト待ち。精度結果なし。
+
+## 37. 20ch学習完了のユーザー報告（2026-10-19）
+
+- ユーザーから「20chの学習が終わった」と報告。kart向けsubタスクとして扱い、次の研究実験を相談。
+- 対象がlinearかhistogramか、出力パス、実際の最終step、seed・splitを示す保存configは今回未受領。
+  計画はDSEC train41/seed0だが、本報告だけでは実行条件を確定しない。
+- 完了報告を受領した段階。最終loss、下流評価値、encoder export、kart実重み一致検証は未確認。

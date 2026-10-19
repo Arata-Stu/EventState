@@ -19,6 +19,8 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from event_state.segmentation import load_m3ed_semantic_split
+from event_state.losses.activity_weighting import ACTIVITY_FORMAT
+from event_state.segmentation.state_probe import forward_frames
 from event_state.training import load_checkpoint, load_checkpoint_config_metadata
 from event_state.training.factory import build_evaluation_runtime
 from event_state.training.data import build_validation_dataloader
@@ -41,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teacher-checkpoint", type=Path, default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--state-policy", choices=("continuous", "frame"), default="continuous")
+    parser.add_argument("--include-activity", action="store_true")
     return parser.parse_args()
 
 
@@ -146,6 +150,8 @@ def main() -> None:
     extraction_config = OmegaConf.create(OmegaConf.to_container(config, resolve=True))
     _set(extraction_config, "dataset.val_sequences", list(sequences))
     _set(extraction_config, "dataset.val_split", args.role)
+    if args.include_activity:
+        _set(extraction_config, "dataset.activity_mask", True)
     extraction_loader = build_validation_dataloader(extraction_config)
     checkpoint_digest = _sha256(checkpoint)
     requested = set(args.features)
@@ -195,7 +201,11 @@ def main() -> None:
                 current_sequence = sequence
                 recurrent_state = None
             events = batch["events"].to(runtime.device, non_blocking=True)
-            outputs = runtime.model(events, state=recurrent_state)
+            # The paired probe uses identical one-frame calls for both policies.
+            # Keep the historical clip path for ordinary continuous cache jobs.
+            outputs = (forward_frames(runtime.model, events, recurrent_state, args.state_policy)
+                       if args.include_activity or args.state_policy == "frame"
+                       else runtime.model(events, state=recurrent_state))
             recurrent_state = outputs.get("state")
             if recurrent_state is not None:
                 recurrent_state = tuple(value.detach() for value in recurrent_state)
@@ -231,9 +241,12 @@ def main() -> None:
                     "timestamp": timestamp,
                     "checkpoint_sha256": checkpoint_digest,
                     "checkpoint_step": int(state.global_step),
-                    "state_policy": "continuous",
+                    "state_policy": args.state_policy,
+            "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
                     "features": feature_maps,
                 }
+                if args.include_activity:
+                    payload["event_activity"] = batch["event_activity"][0, local_index].reshape(grid_height, grid_width).cpu().bool()
                 destination = destination_dir / f"{frame_index:06d}.pt"
                 preserve = False
                 if destination.is_file() and not args.overwrite:
@@ -244,6 +257,9 @@ def main() -> None:
                             and existing.get("checkpoint_sha256") == checkpoint_digest
                             and int(existing.get("frame_index", -1)) == frame_index
                             and requested <= set(existing.get("features", {}))
+                            and existing.get("state_policy") == args.state_policy
+                            and existing.get("activity_format") == payload["activity_format"]
+                            and (not args.include_activity or torch.equal(existing.get("event_activity", torch.empty(0)), payload["event_activity"]))
                         )
                     except (OSError, RuntimeError, TypeError, ValueError):
                         preserve = False
@@ -264,7 +280,8 @@ def main() -> None:
             "sequence_name": sequence,
             "role": args.role,
             "features": sorted(requested),
-            "state_policy": "continuous",
+            "state_policy": args.state_policy,
+            "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
             "checkpoint": str(checkpoint),
             "checkpoint_sha256": checkpoint_digest,
             "checkpoint_step": int(state.global_step),
