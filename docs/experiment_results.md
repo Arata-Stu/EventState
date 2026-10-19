@@ -1185,3 +1185,58 @@ M3ED Semantic mIoU (%)
 - 対象がlinearかhistogramか、出力パス、実際の最終step、seed・splitを示す保存configは今回未受領。
   計画はDSEC train41/seed0だが、本報告だけでは実行条件を確定しない。
 - 完了報告を受領した段階。最終loss、下流評価値、encoder export、kart実重み一致検証は未確認。
+
+## 38. 状態保持/reset・活動別Semantic評価の完了（2026-10-19）
+
+- ユーザー提供ログ: サーバーテスト `10 passed in 2.07s`。起動前/home空き328G、91%。
+- 実行: `bash tools/run_semantic_state_probe.sh --output-root outputs/semantic_state_probe_20261019 --cache-root /home/iASL/Arata_repo/dataset/downstream_scratch/state_probe_20261019 --gpu 0`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/semantic_state_probe_20261019/summary.tsv`（summary.jsonも生成）。
+- dsec_h_only/dsec_z_h/m3ed_h_only/m3ed_z_h × continuous/frame × z/h/concatの24評価が完了。
+  既存Hybrid backboneとseed_0のbest headを固定、追加学習なし。
+  DSEC development val、M3ED validation。既定低活動閾値は活動画素率0.1以下。
+- 掲載コードどおりの実行なら、complete出力はsample/activity/backbone/head/class support一致とz特徴不変性検査の通過を意味する。
+  所有validation cacheは各方策の評価成功後に削除する実装。サーバーファイルは直接確認していない。
+- 精度数値はまだ未受領。状態保持の有効性、低活動領域の改善、既存continuous指標の再現は未判定。
+  次はsummary.jsonの集計を受領し、全領域とactive/inactive、低活動フレームの差と画素supportを確認。
+
+## 39. 状態保持/resetのSemantic数値と活動別内訳（2026-10-19）
+
+- ユーザー提供のsummary.json集計出力（小数3桁）。元の全精度JSONは未受領。
+- 出力root: `/home/iASL/Arata_repo/EventState/outputs/semantic_state_probe_20261019`。
+- §38の既存Hybrid h-only/z+h、事前学習・headは既定seed0。DSEC development val、M3ED validation。
+  backbone/best head固定、continuous対毎フレームh/c reset。追加学習なし。
+- 下表は百分率、差は保持−resetのpercentage point。低活動フレームは活動画素率10%以下。
+
+| モデル | 入力 | 保持/全体 | reset/全体 | Δ全体 | Δ活動 | Δ非活動 | Δ低活動frame |
+|---|---|---:|---:|---:|---:|---:|---:|
+| dsec_h_only | z | 59.423 | 59.423 | 0.000 | 0.000 | 0.000 | N/A |
+| dsec_h_only | h | 60.172 | 56.340 | 3.832 | 3.733 | 6.176 | N/A |
+| dsec_h_only | concat | 60.240 | 59.326 | 0.913 | 0.974 | 1.146 | N/A |
+| dsec_z_h | z | 59.709 | 59.709 | 0.000 | 0.000 | 0.000 | N/A |
+| dsec_z_h | h | 59.392 | 55.027 | 4.365 | 4.210 | 6.128 | N/A |
+| dsec_z_h | concat | 60.097 | 59.550 | 0.547 | 0.570 | 0.695 | N/A |
+| m3ed_h_only | z | 36.090 | 36.090 | 0.000 | 0.000 | 0.000 | 0.000 |
+| m3ed_h_only | h | 36.179 | 33.288 | 2.891 | 4.758 | 2.214 | 1.141 |
+| m3ed_h_only | concat | 36.383 | 35.516 | 0.867 | 1.728 | 0.520 | 0.134 |
+| m3ed_z_h | z | 35.660 | 35.660 | 0.000 | 0.000 | 0.000 | 0.000 |
+| m3ed_z_h | h | 34.972 | 33.702 | 1.270 | 2.650 | 0.817 | 0.034 |
+| m3ed_z_h | concat | 35.510 | 35.674 | -0.164 | 0.225 | -0.300 | -0.664 |
+
+差は元精度から算出された表示値を保存。丸め済みの保持/resetを引き直さない。
+
+| データセット（両モデル共通） | all画素 | active画素 | inactive画素 | low_activity_frames画素 |
+|---|---:|---:|---:|---:|
+| DSEC | 633,036,800 | 425,897,472 | 207,139,328 | 0 |
+| M3ED | 3,218,555,646 | 1,297,051,840 | 1,921,503,806 | 1,378,563,144 |
+
+観察・解釈:
+- z差0、continuous全体は§30の既存値と表示精度で一致。再評価の整合性を支持。
+- h入力は全4モデルで保持が有利（+1.270〜+4.365 point）。学習済みhの履歴依存を支持。
+- DSEC h入力では非活動の差約+6.1が活動の+3.7〜4.2より大きい。
+- M3ED h入力では活動の差が非活動より大きい。低活動frameもh-only +1.141、z+h +0.034。
+  「M3ED/低活動ほど保持効果が大きい」という一般化は支持されない。
+- M3ED z+h concatは全体-0.164、非活動-0.300、低活動frame-0.664。保持が一律有利ではない。
+- DSEC低活動frame N/Aは対象画素0であり、効果0ではない。
+- 今回は全領域蒸留モデル。activity αの損失の優位性を直接評価したものではない。
+- 単一seed・固定headへのreset介入。状態なしで再学習したモデルとの差や統計的有意差とは区別。
+  領域別クラス構成の影響があるため、次候補は保存済みJSONのclass support/IoU確認とα1への同じ評価。

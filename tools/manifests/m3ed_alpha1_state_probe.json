@@ -1,0 +1,8 @@
+[
+  {
+    "name": "m3ed_alpha_1",
+    "dataset": "m3ed",
+    "checkpoint": "outputs/hybrid_activity_alpha_full_20261009_021017/m3ed_alpha_1/checkpoints/step_00100000.pt",
+    "heads": "outputs/hybrid_activity_alpha_downstream_20261011/m3ed_alpha_1/semantic"
+  }
+]

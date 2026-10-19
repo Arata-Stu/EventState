@@ -69,3 +69,30 @@ continuousの全領域値を過去の同一headのvalidation値と照合して�
 固定headのreset劣化は学習済みモデルの履歴依存を示す。resetは学習時分布からの介入でもあり、
 状態なしで再学習したモデルに対する優位性を示す実験ではない。
 単一seedで有意差は判定しない。低活動区間の長さ別・物理的停止の分類は今回未実装。
+
+## M3ED全領域蒸留とα=1の比較（2026-10-19）
+
+reset介入は履歴利用の確認であり、蒸留損失の優位性とは分ける。
+新規α1はcontinuousだけ実行し、全領域baselineの既存continuous JSONを再利用する。
+各モデル専用の学習済みheadを使う。単一seedのモデル間比較であり損失変更の因果効果を確定しない。
+
+```bash
+bash tools/run_semantic_state_probe.sh \
+  --models-json tools/manifests/m3ed_alpha1_state_probe.json \
+  --policies continuous \
+  --output-root outputs/m3ed_alpha1_activity_probe_20261019 \
+  --cache-root /home/iASL/Arata_repo/dataset/downstream_scratch/m3ed_alpha1_probe_20261019 \
+  --gpu 0
+
+python tools/compare_semantic_activity_probes.py \
+  --baseline outputs/semantic_state_probe_20261019/m3ed_z_h/continuous \
+  --candidate outputs/m3ed_alpha1_activity_probe_20261019/m3ed_alpha_1/continuous \
+  --output outputs/m3ed_alpha1_activity_probe_20261019/vs_full_region.json
+```
+
+学習なし、抽出1回・3head評価。成功後cache削除。`--resume`は新runの同じ引数に追加。
+新ランチャーはpoliciesをrun identityに含むため、旧version1のrunをこの版でresumeしない。
+旧runの結果JSONを読む比較ツールは互換。comparisonの差はα1−全領域。
+クラスIoU/supportと両head/backboneハッシュも比較JSONへ保存する。
+サンプル・マスク・閾値・クラスsupportが異なれば停止する。異なる重みのSHA一致は要求しない。
+新規結果の全体zが以前の37.147%を再現するか、まず確認する。

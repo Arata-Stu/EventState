@@ -46,7 +46,19 @@ def commands(model, policy, cache, output, data, teacher, threshold):
     return stages
 
 
-def summarize(output, models):
+def summarize(output, models, policies=('continuous', 'frame')):
+    if len(policies) == 1:
+        rows = []
+        for m in models:
+            for feature in ('z', 'h', 'concat'):
+                result = json.loads((output/m['name']/policies[0]/f'{feature}.json').read_text())
+                for group, metrics in result['metrics'].items():
+                    rows.append(dict(model=m['name'], feature=feature, state_policy=policies[0],
+                                     group=group, mIoU=metrics['mIoU'], pixels=metrics['evaluated_pixels']))
+        atomic_json(output/'summary.json', rows)
+        (output/'summary.tsv').write_text('\t'.join(rows[0]) + '\n' +
+            '\n'.join('\t'.join(str(v) for v in row.values()) for row in rows) + '\n')
+        return
     rows = []
     for m in models:
         for feature in ('z', 'h', 'concat'):
@@ -77,6 +89,7 @@ def main():
     p.add_argument('--cache-root', type=Path, required=True)
     p.add_argument('--models-json', type=Path, help='Optional list of {name,dataset,checkpoint,heads}; head root contains z/h/concat/seed_0/best.pt')
     p.add_argument('--only', nargs='+')
+    p.add_argument('--policies', nargs='+', choices=['continuous', 'frame'], default=['continuous', 'frame'])
     p.add_argument('--data-root', type=Path, default=Path('/home/iASL/Arata_repo/dataset'))
     p.add_argument('--teacher-checkpoint', type=Path, default=Path('/home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth'))
     p.add_argument('--low-activity-threshold', type=float, default=0.1)
@@ -86,6 +99,8 @@ def main():
     a = p.parse_args()
     if not 0 <= a.low_activity_threshold <= 1 or a.gpu < 0:
         p.error('Invalid threshold/GPU')
+    if len(set(a.policies)) != len(a.policies):
+        p.error('Duplicate policies')
     models = json.loads(a.models_json.read_text()) if a.models_json else default_models()
     if not models or len({m['name'] for m in models}) != len(models):
         p.error('Models must be nonempty and uniquely named')
@@ -111,14 +126,14 @@ def main():
         p.error('Input inside scratch')
     if a.dry_run:
         for m in models:
-            for policy in ('continuous','frame'):
+            for policy in a.policies:
                 for _, cmd in commands(m, policy, scratch/f"{m['name']}_{policy}", output/m['name']/policy, data, teacher, a.low_activity_threshold):
                     print(shlex.join(cmd))
         return
     for path in inputs:
         if not path.is_file():
             raise FileNotFoundError(path)
-    identity = dict(version=1, models=models, output=str(output), scratch=str(scratch), data=str(data),
+    identity = dict(version=2, policies=a.policies, models=models, output=str(output), scratch=str(scratch), data=str(data),
                     threshold=a.low_activity_threshold, inputs={str(v):digest(v) for v in inputs},
                     code={str(v):digest(v) for v in [Path(__file__),
                         PROJECT/'tools/evaluate_semantic_state_probe.py',
@@ -135,7 +150,7 @@ def main():
         output.mkdir(parents=True); scratch.mkdir(parents=True)
         atomic_json(output/'run.json', identity)
     for m in models:
-        for policy in ('continuous','frame'):
+        for policy in a.policies:
             dest = output/m['name']/policy; dest.mkdir(parents=True, exist_ok=True)
             cache = scratch/f"{m['name']}_{policy}"
             if (dest/'complete.json').exists():
@@ -155,7 +170,7 @@ def main():
                                    stdout=log, stderr=subprocess.STDOUT, check=True)
             atomic_json(dest/'complete.json', dict(complete=True))
             safe_cleanup(cache, scratch, identity)
-    summarize(output, models)
+    summarize(output, models, a.policies)
     print(f'[state-probe] complete: {output}/summary.tsv', flush=True)
 
 if __name__ == '__main__':

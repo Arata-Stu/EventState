@@ -7,6 +7,20 @@
 
 ## 最新状況（2026-10-19）
 
+state probe全24評価completeのユーザー報告（台帳§38）。サーバーテスト10 passed/2.07s。
+出力outputs/semantic_state_probe_20261019/summary.tsv、起動前空き328G。
+掲載コードではpaired identityとz不変性チェック通過後にcompleteを表示する。
+数値受領・台帳§39へ保存（小数3桁）。continuous全体は旧値と表示精度で一致、z差は0。
+h保持の全体差: DSEC h-only+3.832/z+h+4.365、M3ED h-only+2.891/z+h+1.270。
+DSEC hの非活動差は約+6.1。M3EDでは活動側の効果が大きく、z+h concat全体-0.164/低活動-0.664。
+状態保持の一律優位や「M3ED低活動ほど効く」は主張しない。DSEC低活動frameは対象0でN/A。
+ユーザーがM3ED α1のcontinuous活動別評価を承認。新規抽出1回+3head、全領域baselineの既存JSONを再利用。
+run_semantic_state_probeに--policies continuousを追加、tools/manifests/m3ed_alpha1_state_probe.jsonで重み指定。
+比較ツールtools/compare_semantic_activity_probes.pyは母集団一致を検査し、α1−全領域を出力。
+手順docs/semantic_state_probe.md。新出力outputs/m3ed_alpha1_activity_probe_20261019。サーバー実行未報告。
+Mac stdlib 3テスト・AST・dry-run通過。resetの結果は履歴依存の補足であり、主な損失比較とは区別する。
+以下の「未起動」「サーバー待ち」は本報告前の記録。
+
 ユーザーが次の優先項目として(1)状態保持/reset比較、(2)活動別評価を希望。
 初期の提案スコープはDSEC/M3ED Semantic validation、既存Hybrid h-only/z+hのbackboneとheadを固定。
 continuous（系列境界のみreset）対frame reset（各フレーム前にh/c双方をreset）を同一フレームで比較。
