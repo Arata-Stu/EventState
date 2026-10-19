@@ -7,6 +7,12 @@
 
 ## 最新状況（2026-10-19）
 
+ユーザーがGEPの約50ms→20msで同様の学習を希望。DSEC固定20msオンライン事前学習経路を追加。
+提案2条件baseline/α1、Hybrid4+4/batch8/clip8、augmentation/dropoutなし、正規化は既存値固定。
+RGB教師cacheを再利用、元HDF5からGEPを逐次生成し全量event cache追加を避ける。
+tools/run_dsec_gep20_pretrain.py（smoke/full、GPU0/1独立job）、手順docs/dsec_gep20.md。
+Mac静的確認のみ。サーバーsmoke/full未実施。下流20ms抽出は未実装、旧cache exporterは誤用を拒否。
+
 state probe全24評価completeのユーザー報告（台帳§38）。サーバーテスト10 passed/2.07s。
 出力outputs/semantic_state_probe_20261019/summary.tsv、起動前空き328G。
 掲載コードではpaired identityとz不変性チェック通過後にcompleteを表示する。
@@ -17,7 +23,11 @@ DSEC hの非活動差は約+6.1。M3EDでは活動側の効果が大きく、z+h
 ユーザーがM3ED α1のcontinuous活動別評価を承認。新規抽出1回+3head、全領域baselineの既存JSONを再利用。
 run_semantic_state_probeに--policies continuousを追加、tools/manifests/m3ed_alpha1_state_probe.jsonで重み指定。
 比較ツールtools/compare_semantic_activity_probes.pyは母集団一致を検査し、α1−全領域を出力。
-手順docs/semantic_state_probe.md。新出力outputs/m3ed_alpha1_activity_probe_20261019。サーバー実行未報告。
+手順docs/semantic_state_probe.md。新出力outputs/m3ed_alpha1_activity_probe_20261019。サーバーでcache/z/h/concat全complete（台帳§40）。
+比較数値受領・§41へ保存。α1−全領域のz全体+1.486、活動+0.225、非活動+1.944、低活動frame+2.356。
+h/concatも非活動・低活動frameでより大きな改善。単一seedの観察であり機序/有意差は未確定。
+新規z37.146は旧37.14701と約0.001point差、原因未検証。旧値と別評価として保存。
+次候補は保存config・クラス内訳確認、pretrain seed追加とDSEC同条件比較（未承認）。
 Mac stdlib 3テスト・AST・dry-run通過。resetの結果は履歴依存の補足であり、主な損失比較とは区別する。
 以下の「未起動」「サーバー待ち」は本報告前の記録。
 

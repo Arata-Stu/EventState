@@ -174,6 +174,8 @@ def main() -> None:
 
     metadata = load_checkpoint_config_metadata(checkpoint)
     config = OmegaConf.create(metadata.config)
+    if OmegaConf.select(config, "dataset.event_window_us") is not None:
+        raise ValueError("Fixed-window GEP checkpoint requires matching raw-window downstream extraction; this cache exporter cannot use the old RGB-interval event cache")
     if args.teacher_checkpoint is not None:
         teacher_checkpoint = str(args.teacher_checkpoint.expanduser().resolve())
         OmegaConf.update(config, "teacher.checkpoint", teacher_checkpoint, merge=False)

@@ -48,6 +48,15 @@ def normalize_event_window_fraction(value: float) -> float:
     return fraction
 
 
+def fixed_event_window_start(previous_timestamp: int, timestamp: int, duration_us: int) -> int:
+    """Exact causal tail; reject short RGB intervals rather than silently clipping."""
+    if isinstance(duration_us, bool) or not isinstance(duration_us, int) or duration_us <= 0:
+        raise ValueError("duration_us must be a positive integer")
+    if timestamp - previous_timestamp < duration_us:
+        raise ValueError("RGB interval is shorter than the requested fixed event window")
+    return timestamp - duration_us
+
+
 def event_window_start_timestamp(
     previous_timestamp: int,
     timestamp: int,
@@ -438,6 +447,7 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         load_events: bool = True,
         load_images: bool = True,
         event_window_fraction: float = 1.0,
+        event_window_us: int | None = None,
         activity_mask: bool = False,
     ) -> None:
         if sequence_length <= 0:
@@ -477,6 +487,14 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         self.event_window_fraction = normalize_event_window_fraction(
             event_window_fraction
         )
+        self.event_window_us = event_window_us
+        if event_window_us is not None:
+            if isinstance(event_window_us, bool) or not isinstance(event_window_us, int) or event_window_us <= 0:
+                raise ValueError("event_window_us must be a positive integer")
+            if self.event_window_fraction != 1.0 or self.event_cache_dir is not None:
+                raise ValueError("Fixed event_window_us requires fraction=1 and online raw events (event_cache_dir=null)")
+            if not isinstance(event_representation, GEPEventFrame):
+                raise ValueError("Fixed event_window_us is currently supported only for GEP RGB")
         self.sequence_names = discover_dsec_sequences(self.root, split, sequences)
         self._readers: dict[str, DSECEventReader] = {}
         self._frames_by_sequence: dict[str, list[DSECFrame]] = {}
@@ -1033,6 +1051,8 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
             record.timestamp,
             self.event_window_fraction,
         )
+        if self.event_window_us is not None:
+            window_start = fixed_event_window_start(record.previous_timestamp, record.timestamp, self.event_window_us)
         if histogram:
             window_start = record.timestamp - self.event_representation.window_us
             # Reader uses (start,end]; integer microseconds shift yields [start,end).

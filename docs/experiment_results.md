@@ -1240,3 +1240,53 @@ M3ED Semantic mIoU (%)
 - 今回は全領域蒸留モデル。activity αの損失の優位性を直接評価したものではない。
 - 単一seed・固定headへのreset介入。状態なしで再学習したモデルとの差や統計的有意差とは区別。
   領域別クラス構成の影響があるため、次候補は保存済みJSONのclass support/IoU確認とα1への同じ評価。
+
+## 40. M3ED α1 continuous活動別評価の完了（2026-10-19）
+
+- ユーザー提供ログで `m3ed_alpha_1 continuous` のcache/z/h/concatと最後のcompleteを確認。
+- コマンド: `run_semantic_state_probe.sh --models-json tools/manifests/m3ed_alpha1_state_probe.json --policies continuous --output-root outputs/m3ed_alpha1_activity_probe_20261019 --cache-root /home/iASL/Arata_repo/dataset/downstream_scratch/m3ed_alpha1_probe_20261019 --gpu 0`。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/m3ed_alpha1_activity_probe_20261019/summary.tsv`。
+- 既定manifest: Hybrid α1（z activeのみ/h全域）、seed0 backboneと各seed0 best head固定、M3ED validation。
+  新しい学習なし、状態保持のみ3head評価。活動閾値は既定10%、全領域baselineは§39の既存continuous結果を再利用。
+- 今回は実行完了のみ。数値およびbaselineとの母集団一致検査結果は未受領。
+  次はcompare_semantic_activity_probes.pyで比較し、全体z37.147%の再現と領域別の差を確認。
+
+## 41. M3ED α1対全領域蒸留の活動別Semantic比較（2026-10-19）
+
+- ユーザー提供のcompare_semantic_activity_probes.py出力（小数3桁）。全精度JSONは未受領。
+- baseline: `/home/iASL/Arata_repo/EventState/outputs/semantic_state_probe_20261019/m3ed_z_h/continuous`。
+- candidate: `/home/iASL/Arata_repo/EventState/outputs/m3ed_alpha1_activity_probe_20261019/m3ed_alpha_1/continuous`。
+- 比較JSON: candidate出力rootの`vs_full_region.json`。
+- M3ED validation、Hybrid、既定seed0、各backbone専用のseed0 best frozen head、両者continuous。
+  baseline=z/hとも全領域、α1=z activeのみ/h全領域。低活動frameは活動画素率10%以下。
+- 比較ツールが完了しており、掲載コードではsamples/masks/threshold/class support等の一致検査通過。
+  別モデル・別headの比較であり重みは同一でない。完全な保存config/revision照合は未実施。
+
+| 入力 | 群 | baseline | α1 | 差point | 評価画素数 |
+|---|---|---:|---:|---:|---:|
+| z | all | 35.660 | 37.146 | 1.486 | 3,218,555,646 |
+| z | active | 46.262 | 46.487 | 0.225 | 1,297,051,840 |
+| z | inactive | 26.492 | 28.436 | 1.944 | 1,921,503,806 |
+| z | low_activity_frames | 21.900 | 24.256 | 2.356 | 1,378,563,144 |
+| z | other_frames | 47.016 | 47.686 | 0.670 | 1,839,992,502 |
+| h | all | 34.972 | 36.358 | 1.386 | 3,218,555,646 |
+| h | active | 45.391 | 45.403 | 0.013 | 1,297,051,840 |
+| h | inactive | 26.408 | 28.133 | 1.724 | 1,921,503,806 |
+| h | low_activity_frames | 21.303 | 23.545 | 2.242 | 1,378,563,144 |
+| h | other_frames | 46.474 | 47.036 | 0.562 | 1,839,992,502 |
+| concat | all | 35.510 | 36.976 | 1.466 | 3,218,555,646 |
+| concat | active | 46.082 | 46.263 | 0.181 | 1,297,051,840 |
+| concat | inactive | 26.486 | 28.354 | 1.868 | 1,921,503,806 |
+| concat | low_activity_frames | 21.763 | 23.953 | 2.190 | 1,378,563,144 |
+| concat | other_frames | 46.896 | 47.664 | 0.768 | 1,839,992,502 |
+
+- 全3入力で非活動/低活動frameの改善幅が活動/その他frameより大きい。
+  非活動でのz直接蒸留を除く設定が低活動条件の表現を改善する、という解釈と整合する。
+  ただし不適切な教師信号の除去が原因とは未証明。h損失からencoderへは勾配が流れる。
+- zでも改善するため、今回の差を推論時の状態保持効果だけに帰属できない。
+  α0の相補的蒸留が有効という証拠でもない（α1ではhは全領域）。
+- 新規z全体37.146は旧37.14701（§33）と約0.001point差。旧値を上書きせず別評価値として保持。
+  抽出のframe/clip単位等の実行差は候補だが、差の原因は未検証。
+- mIoUは領域別指標の画素加重平均ではない。全体改善を各領域へ加算分解しない。
+- 単一seed・validation。次候補はclass IoU/supportの確認、保存configの整合確認、
+  baseline/α1のpretrain seed追加、およびDSECへの同一比較。まだ追加実行は未承認。

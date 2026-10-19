@@ -427,7 +427,7 @@ def _dataset_options(
                 "target_tasks": _as_optional_list(_value(dataset_config, "target_tasks")),
             }
             if str(_value(dataset_config, "name", "dsec")).lower() == "m3ed"
-            else {}
+            else {"event_window_us": _value(dataset_config, "event_window_us", None)}
         ),
     }
 
