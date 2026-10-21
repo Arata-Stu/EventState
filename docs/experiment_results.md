@@ -1307,3 +1307,28 @@ M3ED Semantic mIoU (%)
 - 追加確認（2026-10-21）: ユーザーの`ls -lh`でbaseline/alpha1双方の
   `checkpoints/step_00100000.pt`が存在、各280M、更新表示10月21日01:51。
   最終checkpointファイルの存在は確認済み。内容のロード・global_step/configの照合・最終lossは未確認。
+
+## 43. GEP20下流baselineのDetection val特徴抽出で停止（2026-10-21）
+
+- サーバー事前テスト12 passed/3.39s、起動前/home空き322G。
+- 出力root: `/home/iASL/Arata_repo/EventState/outputs/dsec_gep20_downstream_20261021`。
+  scratch: `/home/iASL/Arata_repo/dataset/downstream_scratch/dsec_gep20_20261021`。
+- baselineのSemantic train/val特徴抽出、z/h/concat head学習・通常評価・活動別評価まで次stageへ進行。
+  Detection train特徴抽出・warpも次stageへ進行。seed0/development val、精度値は未受領。
+- `dsec_gep20_baseline: detection_cache_val`で子プロセスがexit1。
+  親のCalledProcessErrorのみ受領し、根本例外はまだ不明。容量不足とは断定しない。
+- 原因ログ: output rootの`dsec_gep20_baseline/detection_cache_val.log`。
+  現時点dfも必要。alpha1とDetection head学習は未到達。
+- 完了stageのdone markerとcacheを保存し、診断前に削除・再起動しない。
+  同一コード/入力の--resumeは完了stageをskipできるが、修正が必要ならcode identityの扱いも確認する。
+
+- 根本例外の追加受領: `RawGEPFeatureSource`で`zurich_city_16_a`のphysical split候補が空。
+  `train_events/SEQ`+`train_images/SEQ`または`test_events/SEQ`+`test_images/SEQ`の揃ったディレクトリが見つからない。
+  どちらか不足・別配置・リンク切れの区別は未確認。停止時空き143G、96%。今回の例外は書き込み容量エラーではない。
+  元イベント、画像/timestamp、既存GEP metadataの配置確認が次。50msの集約GEPから20msを復元することはしない。
+
+- ユーザーの配置確認で標準train/testのimages/eventsにはzurich_city_16_aなし。
+  DSEC直下にはdsec_det_extraあり。download_dsec.sh/prepare_dsec.pyは追加6系列をextra/trainへ隔離する設計。
+- 原因は新しいraw exporterの標準配置のみの探索。追加配置を明示sequence_rootで読む修正を実装。
+  学習データの自動発見は変更せず、完了済み標準系列の入力経路・窓・変換を維持する。
+  既知の修正前code hashからのみ監査付きresumeを許可。Mac stdlib9テスト・静的検証通過、サーバー再開未報告。

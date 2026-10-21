@@ -29,14 +29,18 @@ class RawGEPFeatureSource:
     def __init__(self, root, sequence, config):
         from event_state.training.data import build_event_representation
         self.root = Path(root).resolve()
-        matches = [s for s in ('train', 'test') if
+        matches = [(s, None) for s in ('train', 'test') if
                    (self.root/f'{s}_events'/sequence).is_dir() and
                    (self.root/f'{s}_images'/sequence).is_dir()]
+        matches += [(s, self.root/'dsec_det_extra'/s/sequence) for s in ('train', 'test')
+                    if (self.root/'dsec_det_extra'/s/sequence/'images').is_dir()
+                    and (self.root/'dsec_det_extra'/s/sequence/'events').is_dir()]
         if len(matches) != 1:
             raise ValueError(f'Expected one physical DSEC split for {sequence}: {matches}')
-        split = matches[0]
+        split, extra_root = matches[0]
         representation = build_event_representation(config.dataset)
         self.dataset = DSECSequenceDataset(root=self.root, split=split, sequences=[sequence],
+            **({"sequence_root": extra_root} if extra_root is not None else {}),
             sequence_length=1, event_representation=representation,
             transform=PairedSequenceTransform(height=480, width=640, training=False),
             image_directory=OmegaConf.select(config, 'dataset.image_directory', default='aligned_event'),
@@ -47,7 +51,7 @@ class RawGEPFeatureSource:
         self.records = {str(r.timestamp): r for r in frames}
         if len(self.records) != len(frames):
             raise ValueError('Duplicate frame timestamps')
-        self.source_dir = self.root/f'{split}_events'/sequence
+        self.source_dir = extra_root if extra_root is not None else self.root/f'{split}_events'/sequence
         self.paths = [self.source_dir/f'{r.timestamp}.pt' for r in frames]  # identity only, not files
         self.metadata = dict(source='raw_fixed_window_gep_v1', physical_split=split,
             sequence_name=sequence, representation=event_representation_metadata(representation),
@@ -58,7 +62,7 @@ class RawGEPFeatureSource:
         for path in sorted(self.source_dir.rglob('*.h5')):
             st = path.stat()
             self.metadata['inputs'][str(path)] = [st.st_size, st.st_mtime_ns]
-        image_base = self.root/f'{split}_images'/sequence
+        image_base = extra_root/'images' if extra_root is not None else self.root/f'{split}_images'/sequence
         for path in sorted(image_base.rglob('*')):
             if path.is_file() and path.suffix in {'.txt', '.json'}:
                 st = path.stat()

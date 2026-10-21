@@ -438,6 +438,7 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         event_representation: Any,
         transform: PairedSequenceTransform,
         sequences: Sequence[str] | None = None,
+        sequence_root: str | Path | None = None,
         clip_stride: int = 1,
         include_incomplete_clips: bool = False,
         image_directory: str = "aligned_event",
@@ -495,7 +496,17 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
                 raise ValueError("Fixed event_window_us requires fraction=1 and online raw events (event_cache_dir=null)")
             if not isinstance(event_representation, GEPEventFrame):
                 raise ValueError("Fixed event_window_us is currently supported only for GEP RGB")
-        self.sequence_names = discover_dsec_sequences(self.root, split, sequences)
+        self.sequence_root = Path(sequence_root).expanduser() if sequence_root is not None else None
+        if self.sequence_root is None:
+            self.sequence_names = discover_dsec_sequences(self.root, split, sequences)
+        else:
+            # Explicit downstream-only selection, never broaden pretraining discovery.
+            if sequences is None or len(sequences) != 1 or self.sequence_root.name != sequences[0]:
+                raise ValueError("sequence_root requires exactly one matching sequence")
+            for component in ("images", "events", "calibration"):
+                if not (self.sequence_root / component).is_dir():
+                    raise FileNotFoundError(self.sequence_root / component)
+            self.sequence_names = list(sequences)
         self._readers: dict[str, DSECEventReader] = {}
         self._frames_by_sequence: dict[str, list[DSECFrame]] = {}
         self._event_cache_manifests: dict[str, dict[str, Any]] = {}
@@ -771,8 +782,13 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         )
         return metadata
 
+    def _component_root(self, sequence_name: str, component: str) -> Path:
+        if getattr(self, "sequence_root", None) is not None:
+            return self.sequence_root / component
+        return self.root / f"{self.split}_{component}" / sequence_name / component
+
     def _load_frame_manifest(self, sequence_name: str) -> list[DSECFrame]:
-        sequence_root = self.root / f"{self.split}_images" / sequence_name / "images"
+        sequence_root = self._component_root(sequence_name, "images")
         timestamp_path = sequence_root / "timestamps.txt"
         if not timestamp_path.is_file():
             raise FileNotFoundError(f"DSEC RGB timestamps not found: {timestamp_path}")
@@ -909,18 +925,10 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
             self.root,
             files={
                 "rgb_timestamps": (
-                    self.root
-                    / f"{self.split}_images"
-                    / sequence_name
-                    / "images"
-                    / "timestamps.txt"
+                    self._component_root(sequence_name, "images") / "timestamps.txt"
                 ),
                 "camera_calibration": (
-                    self.root
-                    / f"{self.split}_calibration"
-                    / sequence_name
-                    / "calibration"
-                    / "cam_to_cam.yaml"
+                    self._component_root(sequence_name, "calibration") / "cam_to_cam.yaml"
                 ),
             },
             file_sets={"rectified_rgb_frames": source_images},
@@ -1011,7 +1019,7 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
 
     def _reader(self, sequence_name: str) -> DSECEventReader:
         if sequence_name not in self._readers:
-            event_base = self.root / f"{self.split}_events" / sequence_name / "events" / "left"
+            event_base = self._component_root(sequence_name, "events") / "left"
             self._readers[sequence_name] = DSECEventReader(
                 event_base / "events.h5",
                 rectify_map_path=(event_base / "rectify_map.h5") if self.rectify_events else None,

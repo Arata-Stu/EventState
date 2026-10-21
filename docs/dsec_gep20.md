@@ -76,3 +76,14 @@ baseline→alpha1を逐次実行し、同時蓄積を避ける。
 活動別比較は同じ20ms窓・同じmaskの両モデル間で実施する。
 約50msと20msでは活動mask自体が異なるため、異なる窓の活動別指標を同じ母集団の比較と扱わない。
 全体の同一split指標を先に比較する。実サーバーの下流完了/精度は未受領。
+
+
+### Detection追加系列の配置修正
+
+2026-10-21: raw exporterがdsec_det_extra/{train,test}/SEQにも対応。
+明示的な下流sequence指定でのみ使い、標準train/testの自動探索・事前学習splitを拡大しない。
+コピーやシンボリックリンクによる標準配置への混入は不要。
+修正前runからの--resumeは、既知の3ファイルの修正前hashとそれ以外の入力/コード一致を要求。
+run.json/ownerは変更せずextra_layout_resume.jsonに実行コードの変更記録を保存する。
+Semantic/Detection train完了markerを保持し、失敗したdetection_cache_valから続ける。
+未知の変更でResume identity differsとなった場合は手作業でowner/run.jsonを書き換えない。

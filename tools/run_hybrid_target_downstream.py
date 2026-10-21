@@ -146,6 +146,27 @@ def model_plan(name, checkpoint, data, teacher, cache, output):
     return stages, results
 
 
+# Exact predecessor revision: permit only this layout-only correction on resume.
+_GEP20_LAYOUT_PREDECESSOR = {
+    'event_state/data/dsec.py': 'e4de6403c8ef2c968a81a79a97e72eb585dc86d730f1d385f2d47907e90d5cec',
+    'event_state/data/dsec_feature_source.py': 'a2d2584813e547b135b3575f3bbde710d93854fcf8951270a9a0941d17487701',
+    'tools/run_hybrid_target_downstream.py': 'c896e7bff1b6254dda038e1a8dd54bd2b7126f696a6e5fae022491e3dae815fe',
+}
+
+
+def compatible_gep20_layout_fix(saved, current):
+    if saved.get('suite') != 'gep20' or current.get('suite') != 'gep20':
+        return False
+    if {k:v for k,v in saved.items() if k != 'code'} != {k:v for k,v in current.items() if k != 'code'}:
+        return False
+    old, new = saved.get('code', {}), current.get('code', {})
+    if not old or old.keys() != new.keys():
+        return False
+    if any(old.get(k) != v for k,v in _GEP20_LAYOUT_PREDECESSOR.items()):
+        return False
+    return all(old[k] == new[k] for k in old if k not in _GEP20_LAYOUT_PREDECESSOR)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--pretrain-root', type=Path, required=True)
@@ -221,8 +242,19 @@ def main():
             PROJECT/'event_state/data/dsec.py', PROJECT/'tools/cache_dsec_semantic_features.py',
             PROJECT/'tools/cache_dsec_detection_features.py', PROJECT/'tools/evaluate_semantic_state_probe.py']}
     if a.resume:
-        if json.loads((output / 'run.json').read_text()) != identity:
-            raise ValueError('Resume identity differs; preserve original inputs and paths')
+        saved_identity = json.loads((output / 'run.json').read_text())
+        if saved_identity != identity:
+            if not compatible_gep20_layout_fix(saved_identity, identity):
+                raise ValueError('Resume identity differs; preserve original inputs and paths')
+            # Preserve ownership identities and all completed stage markers. Record the
+            # corrected execution code separately rather than disguising its revision.
+            audit = dict(reason='DSEC-Det extra layout support', before=saved_identity['code'], after=identity['code'])
+            audit_path = output / 'extra_layout_resume.json'
+            if audit_path.exists() and json.loads(audit_path.read_text()) != audit:
+                raise ValueError('Resume patch changed since prior migration')
+            atomic_json(audit_path, audit)
+            identity = saved_identity
+            print('[downstream] resuming with audited DSEC-Det extra layout fix', flush=True)
         if json.loads((scratch / '.owner.json').read_text()) != identity:
             raise ValueError('Scratch root ownership mismatch')
     else:

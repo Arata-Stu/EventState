@@ -7,6 +7,17 @@
 
 ## 最新状況（2026-10-21）
 
+GEP20下流はbaseline detection_cache_valでexit1（台帳§43）。サーバーテスト12 passed/3.39s、起動前空き322G。
+Semantic3headの学習/評価/活動別とDetection train cache/warpは次stageへ進行。alpha1未到達。
+根本例外判明: zurich_city_16_aのtrain/test画像・イベントの揃った物理splitが見つからない。
+停止時空き143G、96%。今回の例外は容量ではない。標準train/testに対象系列なし、dsec_det_extraありと確認。
+原因は追加系列配置への対応漏れ。RawGEPFeatureSourceがextra/train|testを探索し、datasetの明示sequence_rootで
+images/events/calibrationを直接読む修正済み。標準の事前学習探索は拡大しない。
+既知の修正前3ファイルhashだけ許可するresume互換を追加、owner/run identityは維持、extra_layout_resume.jsonに監査記録。
+完了済みstage/cache/headを保持し同コマンド--resumeで再開。未知の変更や重み/パス差は拒否。
+Mac stdlib9テスト/AST/diff通過。追加配置のTorch/実データ確認はサーバーテスト待ち。
+完了marker/cacheは保持。コード変更なしなら--resume可能、変更時は保存code identityも確認。
+
 DSEC GEP20 fullのbaseline/alpha1両方complete（台帳§42）。サーバーテスト2 passed/2.01s。
 出力outputs/dsec_gep20_full_20261019_235316。両条件のstep_00100000.pt存在をユーザーls出力で確認、各280M。
 重みのロード/config/lossと下流精度は未確認。

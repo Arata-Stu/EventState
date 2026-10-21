@@ -34,3 +34,18 @@ class GEP20PlanTest(unittest.TestCase):
                 self.assertNotIn('--raw-event-root',cmd)
 
 if __name__ == '__main__': unittest.main()
+
+class ResumeLayoutFixTest(unittest.TestCase):
+    def test_only_known_code_patch_with_identical_inputs(self):
+        import copy
+        from run_hybrid_target_downstream import compatible_gep20_layout_fix, _GEP20_LAYOUT_PREDECESSOR
+        saved = dict(suite='gep20', models={'baseline': 'fixed-hash'}, code=dict(_GEP20_LAYOUT_PREDECESSOR, other='same'))
+        current = copy.deepcopy(saved)
+        for k in _GEP20_LAYOUT_PREDECESSOR: current['code'][k] = 'patched'
+        self.assertTrue(compatible_gep20_layout_fix(saved,current))
+        current['models']['baseline'] = 'different'
+        self.assertFalse(compatible_gep20_layout_fix(saved,current))
+        current = copy.deepcopy(saved); current['code']['other'] = 'different'
+        self.assertFalse(compatible_gep20_layout_fix(saved,current))
+        saved['code']['event_state/data/dsec.py'] = 'unknown-old-version'
+        self.assertFalse(compatible_gep20_layout_fix(saved,current))
