@@ -1290,3 +1290,20 @@ M3ED Semantic mIoU (%)
 - mIoUは領域別指標の画素加重平均ではない。全体改善を各領域へ加算分解しない。
 - 単一seed・validation。次候補はclass IoU/supportの確認、保存configの整合確認、
   baseline/α1のpretrain seed追加、およびDSECへの同一比較。まだ追加実行は未承認。
+
+## 42. DSEC GEP固定20ms事前学習2条件の完了（2026-10-21受領）
+
+- ユーザーが `python tools/run_dsec_gep20_pretrain.py --stage full --gpus 0,1` を実行。
+- サーバー事前テスト: `2 passed in 2.01s`。GPU0 baseline、GPU1 alpha1ともcomplete/all complete。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/dsec_gep20_full_20261019_235316`。
+- ランチャー既定条件: DSEC train41、seed0、Hybrid4+4/batch8/clip8、100k step、augmentation/dropoutなし。
+  RGB直前固定20,000µsのGEP、既存正規化係数とRGB教師cacheを使用。
+  baseline=z/h全領域、alpha1=z activeのみ/h全領域。2GPU独立job、DDPではない。
+- 正常終了報告を受領。保存config・最終checkpoint存在/ロード・最終lossは未受領。
+  validation無効の事前学習であり、下流精度・20msの優劣は未判定。
+- 下流用20ms抽出経路は未実装。既存約50ms event cacheを用いるexporterは固定窓checkpointを拒否する。
+  次は最終重み確認と20ms下流抽出対応、固定backboneのhead学習/validation評価へ進む。
+
+- 追加確認（2026-10-21）: ユーザーの`ls -lh`でbaseline/alpha1双方の
+  `checkpoints/step_00100000.pt`が存在、各280M、更新表示10月21日01:51。
+  最終checkpointファイルの存在は確認済み。内容のロード・global_step/configの照合・最終lossは未確認。

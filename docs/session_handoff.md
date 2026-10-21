@@ -1,11 +1,22 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-19
+最終更新: 2026-10-21
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-19）
+## 最新状況（2026-10-21）
+
+DSEC GEP20 fullのbaseline/alpha1両方complete（台帳§42）。サーバーテスト2 passed/2.01s。
+出力outputs/dsec_gep20_full_20261019_235316。両条件のstep_00100000.pt存在をユーザーls出力で確認、各280M。
+重みのロード/config/lossと下流精度は未確認。
+ユーザーの下流移行指示により20ms raw特徴抽出とrun_hybrid_target_downstream.sh --suite gep20を実装。
+既存checkpoint設定から窓を読み、同じDSECSequenceDatasetのraw/rectification経路を再利用。
+12head+Semantic活動別6評価、モデル単位でowned cache削除、summary.json/activity_comparison.json生成。
+手順docs/dsec_gep20.md。Mac stdlib8テスト+AST/dry-run通過。Torch/実データ下流は未実施。
+サーバー用出力予定outputs/dsec_gep20_downstream_20261021。以下のfull未実施は過去記録。
+
+## 2026-10-19の準備・評価記録
 
 ユーザーがGEPの約50ms→20msで同様の学習を希望。DSEC固定20msオンライン事前学習経路を追加。
 提案2条件baseline/α1、Hybrid4+4/batch8/clip8、augmentation/dropoutなし、正規化は既存値固定。

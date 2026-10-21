@@ -18,6 +18,7 @@ from tqdm import tqdm
 from event_state.detection.split import load_dsec_detection_split
 from event_state.data.transforms import PairedSequenceTransform
 from event_state.losses.activity_weighting import ACTIVITY_FORMAT
+from event_state.data.dsec_feature_source import RawGEPFeatureSource, validate_source
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
 
 
@@ -30,7 +31,8 @@ def parse_args() -> argparse.Namespace:
         description="Cache frozen EventState maps for a canonical DSEC-Detection split"
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--event-cache-dir", type=Path, required=True)
+    parser.add_argument("--event-cache-dir", type=Path)
+    parser.add_argument("--raw-event-root", type=Path, help="DSEC raw root; fixed-window checkpoints only")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--role", choices=("train", "val", "test"), required=True)
@@ -161,7 +163,7 @@ def _completed_sequence(
 def main() -> None:
     args = parse_args()
     checkpoint = args.checkpoint.expanduser().resolve()
-    event_cache = args.event_cache_dir.expanduser().resolve()
+    event_cache = args.event_cache_dir.expanduser().resolve() if args.event_cache_dir else None
     output_root = args.output_dir.expanduser().resolve()
     device = torch.device(args.device)
     split = load_dsec_detection_split(args.split_manifest)
@@ -174,8 +176,7 @@ def main() -> None:
 
     metadata = load_checkpoint_config_metadata(checkpoint)
     config = OmegaConf.create(metadata.config)
-    if OmegaConf.select(config, "dataset.event_window_us") is not None:
-        raise ValueError("Fixed-window GEP checkpoint requires matching raw-window downstream extraction; this cache exporter cannot use the old RGB-interval event cache")
+    validate_source(config, event_cache, args.raw_event_root)
     if args.teacher_checkpoint is not None:
         teacher_checkpoint = str(args.teacher_checkpoint.expanduser().resolve())
         OmegaConf.update(config, "teacher.checkpoint", teacher_checkpoint, merge=False)
@@ -198,21 +199,28 @@ def main() -> None:
 
     with torch.inference_mode():
         for sequence in sequences:
-            source_dir = event_cache / sequence
-            source_metadata_path = source_dir / "metadata.json"
-            if not source_metadata_path.is_file():
-                raise FileNotFoundError(
-                    f"Event cache for official {args.role} sequence is missing: {source_dir}"
+            raw_source = None
+            if args.raw_event_root is not None:
+                raw_source = RawGEPFeatureSource(args.raw_event_root, sequence, config)
+                source_dir = raw_source.source_dir
+                source_metadata = raw_source.metadata
+                frame_paths = raw_source.paths
+            else:
+                source_dir = event_cache / sequence
+                source_metadata_path = source_dir / "metadata.json"
+                if not source_metadata_path.is_file():
+                    raise FileNotFoundError(
+                        f"Event cache for official {args.role} sequence is missing: {source_dir}"
+                    )
+                source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
+                if args.include_activity and source_metadata.get("representation", {}).get("type") != "gep_rgb":
+                    raise ValueError("Activity export requires a GEP RGB event cache")
+                frame_paths = sorted(
+                    (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
+                    key=lambda path: int(path.stem),
                 )
-            source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
-            if args.include_activity and source_metadata.get("representation", {}).get("type") != "gep_rgb":
-                raise ValueError("Activity export requires a GEP RGB event cache")
-            frame_paths = sorted(
-                (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
-                key=lambda path: int(path.stem),
-            )
-            if not frame_paths:
-                raise ValueError(f"No cached event frames found: {source_dir}")
+                if not frame_paths:
+                    raise ValueError(f"No cached event frames found: {source_dir}")
             destination_dir = output_root / sequence
             destination_dir.mkdir(parents=True, exist_ok=True)
             sequence_metadata = {
@@ -222,6 +230,7 @@ def main() -> None:
                 "official_role": args.role,
                 "features": sorted(requested_features),
                 "state_policy": args.state_policy,
+                    "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
                 "checkpoint": str(checkpoint),
                 "checkpoint_sha256": checkpoint_digest,
                 "checkpoint_step": int(state.global_step),
@@ -243,12 +252,14 @@ def main() -> None:
                     f"({len(frame_paths)} preserved)",
                     flush=True,
                 )
+                if raw_source:
+                    raw_source.close()
                 continue
             recurrent_state = None
             written = 0
             preserved = 0
             for frame_path in tqdm(frame_paths, desc=f"{args.role}:{sequence}", unit="frame"):
-                event_payload = _safe_load(frame_path)
+                event_payload = raw_source.load(frame_path) if raw_source else _safe_load(frame_path)
                 events = event_payload.get("events") if isinstance(event_payload, dict) else None
                 if not isinstance(events, torch.Tensor) or events.ndim != 3:
                     raise ValueError(f"Invalid event cache payload: {frame_path}")
@@ -263,6 +274,7 @@ def main() -> None:
                     "checkpoint_sha256": checkpoint_digest,
                     "checkpoint_step": int(state.global_step),
                     "state_policy": args.state_policy,
+                    "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
                 }
                 destination = destination_dir / f"{timestamp}.pt"
                 # Continuous h requires replaying every frame even when its output exists.
@@ -314,6 +326,9 @@ def main() -> None:
                     written += 1
             _atomic_write_json(sequence_metadata, destination_dir / "metadata.json")
             print(f"{sequence}: {written} written, {preserved} preserved", flush=True)
+
+            if raw_source:
+                raw_source.close()
 
 
 if __name__ == "__main__":

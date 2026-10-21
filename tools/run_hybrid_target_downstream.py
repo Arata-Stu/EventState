@@ -68,8 +68,17 @@ def verify_results(results):
             raise ValueError(f'Wrong detection protocol: {metric}')
 
 
+def verify_activity(output):
+    for feature in ('z', 'h', 'concat'):
+        value = json.loads((output/'semantic_activity'/f'{feature}.json').read_text())
+        if (value['feature'] != feature or value['state_policy'] != 'continuous'
+                or value['metrics']['all']['evaluated_pixels'] <= 0):
+            raise ValueError('Invalid semantic activity result')
+
+
 def model_plan(name, checkpoint, data, teacher, cache, output):
     dsec = name.startswith('dsec')
+    gep20 = name.startswith('dsec_gep20_')
     features = ['z'] if name.endswith('z_only') else ['z', 'h']
     probes = ['z'] if len(features) == 1 else ['z', 'h', 'concat']
     stages, results = [], []
@@ -86,6 +95,11 @@ def model_plan(name, checkpoint, data, teacher, cache, output):
                 args = ['--checkpoint', checkpoint, '--event-cache-dir', data / 'DSEC_cache/events/gep_rgb',
                         '--output-dir', source, '--role', role, '--features', *features,
                         '--state-policy', 'continuous', '--teacher-checkpoint', teacher, '--device', 'cuda']
+                if gep20:
+                    i = args.index('--event-cache-dir')
+                    args[i:i+2] = ['--raw-event-root', data / 'DSEC']
+                    if task == 'semantic':
+                        args += ['--include-activity']
                 if task == 'semantic':
                     args += ['--labels-root', labels]
                 stage(f'{task}_cache_{role}', cmd(f'cache_dsec_{task}_features', *args))
@@ -108,6 +122,12 @@ def model_plan(name, checkpoint, data, teacher, cache, output):
                 stage(f'{task}_eval_{feature}', cmd(f'evaluate_dsec_{task}', *args, *evaluate_args,
                       '--checkpoint', head / 'best.pt', '--role', 'val', '--output', metric))
                 results.append((head, metric, feature, 'mIoU' if task == 'semantic' else 'mAP', 'val'))
+                if gep20 and task == 'semantic':
+                    stage(f'semantic_activity_{feature}', cmd('evaluate_semantic_state_probe',
+                        '--dataset', 'dsec', '--checkpoint', head / 'best.pt',
+                        '--feature-cache-dir', feature_cache, '--labels-root', labels,
+                        '--feature', feature, '--state-policy', 'continuous',
+                        '--low-activity-threshold', '0.1', '--output', output / 'semantic_activity' / f'{feature}.json'))
     else:
         for role in ('train', 'validation'):
             stage(f'cache_{role}', cmd('cache_m3ed_semantic_features', '--checkpoint', checkpoint,
@@ -129,7 +149,7 @@ def model_plan(name, checkpoint, data, teacher, cache, output):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--pretrain-root', type=Path, required=True)
-    p.add_argument('--suite', choices=['targets', 'activity-alpha'], default='targets')
+    p.add_argument('--suite', choices=['targets', 'activity-alpha', 'gep20'], default='targets')
     p.add_argument('--output-root', type=Path, required=True)
     p.add_argument('--cache-root', type=Path, required=True, help='NEW dedicated scratch directory; owned model caches are deleted on success')
     p.add_argument('--data-root', type=Path, default=Path('/home/iASL/Arata_repo/dataset'))
@@ -138,7 +158,7 @@ def main():
     p.add_argument('--m3ed-zh-checkpoint', type=Path, help='Optional existing Hybrid full-region z+h')
     p.add_argument('--only', nargs='+', choices=['dsec_z_only', 'dsec_z_h', 'm3ed_z_only',
                    'm3ed_h_only', 'dsec_h_only', 'm3ed_z_h', 'dsec_alpha_0',
-                   'dsec_alpha_05', 'dsec_alpha_1', 'm3ed_alpha_1'],
+                   'dsec_alpha_05', 'dsec_alpha_1', 'm3ed_alpha_1', 'dsec_gep20_baseline', 'dsec_gep20_alpha1'],
                    help='Run only selected models in a NEW output/cache root')
     p.add_argument('--gpu', type=int, default=0)
     p.add_argument('--resume', action='store_true')
@@ -156,6 +176,8 @@ def main():
     if a.suite == 'activity-alpha':
         models = [(n, root / n / 'checkpoints/step_00100000.pt') for n in
                   ('dsec_alpha_0', 'dsec_alpha_05', 'dsec_alpha_1', 'm3ed_alpha_1')]
+    if a.suite == 'gep20':
+        models = [('dsec_gep20_' + n, root / n / 'checkpoints/step_00100000.pt') for n in ('baseline', 'alpha1')]
     for name, checkpoint in [('dsec_h_only', a.dsec_h_checkpoint), ('m3ed_z_h', a.m3ed_zh_checkpoint)]:
         if checkpoint:
             models.append((name, checkpoint.resolve()))
@@ -176,9 +198,15 @@ def main():
             raise ValueError(f'Input checkpoint cannot be inside scratch root: {path}')
         if not path.is_file():
             raise FileNotFoundError(path)
+    if a.suite == 'gep20':
+        from event_state.training import load_checkpoint_config_metadata
+        for _, checkpoint in models:
+            config = load_checkpoint_config_metadata(checkpoint).config
+            if config['dataset'].get('event_window_us') != 20000:
+                raise ValueError(f'Expected 20,000us checkpoint: {checkpoint}')
     required_dirs = []
     if any(name.startswith('dsec') for name, _ in models):
-        required_dirs += ['DSEC_cache/events/gep_rgb', 'DSEC/task_labels/semantic', 'DSEC/dsec_det_labels']
+        required_dirs += [('DSEC' if a.suite == 'gep20' else 'DSEC_cache/events/gep_rgb'), 'DSEC/task_labels/semantic', 'DSEC/dsec_det_labels']
     if any(name.startswith('m3ed') for name, _ in models):
         required_dirs += ['m3ed_cache/half_dagr', 'm3ed_cache/dinov3_vits16_640x352', 'm3ed_cache/m3ed_downstream']
     for rel in required_dirs:
@@ -186,6 +214,12 @@ def main():
             raise FileNotFoundError(data / rel)
     identity = dict(version=VERSION, output=str(output), scratch=str(scratch), data=str(data),
                     teacher_sha256=digest(teacher), models={n: dict(path=str(c), sha256=digest(c)) for n, c in models})
+    if a.suite == 'gep20':
+        identity['suite'] = 'gep20'
+        identity['code'] = {str(path.relative_to(PROJECT)): digest(path) for path in [
+            Path(__file__), PROJECT/'event_state/data/dsec_feature_source.py',
+            PROJECT/'event_state/data/dsec.py', PROJECT/'tools/cache_dsec_semantic_features.py',
+            PROJECT/'tools/cache_dsec_detection_features.py', PROJECT/'tools/evaluate_semantic_state_probe.py']}
     if a.resume:
         if json.loads((output / 'run.json').read_text()) != identity:
             raise ValueError('Resume identity differs; preserve original inputs and paths')
@@ -205,6 +239,7 @@ def main():
         done = out / 'complete.json'
         if done.exists():
             verify_results(results)
+            if a.suite == 'gep20': verify_activity(out)
             safe_cleanup(cache, scratch, identity)
             print(f'[downstream] already complete: {name}', flush=True)
             continue
@@ -232,10 +267,24 @@ def main():
                                stdout=log, stderr=subprocess.STDOUT, check=True)
             atomic_json(marker, dict(command=command))
         verify_results(results)
+        if a.suite == 'gep20': verify_activity(out)
         atomic_json(done, dict(metrics=[str(m) for _, m, *_ in results]))
         safe_cleanup(cache, scratch, identity)
         atomic_json(out / 'cache_deleted.json', dict(path=str(cache)))
         print(f'[downstream] complete and cache removed: {name}', flush=True)
+    if a.suite == 'gep20':
+        rows = []
+        for name, _ in models:
+            for task in ('semantic', 'detection'):
+                key = 'mIoU' if task == 'semantic' else 'mAP'
+                for feature in ('z', 'h', 'concat'):
+                    value = json.loads((output/name/task/feature/'seed_0/validation_metrics.json').read_text())
+                    rows.append(dict(model=name, task=task, feature=feature, metric=key, value=value[key]))
+        atomic_json(output/'summary.json', rows)
+        if len(models) == 2:
+            from compare_semantic_activity_probes import compare
+            comparison = compare(output/'dsec_gep20_baseline/semantic_activity', output/'dsec_gep20_alpha1/semantic_activity')
+            atomic_json(output/'activity_comparison.json', comparison)
     print(f'[downstream] all complete: {output}', flush=True)
 
 
