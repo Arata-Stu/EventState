@@ -5,7 +5,17 @@
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況：Depth preflightの修正（2026-10-27）
+## 最新状況：Depth preflight全通過の報告（2026-10-27）
+
+ユーザーから修正後テストが全て通過したとの報告を受領（台帳§48）。件数/所要時間のログは未受領。
+次は既存GEP cacheを使い、DSEC F3 train37とM3ED F3 train3だけで正規化/低イベント率p10を算出。
+既存RGB教師cacheを再利用し、baseline/alpha1各100stepのclean smokeを実行するコマンドを提示。
+seed0、GPU0で4条件を順次実行する例。統計生成・smokeの実行/完了はまだ未確認。
+統計予定: DSEC_cache/dsec_f3_gep_stats.json、m3ed_cache/m3ed_f3_gep_stats.json。
+smoke予定: outputs/dense_f3_smoke_<日時>/{dsec,m3ed}_{baseline,alpha1}。
+この例は既存RGB間隔GEP入力。DSEC固定20msは別統計と--window-us指定が必要で、混用しない。
+
+## Depth preflightの修正記録（2026-10-27）
 
 ユーザーからサーバーpreflight `6 failed, 47 passed in 13.22s`を受領（台帳§47）。
 5件は監査でOmegaConf設定全体をresolveし、compose時にoutput.directoryのHydra resolverが失敗。

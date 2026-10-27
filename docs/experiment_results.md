@@ -1436,3 +1436,19 @@ M3ED Semantic mIoU (%)
   サーバー用に保存往復/保存失敗時の旧checkpoint保持テストを追加。
   Torch/Hydraの修正後テスト・合成CLI成功はサーバー再実行待ち。
   新しい精度結果なし。修正同期後に同じpreflightを再実行し、全通過してから統計/smokeへ進む。
+
+## 48. Depth preflight全通過の報告（2026-10-27受領）
+
+- ユーザーから「テストは全て通りました」と報告。直前に案内したdense protocol/probeと
+  training runtimeの3ファイルの再テストに対する報告として記録。
+  件数・実行時間・詳細stdoutは今回未受領のため推定で補わない。
+- §47の修正後preflightの通過報告。実データの統計生成・事前学習・下流精度の完了ではない。
+  実験seed/split/重み出力を示す新しい学習ログはまだない。
+- 次に提示する手順: 既存RGB間隔GEP cacheでDSEC F3 train37/M3ED F3 train3だけの統計を生成し、
+  各データセットのbaseline/alpha1をseed0・100step・固定RGB教師cacheでsmoke。
+  既存重みからの継続なし。train以外の系列は統計/勾配更新に使わない。
+- 予定統計: `/home/iASL/Arata_repo/dataset/DSEC_cache/dsec_f3_gep_stats.json`、
+  `/home/iASL/Arata_repo/dataset/m3ed_cache/m3ed_f3_gep_stats.json`。
+  予定出力: `/home/iASL/Arata_repo/EventState/outputs/dense_f3_smoke_<日時>/`
+  の `dsec_baseline/dsec_alpha1/m3ed_baseline/m3ed_alpha1`。
+  実際の生成/起動/完了は未確認。DSEC固定20ms条件の統計とは区別する。
