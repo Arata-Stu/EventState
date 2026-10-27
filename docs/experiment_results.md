@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-10-26
+最終更新: 2026-10-27
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
@@ -1407,3 +1407,32 @@ M3ED Semantic mIoU (%)
 - 参照一次情報: [RVT原論文 Fig.4(d), §5](https://arxiv.org/html/2212.05598v3)。
   イベント不在時の部分的な検出保持を示す一方、記憶減衰と検出性能低下も明記する。
   RVTは物体検出の教師あり学習であり、RGB特徴蒸留による保持を直接検証した論文ではない。
+
+## 47. Depth probeサーバーpreflightの失敗と修正（2026-10-27受領）
+
+- ユーザー提供ログ: `/home/iASL/Arata_repo/EventState`、`source env/bin/activate`後、
+  `python -m pytest -q tests/test_dense_protocol_stdlib.py tests/test_dense_probe.py tests/test_training_runtime.py`。
+  結果は **6 failed, 47 passed in 13.22s**。サーバーPythonはtraceback上3.12。
+- 実データの事前学習・下流学習の結果ではなく、単体/合成CPUテスト。
+  実験run名・実データseed/split・checkpoint出力は今回なし。
+  合成テストの一時出力は `/tmp/pytest-of-iASL/pytest-0/test_synthetic_frozen_probe_tr0/`。
+- 5件（factory guardとDSEC/M3ED×baseline/alpha1のlauncher検査）は同じ根本例外:
+  `OmegaConf.to_container(config, resolve=True)` が設定全体を解決し、
+  `output.directory`の`${hydra:runtime.output_dir}`で `HydraConfig was not set`。
+  compose APIで作る設定はHydra実行コンテキストを初期化しないため、
+  リーク検査と無関係な出力設定まで解決した追加実装が原因。
+- 修正: 監査に必要なdataset系列・正規化・validation/resume・過去学習履歴だけを
+  `pretraining_audit_config`で選択し、その値だけをplain化する。
+  train/val/testや統計のリーク検査は維持し、HydraConfigを人工的に設定して回避しない。
+- 残る合成CLIテストは子のtrain_dense_probe.pyがexit1。元テストがstderrを捕捉したまま
+  表示しないため、このログだけでは子プロセスの根本例外は不明。
+  失敗時にstdout/stderrを含むassertを出すよう変更。
+- 併せてdense runtimeの保存名`.dense-XXXX`に拡張子がない不具合を静的に確認。
+  PyTorchのbasename処理は最後のdot以降を除き、この形式では空名になる。
+  既存のatomic_torch_save（末尾.tmp付き・置換前fsync・失敗時一時ファイル除去）へ統一。
+  合成CLIが実際にこの例外で停止したかはstderr未受領のため未確定。
+  根拠: [PyTorch保存実装](https://github.com/pytorch/pytorch/blob/main/caffe2/serialize/inline_container.cc)。
+- Mac確認: 新規stdlib18件＋既存split guard8件通過、AST/diff確認。
+  サーバー用に保存往復/保存失敗時の旧checkpoint保持テストを追加。
+  Torch/Hydraの修正後テスト・合成CLI成功はサーバー再実行待ち。
+  新しい精度結果なし。修正同期後に同じpreflightを再実行し、全通過してから統計/smokeへ進む。

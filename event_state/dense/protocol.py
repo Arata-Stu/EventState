@@ -63,6 +63,32 @@ def sequences_for(protocol, role, *, labels=False):
     return tuple(names)
 
 
+def pretraining_audit_config(config, *, to_plain=lambda value: value):
+    """Project only audit inputs; never resolve unrelated Hydra output paths.
+
+    Resolving the root DictConfig triggers ${hydra:runtime.output_dir} under
+    Hydra's compose API, which intentionally does not initialize HydraConfig.
+    The converter is applied only to the selected lists/mappings.
+    """
+    dataset = config["dataset"]
+    training = config["training"]
+    representation = dataset["representation"]
+    return {
+        "dataset": {
+            "name": dataset.get("name"),
+            "train_sequences": to_plain(dataset.get("train_sequences")),
+            "val_sequences": to_plain(dataset.get("val_sequences")),
+            "representation": {key: to_plain(representation.get(key))
+                               for key in ("normalize_mean", "normalize_std")},
+            "normalization_provenance": to_plain(dataset.get("normalization_provenance", {})),
+        },
+        "training": {"validation_enabled": training.get("validation_enabled", True),
+                     "resume": training.get("resume")},
+        "pretraining_history": [{"sequences": to_plain(stage.get("sequences"))}
+                                for stage in config.get("pretraining_history", [])],
+    }
+
+
 def audit_pretraining(config, protocol, *, statistics_sequences=None):
     """Check all declared event pretraining and model-selection inputs.
 

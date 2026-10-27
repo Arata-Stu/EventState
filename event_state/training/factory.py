@@ -77,9 +77,16 @@ def validate_config(config: Any) -> None:
     dense_protocol = _value(dataset, "dense_evaluation_protocol")
     if dense_protocol:
         from omegaconf import OmegaConf
-        from event_state.dense.protocol import audit_pretraining, load_protocol
+        from event_state.dense.protocol import (
+            audit_pretraining, load_protocol, pretraining_audit_config,
+        )
 
-        plain = OmegaConf.to_container(config, resolve=True) if OmegaConf.is_config(config) else config
+        plain = pretraining_audit_config(
+            config,
+            to_plain=lambda value: (
+                OmegaConf.to_container(value, resolve=True) if OmegaConf.is_config(value) else value
+            ),
+        )
         protocol = load_protocol(str(dense_protocol))
         if set(plain["dataset"].get("train_sequences") or []) != set(protocol["splits"]["train"]):
             raise ValueError("Dense-probe pretraining requires exactly the published training sequences")

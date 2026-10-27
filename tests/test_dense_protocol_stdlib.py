@@ -9,7 +9,8 @@ import unittest
 from event_state.dense.metrics import RegressionSums
 from event_state.dense.temporal import LowActivityClock
 from event_state.dense.protocol import (audit_pretraining, digest, load_protocol,
-                                        load_statistics_provenance, sequences_for, validate_protocol)
+                                        load_statistics_provenance, pretraining_audit_config,
+                                        sequences_for, validate_protocol)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from compare_dense_probes import compare
@@ -23,6 +24,34 @@ def config(protocol):
 
 
 class PublishedProtocols(unittest.TestCase):
+    def test_audit_projection_does_not_resolve_root_or_output(self):
+        p = load_protocol("m3ed_f3")
+        cfg = config(p)
+        cfg["dataset"]["representation"] = dict(normalize_mean=[0, 0, 0], normalize_std=[1, 1, 1])
+        cfg["dataset"]["normalization_provenance"] = dict(sequences=p["splits"]["train"])
+        cfg["output"] = dict(directory="${hydra:runtime.output_dir}")
+        converted = []
+
+        def convert(value):
+            self.assertIsNot(value, cfg)
+            self.assertIsNot(value, cfg["output"])
+            converted.append(value)
+            return value
+
+        plain = pretraining_audit_config(cfg, to_plain=convert)
+        self.assertNotIn("output", plain)
+        self.assertTrue(converted)
+        self.assertEqual(audit_pretraining(plain, p, statistics_sequences=p["splits"]["train"])["status"],
+                         "declared_inputs_disjoint")
+
+    def test_audit_projection_keeps_validation_and_history_leakage_checks(self):
+        p = load_protocol("m3ed_f3")
+        cfg = config(p)
+        cfg["dataset"]["representation"] = dict(normalize_mean=[0, 0, 0], normalize_std=[1, 1, 1])
+        cfg["pretraining_history"] = [{"sequences": p["splits"]["val"]}]
+        with self.assertRaisesRegex(ValueError, "history"):
+            audit_pretraining(pretraining_audit_config(cfg), p, statistics_sequences=p["splits"]["train"])
+
     def test_published_f3_membership(self):
         dsec, m3ed = load_protocol("dsec_f3"), load_protocol("m3ed_f3")
         self.assertEqual([len(dsec["splits"][k]) for k in ("train", "val", "test")], [37, 4, 12])

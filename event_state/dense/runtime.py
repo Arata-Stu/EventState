@@ -1,8 +1,5 @@
 """Shared training/evaluation provenance and atomic checkpoints."""
 import hashlib
-import os
-import tempfile
-from pathlib import Path
 
 import torch
 
@@ -19,14 +16,11 @@ def validate_pair(train, val):
 
 
 def atomic_save(payload, path):
-    descriptor, name = tempfile.mkstemp(dir=Path(path).parent, prefix=".dense-")
-    os.close(descriptor)
-    temporary = Path(name)
-    try:
-        torch.save(payload, temporary)
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    # Reuse the tested writer: its suffix keeps the archive basename nonempty.
+    # A path like '.dense-XXXX' loses everything when PyTorch strips its extension.
+    from event_state.training.checkpoint import atomic_torch_save
+
+    atomic_torch_save(payload, path)
 
 
 @torch.inference_mode()

@@ -5,7 +5,18 @@
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## Depth／視差評価の実装（2026-10-27、サーバー未実行）
+## 最新状況：Depth preflightの修正（2026-10-27）
+
+ユーザーからサーバーpreflight `6 failed, 47 passed in 13.22s`を受領（台帳§47）。
+5件は監査でOmegaConf設定全体をresolveし、compose時にoutput.directoryのHydra resolverが失敗。
+監査対象フィールドだけの選択/解決へ修正し、リーク検査は維持。
+合成train CLIの1件はstderrが表示されず根本例外未確定。失敗時stdout/stderrを表示するよう修正。
+保存名`.dense-XXXX`がPyTorchで空アーカイブ名になる不具合も見つけ、既存atomic_torch_saveへ統一。
+Mac stdlib18＋既存split guard8件通過、AST/diff確認。保存往復/失敗時保持のサーバーテストを追加。
+修正後Torch/Hydra/合成CLIはサーバー再実行待ち。新しい学習・精度結果はまだない。
+次は修正同期→同じ3テストファイルでpreflight再実行。全通過後にtrain統計/clean smokeへ進む。
+
+## Depth／視差評価の実装（2026-10-27、以下は初回preflight前の記録）
 
 ユーザーが、他モデルと比較できる公開splitを維持し、事前学習/下流train・val・testの
 リークを防いだ他タスク評価の実装を指示。まずDSEC/M3EDのDepthとDSEC視差を追加。

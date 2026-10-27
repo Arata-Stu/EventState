@@ -61,6 +61,23 @@ def test_head_positive_full_geometry_and_gradient():
     assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters())
 
 
+def test_dense_atomic_save_roundtrip_and_failure_preserves_previous(tmp_path, monkeypatch):
+    from event_state.dense.runtime import atomic_save
+    path = tmp_path / "last.pt"
+    atomic_save(dict(weight=torch.tensor([1., 2.])), path)
+    assert torch.equal(torch.load(path, weights_only=True)["weight"], torch.tensor([1., 2.]))
+
+    def fail_save(*args, **kwargs):
+        raise OSError("simulated serialization failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(torch, "save", fail_save)
+        with pytest.raises(OSError, match="simulated"):
+            atomic_save(dict(weight=torch.tensor([3.])), path)
+    assert torch.equal(torch.load(path, weights_only=True)["weight"], torch.tensor([1., 2.]))
+    assert list(tmp_path.iterdir()) == [path]
+
+
 def test_full_dsec_and_existing_m3ed_geometry():
     from event_state.dense.source import input_geometry
     from event_state.data.activity import scale_event_activation
@@ -175,8 +192,14 @@ def test_synthetic_frozen_probe_train_evaluate_and_state_pair(tmp_path):
     output = tmp_path / "head"
 
     def run(script, *args):
-        subprocess.run([sys.executable, str(repository / "tools" / script), *map(str, args)],
-                       cwd=repository, check=True, capture_output=True, text=True)
+        completed = subprocess.run(
+            [sys.executable, str(repository / "tools" / script), *map(str, args)],
+            cwd=repository, check=False, capture_output=True, text=True,
+        )
+        assert completed.returncode == 0, (
+            f"{script} exited {completed.returncode}\n"
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
 
     run("train_dense_probe.py", "--train-cache", train, "--val-cache", val, "--feature", "z",
         "--epochs", 1, "--batch-size", 2, "--width", 8, "--device", "cpu", "--output-dir", output)
