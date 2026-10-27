@@ -5,7 +5,19 @@
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況：Depth preflight全通過の報告（2026-10-27）
+## 最新状況：統計生成・Depth用4条件smoke通過（2026-10-27）
+
+ユーザーから統計生成とDSEC/M3ED × baseline/alpha1の4条件smokeが全て通過したとの報告（台帳§49）。
+直前提示条件はRGB間隔GEP、F3 train37/train3、seed0・100step。詳細ログ/実出力日時は未受領。
+次は同じ統計でsmokeから継続せず各100k stepのclean本学習、F3 train/val Depthの評価。
+サーバー用 `tools/run_dense_f3_pipeline.sh` にpretrain/targets/depthの3段階コマンドを追加。
+4 backbone、z/h/concatの12 head（50epoch/seed0）、同一headのcontinuous/frame計24評価。
+低イベント率は既存train p10で固定、val MAEでhead選択。official testのローカル採点はしない。
+M3ED正解の既定参照は既存m3ed_cache/m3ed_downstream。全5系列のdepthが必要。
+新規特徴cacheは保持し、自動削除しない。本学習/GT整列/Depth評価はまだ未実施。
+Macではbash構文とCLI引数の静的照合のみ。サーバーで実行する手順はdocs/dense_probes.md。
+
+## Depth preflight全通過の報告（2026-10-27、以下はsmoke前の記録）
 
 ユーザーから修正後テストが全て通過したとの報告を受領（台帳§48）。件数/所要時間のログは未受領。
 次は既存GEP cacheを使い、DSEC F3 train37とM3ED F3 train3だけで正規化/低イベント率p10を算出。

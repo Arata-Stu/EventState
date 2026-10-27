@@ -59,7 +59,69 @@ resume/warm-startで過去重みを使った場合は、以前の学習系列を
 
 ## 実行順序
 
-以下はrepoを同期済みの **サーバー** で実行する。新しい実験はまだ起動していない。
+### 統計・4条件smoke通過後の一括コマンド（2026-10-27）
+
+ユーザーから統計生成とDSEC/M3ED × baseline/alpha1 smoke成功を受領（台帳§49）。
+既存RGB間隔GEPとtrain-only統計をそのまま使う。次のコマンドはサーバー専用。
+スクリプトを同期後、同じRUN_ROOTを全段階で指定する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+export DATA_ROOT=/home/iASL/Arata_repo/dataset
+export CUDA_VISIBLE_DEVICES=0
+RUN_ROOT="$PWD/outputs/dense_f3_full_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$RUN_ROOT"
+printf '%s\n' "$RUN_ROOT" > outputs/dense_f3_latest_run.txt
+
+# 4条件を順次、smokeから継続せずDINO初期値から各100k step。
+bash tools/run_dense_f3_pipeline.sh pretrain "$RUN_ROOT"
+
+# 公開GTの所在が下記既定値と異なる場合、この2変数だけ修正する。
+export DSEC_TARGET_ROOT="$DATA_ROOT/DSEC/train_disparity"
+export DSEC_CALIBRATION_ROOT="$DATA_ROOT/DSEC/train_calibration"
+export M3ED_TARGET_ROOT="$DATA_ROOT/m3ed_cache/m3ed_downstream"
+bash tools/run_dense_f3_pipeline.sh targets "$RUN_ROOT"
+
+# 新規特徴cacheを保存する場所。大きくなるため空き容量を確認する。
+export CACHE_ROOT="$DATA_ROOT/downstream_scratch/$(basename "$RUN_ROOT")"
+mkdir -p "$CACHE_ROOT"
+df -h "$CACHE_ROOT"
+bash tools/run_dense_f3_pipeline.sh depth "$RUN_ROOT"
+```
+
+端末再接続時は `RUN_ROOT="$(cat outputs/dense_f3_latest_run.txt)"` で同じ出力先を復元し、
+export変数も再設定する。既存出力への再実行は各Python CLIが拒否する。
+途中停止からの自動resume/既存cache削除は行わない。ログはRUN_ROOT/logsへ追記する。
+一部条件だけ実行するなら `DATASETS=m3ed CONDITIONS=alpha1 bash ... depth "$RUN_ROOT"`。
+これは未実行条件の選択用であり、途中まで生成された同条件cacheの再開ではない。
+
+targetsはDSEC37train/4valとM3ED3train/2valをindex化するだけで、正解をダウンロード/生成しない。
+M3ED既存正解にdepthまたは全5系列がない場合は、新しい出力先に準備する。
+下記M3ED raw rootは実際の公式HDF5配置に合わせる（今回存在は未確認）。
+
+```bash
+export M3ED_TARGET_ROOT="$RUN_ROOT/m3ed_depth_targets"
+python tools/prepare_m3ed_downstream.py --root "$DATA_ROOT/M3ED" \
+  --prepared-root "$DATA_ROOT/m3ed_cache/half_dagr" --output-root "$M3ED_TARGET_ROOT" \
+  --tasks depth --require-all \
+  --sequences car_urban_day_city_hall car_urban_day_penno_big_loop car_urban_day_penno_small_loop \
+              car_urban_day_rittenhouse car_urban_day_ucity_small_loop
+# 未作成のM3ED indexのみを作る。既存DSEC indexを再生成しない。
+DATASETS=m3ed bash tools/run_dense_f3_pipeline.sh targets "$RUN_ROOT"
+```
+
+Depth段階は4条件×3特徴で12 head、50epoch/seed0、val MAE最良best.ptを使い計24評価。
+状態保持と毎frame resetは同一headで比較する。
+結果: `heads/DATASET_CONDITION/{z,h,concat}/{continuous,frame,state_delta}.json`、
+モデル差分: `comparison/DATASET_FEATURE_POLICY.json`（alpha1−baseline）。
+state_deltaはcontinuous−frame。MAE/RMSE/AbsRel等の誤差は負が改善。
+全体/低イベントframe/継続時間別を同時出力する。空群はnull。
+正規化と低イベント率p10はtrain由来で固定、head選択は公開val、testは不使用。
+単一seedの小型frozen probeであり、論文のdecoderや完全な評価条件の再現ではない。
+新規cacheは自動削除せず蓄積する。容量不足時は停止して保存先を検討し、既存M3ED cacheを削除しない。
+
+以下は個別CLIの説明。repoを同期済みの **サーバー** で実行する。
 
 ```bash
 cd /home/iASL/Arata_repo/EventState
@@ -227,9 +289,11 @@ python tools/prepare_dense_targets.py --protocol dsec_official --role test --tas
 
 Mac: 標準ライブラリによるprotocol/リーク/対応比較テスト、AST、CLI help、コマンド計画のみ。
 サーバー用数値テストにはPNG decoding/Qによる深度変換、無効画素、指標、head勾配、factory guardを含む。
-Torchテスト・実データ整列・全画角での実重み推論・GPU学習・公式提出checkerは未実行。
-新しい精度結果はまだなく、サーバーのpreflight/smokeから確認する。
+ユーザーから修正後のサーバー全テスト、統計生成、4条件の事前学習smoke通過を受領（台帳§48–49）。
+実Depth正解整列・Depth用全画角特徴抽出・本学習・下流精度・公式提出checkerは未確認。
+run_dense_f3_pipeline.shはMacでbash構文と既存CLI引数の静的照合を実施。
+新しいDepth精度結果はまだない。
 
 2026-10-27の初回サーバーpreflightは6 failed/47 passed（13.22s）。
 Hydra設定の過剰解決と保存一時ファイル名を修正し、子プロセスstderrの表示を追加した。
-修正後のサーバー再実行は未確認。初回失敗の詳細と検証境界は実験台帳§47を参照する。
+修正後のサーバー再実行は全通過報告あり。初回失敗の詳細は実験台帳§47を参照する。

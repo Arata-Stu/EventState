@@ -1452,3 +1452,17 @@ M3ED Semantic mIoU (%)
   予定出力: `/home/iASL/Arata_repo/EventState/outputs/dense_f3_smoke_<日時>/`
   の `dsec_baseline/dsec_alpha1/m3ed_baseline/m3ed_alpha1`。
   実際の生成/起動/完了は未確認。DSEC固定20ms条件の統計とは区別する。
+
+## 49. Depth用統計生成・4条件smoke通過の報告（2026-10-27受領）
+
+- ユーザーから「統計生成と4条件のsmokeは全て通りました」と報告。
+  直前案内のDSEC/M3ED × baseline/alpha1、seed0、100step、RGB間隔GEPとして記録。
+  DSEC F3 train37/M3ED F3 train3のみから統計生成、validation無効の新規事前学習。
+- 統計の案内先は§48の2 JSON。smoke出力の案内先は
+  `/home/iASL/Arata_repo/EventState/outputs/dense_f3_smoke_<日時>/{dsec,m3ed}_{baseline,alpha1}`。
+  実際の日時・保存config・checkpoint一覧・lossログは未受領。成功はユーザー報告に基づく。
+- 次の予定は同一統計/seedで4条件各100k stepを新規学習（smokeから継続しない）。
+  出力例: `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_<日時>/pretrain/`。
+  公開F3 train/valのDepthにz/h/concatの12 head（50epoch/seed0）を学習し、
+  同一headでcontinuous/frame resetの24評価、低イベント率train p10以下の集計とモデル差分を出す。
+  head/結果は同rootのheads/およびcomparison/。本学習・Depth精度結果はまだない。
