@@ -7,8 +7,20 @@
 
 ## 最新状況：別サーバーのM3ED raw/既存targetsを確認（2026-10-27）
 
+ユーザー指定パス: M3ED raw=`/mnt/ssd-4tb/dataset/m3ed`、追加処理出力の親=`/media/aten-22/AT_2TB/dataset`。
+rittenhouse専用の日時付き `m3ed_rittenhouse_<日時>/{events,targets}` を出力親配下に作る手順へ更新。
+最新出力先の控えは同じ親のm3ed_rittenhouse_latest.txt。既存成果物は保持。
+これらはaten-22側の前処理用パスであり、sig-gpu5の学習用datasetパスと区別する。
+実行/完了は未確認。val由来event_statistics.jsonは既存train-only統計へ混用しない。
+
+追加確認（台帳§54）: aten-22のucity_small_loopはtasks=[depth,semantics,pose]、
+max_depth_delta_us=50000、Depth保存範囲0.1–200m。Depthを含むことをmetadataで確認。
+outputs配下のrittenhouse/metadata.json検索は該当なし（他の保存先の不存在までは未確認）。
+rawのあるサーバーでrittenhouseだけ新規rootへDAGR/GEP(percentile90)→Depthを生成する手順を提示。
+既存train/ucity_small_loopは再処理しない。新規イベント/targets生成・sig-gpu5転送はまだ未実施。
+
 ユーザー提示treeで別サーバーに全F3昼間train/valのdata.h5/depth_gt.h5があることを確認（台帳§53）。
-rawの絶対パス/ホストは未提示。追加ダウンロードを前提にしない。
+rawの絶対パスは上記追記で確定。追加ダウンロードを前提にしない。
 aten-22の `~/project/research/EventState/outputs/m3ed_downstream` はmetadata.json/_SUCCESS/targets.h5形式。
 city_hall/horse/penno_big_loop/penno_small_loop/ucity_small_loopがあり、rittenhouseはない。
 既存targetsのtasks/depth内容の互換性はmetadataで要確認。イベントcacheとは別成果物。

@@ -1518,3 +1518,17 @@ M3ED Semantic mIoU (%)
   rittenhouseのprepared events有無に応じてDepth正解だけ、または同系列のDAGR/GEPとDepthを新規生成。
   val前処理が出す統計はtrain-only統計へ混用しない。split/seed/学習精度の変更なし。
   追加処理/転送/val index生成はまだ未実施。sig-gpu5の既存train indexは保持する。
+
+## 54. ucity_small_loopのDepth metadata確認（2026-10-27受領）
+
+- aten-22で既存metadataのsequence_name=car_urban_day_ucity_small_loop、
+  tasks=[depth,semantics,pose]を確認。
+  generation: max_depth_delta_us=50000、max_pose_delta_us=50000、max_semantics_delta_us=0、
+  min_depth_m=0.1、max_depth_m=200.0。現在の正解生成既定条件と一致。
+  実HDF5の有効画素/整列/geometryをこの出力だけで検証したものではない。
+- `find outputs -type f -path '*/car_urban_day_rittenhouse/metadata.json'` は該当なし。
+  outputs外の前処理済みデータ有無は未確定。
+- 次はrawのあるサーバーでrittenhouseだけ新規出力rootへ既存DAGR/GEP(percentile90)処理、
+  そのタイムスタンプにDepth正解を生成。val生成統計はtrain-only統計に使わない。
+  既存train index/ucity_small_loopは保持し、不足成果物のみsig-gpu5へ追加する予定。
+  seed非適用の前処理段階。実行/転送/新精度は未確認。
