@@ -5,7 +5,28 @@
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況：Depth正解index作成で停止（2026-10-27）
+## 最新状況：別サーバーのM3ED raw/既存targetsを確認（2026-10-27）
+
+ユーザー提示treeで別サーバーに全F3昼間train/valのdata.h5/depth_gt.h5があることを確認（台帳§53）。
+rawの絶対パス/ホストは未提示。追加ダウンロードを前提にしない。
+aten-22の `~/project/research/EventState/outputs/m3ed_downstream` はmetadata.json/_SUCCESS/targets.h5形式。
+city_hall/horse/penno_big_loop/penno_small_loop/ucity_small_loopがあり、rittenhouseはない。
+既存targetsのtasks/depth内容の互換性はmetadataで要確認。イベントcacheとは別成果物。
+次はucity_small_loopのmetadata/tasksを確認、rittenhouseのprepared event metadataを探す。
+既存イベントがあればrittenhouse Depth正解のみ追加生成、なければrittenhouseだけDAGR/GEP前処理。
+生成先は新規root。val由来のevent_statistics.jsonをtrain-only統計へ混用しない。
+sig-gpu5へは不足系列だけ転送し、既存train indexやtargetsを保持してval indexのみ生成する。
+
+## M3ED train index成功、valのrittenhouse正解未完了（2026-10-27、経緯）
+
+M3ED F3 train indexは16,425時刻で成功。valは既存m3ed_downstream/car_urban_day_rittenhouseの
+_SUCCESS不在で停止（台帳§52）。正解未生成/部分生成の区別は未確認、ucity_small_loopへ未到達。
+RUN_ROOTのtargets/m3ed_train.jsonは保持し、targets一括再実行は既存train indexで拒否されるため避ける。
+次はraw data/depth HDF5とprepared eventsの存在確認→新しいval専用rootで2valのdepth準備→
+prepare_dense_targets.py --role valだけ実行。旧M3ED targetsは上書きしない。
+raw M3ED rootは未確認。DSEC追加取得/index作成成功は今回ログに含まれず未確認のまま。
+
+## Depth正解index作成のDSEC停止・配置確認記録（2026-10-27）
 
 追加の配置確認でdataset配下maxdepth8に視差directory/ZIPは見つからず、calibrationは既存パスに存在（台帳§51）。
 RUN_ROOTは `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342` と確定。

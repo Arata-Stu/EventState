@@ -1493,3 +1493,28 @@ M3ED Semantic mIoU (%)
   この環境のHTTP直読はtimeout、配布URL到達/サーバー取得/展開は未確認。
   splitを変えず、DSECのみtargetsを再実行。M3ED正解は引き続き未確認。
   GT準備段階でseed非適用、新しい学習/精度結果なし。統計/smoke/calibrationは保持。
+
+## 52. M3ED Depth train index成功、val準備未完了（2026-10-27受領）
+
+- `DATASETS=m3ed ... targets` のstdoutで `m3ed_f3 train: 16425 target timestamps; public labels=True`。
+  公開F3 train3、seed適用なしのGT index作成。出力は
+  `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342/targets/m3ed_train.json`。
+- 続くvalで `/home/iASL/Arata_repo/dataset/m3ed_cache/m3ed_downstream/car_urban_day_rittenhouse`
+  の_SUCCESSがなく `M3ED target preparation incomplete`。不存在/部分生成のどちらかは未確認。
+  val indexは未生成。もう一方のvalであるucity_small_loopの検査へも未到達。
+- 作成済みtrain indexと元targetsは保持。次は2valの公式data/depth HDF5・prepared eventを確認し、
+  新しいval専用rootへdepthを準備、val indexのみ作る。train indexを再生成しない。
+  DSEC追加取得/index成功は今回のログからは確認できない。本学習/新しい精度結果なし。
+
+## 53. 別サーバーのM3ED rawとtargets一覧受領（2026-10-27）
+
+- ユーザー提示raw treeにはF3 train3/val2すべてのdata.h5/depth_gt.h5が存在。
+  raw絶対パス/ホストは未提示、ファイル名一覧の確認でありHDF5内容検証ではない。
+- aten-22の `~/project/research/EventState/outputs/m3ed_downstream` には
+  city_hall/horse/penno_big_loop/penno_small_loop/ucity_small_loopの5系列があり、
+  各metadata.json/_SUCCESS/targets.h5。rittenhouseは一覧にない。
+  この形式は既存prepare_m3ed_downstream.pyの出力と一致。tasksにdepthがあるかは未確認。
+- raw/全既存系列の再処理は不要。次はmetadataで既存depth/geometryを確認し、
+  rittenhouseのprepared events有無に応じてDepth正解だけ、または同系列のDAGR/GEPとDepthを新規生成。
+  val前処理が出す統計はtrain-only統計へ混用しない。split/seed/学習精度の変更なし。
+  追加処理/転送/val index生成はまだ未実施。sig-gpu5の既存train indexは保持する。
