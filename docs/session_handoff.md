@@ -5,7 +5,24 @@
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況：統計生成・Depth用4条件smoke通過（2026-10-27）
+## 最新状況：Depth正解index作成で停止（2026-10-27）
+
+追加の配置確認でdataset配下maxdepth8に視差directory/ZIPは見つからず、calibrationは既存パスに存在（台帳§51）。
+RUN_ROOTは `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342` と確定。
+公式train_disparity.zip追加取得を案内する。約12GBは公式ページ表記、実際の取得/展開は未確認。
+公式ページの検索索引は確認できたが、この環境からのページ直読はtimeout。
+配布URLは既存download_dsec.shと同じtrain_coarse規則を使用する（HTTP到達は未確認）。
+既存calibration/統計/smokeは再生成不要。DSECだけのtargets再実行後、M3EDを別途確認する。
+
+サーバーsig-gpu5でtargets段階が最初のinterlaken_00_cのDSEC視差ディレクトリ不在で停止（台帳§50）。
+指定rootはdataset/DSEC/train_disparity、探索先はSEQ/disparity/eventまたはSEQ/event。
+実際のラベル配置/ZIP存在は未確認。パス違いと未取得を切り分ける必要がある。
+既存download_dsec.shはevents/images/calibrationのみで、disparity取得には対応していない。
+今回のtargetsは最初のtrain系列で停止し、新しいtarget indexの書き出し前。
+この実行列では本学習/Depth評価へ未到達。RUN_ROOTはoutputs/dense_f3_latest_run.txtから復元する。
+まずサーバーで読取専用の配置確認を依頼し、split変更やラベル欠損系列の除外はしない。
+
+## 統計生成・Depth用4条件smoke通過（2026-10-27）
 
 ユーザーから統計生成とDSEC/M3ED × baseline/alpha1の4条件smokeが全て通過したとの報告（台帳§49）。
 直前提示条件はRGB間隔GEP、F3 train37/train3、seed0・100step。詳細ログ/実出力日時は未受領。

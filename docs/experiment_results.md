@@ -1466,3 +1466,30 @@ M3ED Semantic mIoU (%)
   公開F3 train/valのDepthにz/h/concatの12 head（50epoch/seed0）を学習し、
   同一headでcontinuous/frame resetの24評価、低イベント率train p10以下の集計とモデル差分を出す。
   head/結果は同rootのheads/およびcomparison/。本学習・Depth精度結果はまだない。
+
+## 50. Depth targets段階のDSECパス不在（2026-10-27受領）
+
+- sig-gpu5で `run_dense_f3_pipeline.sh targets "$RUN_ROOT"` がFileNotFoundError。
+  DSEC F3 train最初のinterlaken_00_cに対する
+  `/home/iASL/Arata_repo/dataset/DSEC/train_disparity/interlaken_00_c/disparity/event`
+  と同SEQ直下のeventの双方が探索時に存在しない。
+- 確認できたのは指定パス不在のみ。ラベル未取得/別配置/未展開のどれかは未確認。
+  seed適用なし（GT index段階）、split変更なし、新しい精度/本学習結果なし。
+  indexは全系列走査後に書くため今回のtrain indexは未生成。M3EDへも未到達。
+- RUN_ROOTの実際の日時はログ未提示。復元先はrepoのoutputs/dense_f3_latest_run.txt。
+  ログ予定はRUN_ROOT/logs/dsec_targets_train.log。既存smoke/統計は保持。
+- 既存download_dsec.shはdisparity非対応と静的確認。次はサーバー側で視差directory/ZIPと
+  calibration配置を読取専用で確認し、正しいroot指定または公式GT取得の対応を決める。
+
+## 51. DSEC視差ラベルの配置確認（2026-10-27受領）
+
+- ユーザーのfind結果: dataset配下maxdepth8にdisparity/event directory、
+  interlaken_00_c/event directory、名前にdisparityを含むZIPは検出されず。
+  探索範囲外や別名ファイルの不存在まで証明したものではない。
+- calibrationは `/home/iASL/Arata_repo/dataset/DSEC/train_calibration/interlaken_00_c/calibration/cam_to_cam.yaml`
+  の存在を確認。RUN_ROOTは `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342`。
+- 次に公式train_disparity.zip（公式ページ表記12GB）の追加取得・CRC確認・非上書き展開を案内。
+  URLは既存downloaderの公式train_coarse命名規則から構成。公式ページ検索索引では配布名確認済み、
+  この環境のHTTP直読はtimeout、配布URL到達/サーバー取得/展開は未確認。
+  splitを変えず、DSECのみtargetsを再実行。M3ED正解は引き続き未確認。
+  GT準備段階でseed非適用、新しい学習/精度結果なし。統計/smoke/calibrationは保持。
