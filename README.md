@@ -43,8 +43,10 @@ E2: Event → Encoder → z ─────────────→ DINOv3
 - teacher feature cache、TensorBoard logging、resume可能なcheckpoint
 - `z` / `h` alignmentとlow/medium/high event-count別評価
 
-Mamba、future prediction、flow probe、CMax、下流segmentation/flow/detection headは
-次のphaseです。Mambaは設定名と明示的なplaceholderだけを用意しています。
+Detection/Semanticに加え、DSEC/M3EDのDepthとDSEC視差のfrozen probeを追加しました。
+公開split・リーク監査・サーバー実行手順は[Depth評価手順](docs/dense_probes.md)を参照してください。
+新しいDepth実験は未実行です。Mamba、future prediction、flow probe、CMaxは未実装で、
+Mambaは設定名と明示的なplaceholderだけを用意しています。
 
 ## データセット選択
 
@@ -815,9 +817,9 @@ query cosine mapを並べます。下段にはteacher cosineとlog正規化し�
   state decayを時系列で可視化する
 - cross-dataset: M3EDだけでpretrainしたcheckpointを固定し、既存DSEC-Detection probeを学習する
 
-semantic segmentationはM3EDのsemantic HDF5、depthはleft-event座標の公式LiDAR depthを教師にし、
-同じfrozen `z`/`h`へ軽量decoderを付ける構成にできます。まずはpretrainingと停止区間評価を固定し、
-その後にF3と同じsplit・metricへ合わせたsegmentation/depth probeを追加します。M3ED配布の
+Depthではleft-event座標の公式LiDAR depthとfrozen `z/h/concat`を使うprobeを実装しました。
+[Depth評価手順](docs/dense_probes.md)のF3公開splitとリーク検査を使用してください。
+既存Semantic用4train/1valをF3 Depthの3train/2valとして流用しません。M3ED配布の
 `semantics.h5`にはInternImage由来のlabelが含まれるため、人手GTとしては扱わずpseudo-label評価と
 明記します。
 

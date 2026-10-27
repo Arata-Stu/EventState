@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-10-01
+最終更新: 2026-10-26
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
@@ -1332,3 +1332,78 @@ M3ED Semantic mIoU (%)
 - 原因は新しいraw exporterの標準配置のみの探索。追加配置を明示sequence_rootで読む修正を実装。
   学習データの自動発見は変更せず、完了済み標準系列の入力経路・窓・変換を維持する。
   既知の修正前code hashからのみ監査付きresumeを許可。Mac stdlib9テスト・静的検証通過、サーバー再開未報告。
+
+## 44. DSEC GEP20下流12head・活動別評価の完了（2026-10-23受領）
+
+- ユーザーが同じgep20コマンドに--resumeを追加して再開。
+  `resuming with audited DSEC-Det extra layout fix`の後、baseline detection_cache_valから続行。
+- baseline Detection val抽出/warp、z/h/concat学習/評価が完了。alpha1もSemantic/Detectionの全stage完了。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/dsec_gep20_downstream_20261021`。
+  最後に両モデルの`complete and cache removed`と`all complete`を受領。
+- 2モデル×Semantic/Detection×z/h/concat=12head、Semantic活動別6評価。
+  20ms、Hybrid事前学習seed0、frozen backbone、head seed0/50epoch、Semantic development val・Detection official val。
+- 掲載コードのall completeは結果検証と活動別比較の母集団一致検査の通過を意味する。
+  summary.json/activity_comparison.json生成済みのログ段階。数値は未受領、精度改善は未判定。
+- 次は両JSONを短く集計して受領。約50msとの全体指標比較では同じhead入力とvalidation splitを対応させる。
+  活動maskは窓によって変わるので、活動別はまず20ms内baseline対alpha1で比較する。
+
+
+## 45. DSEC GEP20 Semantic活動別の数値（2026-10-23受領）
+
+- 出典: ユーザー提供のSemantic活動別集計（小数3桁）。下表は提供値を保持し、丸めた値から差を再計算しない。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/dsec_gep20_downstream_20261021` の `activity_comparison.json`。
+- 条件: §44の固定20ms GEP、Hybrid事前学習seed0、augmentation/dropoutなし、frozen backbone、Linear CE head seed0/50epoch、DSEC Semantic development val。
+  baseline=z/h全領域、alpha1=z activeのみ/h全領域。状態保持、低活動frame閾値は活動画素率10%以下。
+- 単位はmIoU(%)、差はalpha1−baselineのポイント。
+
+| 入力 | 群 | baseline | alpha1 | 差point | 評価画素数 |
+|---|---|---:|---:|---:|---:|
+| z | all | 60.181 | 60.249 | +0.068 | 633,036,800 |
+| z | active | 57.775 | 57.890 | +0.115 | 378,540,800 |
+| z | inactive | 54.462 | 54.291 | -0.171 | 254,496,000 |
+| z | low_activity_frames | N/A | N/A | N/A | 0 |
+| z | other_frames | 60.181 | 60.249 | +0.068 | 633,036,800 |
+| h | all | 60.266 | 60.299 | +0.033 | 633,036,800 |
+| h | active | 57.826 | 57.876 | +0.050 | 378,540,800 |
+| h | inactive | 55.079 | 55.055 | -0.024 | 254,496,000 |
+| h | low_activity_frames | N/A | N/A | N/A | 0 |
+| h | other_frames | 60.266 | 60.299 | +0.033 | 633,036,800 |
+| concat | all | 60.670 | 60.753 | +0.083 | 633,036,800 |
+| concat | active | 58.307 | 58.428 | +0.121 | 378,540,800 |
+| concat | inactive | 55.223 | 55.133 | -0.089 | 254,496,000 |
+| concat | low_activity_frames | N/A | N/A | N/A | 0 |
+| concat | other_frames | 60.670 | 60.753 | +0.083 | 633,036,800 |
+
+解釈と限界:
+- 全体/活動領域は小幅改善、非活動領域は小幅低下。単一seedでは明確なalpha1の優位性を確認できない。
+  M3EDで観測した非活動・低活動frameの改善をDSEC20msへ一般化しない。
+- 非活動領域は存在するが、活動画素率10%以下のframeは0件。低活動frameへの効果は評価不能。
+- 約50msの全体値（§30 baseline、§33 alpha1）と対比すると、concatはbaseline 60.09714→60.670（約+0.573point）、
+  alpha1 60.20561→60.753（約+0.547point）。両条件で20msの値が高い観察。
+  別学習run・単一seedであり、保存configの全面照合や再現seedなしに窓短縮の因果効果とは断定しない。
+  活動maskの母集団は窓間で異なるため、活動別指標を同一画素集合の比較とは扱わない。
+- Detection数値はまだ未受領。次はDetectionのbaseline/alpha1を入力別に確認する。
+
+## 46. 物体のイベント減少後の保持に関する問題提起（2026-10-26）
+
+- 主目的をユーザーが明確化: RVTのように、過去に観測した物体のイベント発生が弱まった／途絶えた後も、
+  蒸留表現とLSTMがその物体の認識を保持できるかを検証したい。
+- ユーザーの印象・仮説: RGB教師により輪郭から空や道路を補完できるようになった一方、
+  イベントが弱まった車が道と推論され、道路輪郭の内部として補完されている可能性がある。
+  対象run、系列/時刻、入力特徴z/h/concat、seed、split、出力パス、動画は未受領。
+  新しい定量結果ではなく、保持失敗や原因を確認済みとして扱わない。
+- 既存§39のcontinuous/reset差はモデルの履歴依存の証拠であり、特定の車が活動→非活動へ
+  移行した後も認識を保持する証拠ではない。§41のz単独改善も状態保持だけでは説明できない。
+- コード確認: 現行ActivityEvaluatorは現在のactive/inactive等を集計し、物体の同一性、
+  過去の観測有無、イベント減少からの経過時間は集計しない。
+  PatchwiseLSTMは画像上のパッチ位置ごとの状態を更新し、明示的な物体追跡・状態warpはない。
+  これだけで保持失敗の原因とは断定しない。RVTもplain LSTMを採用しており、
+  patch-wiseであることだけをRVTとの差や失敗原因としない。
+- 診断候補（未実装・未実行）: 可視の同一車両がイベント活動から低活動へ移行する区間を選び、
+  RGB/ラベル、イベント、z/h別の予測、車/道確率、同一headのcontinuous/resetを時系列で比較。
+  車領域のrecall、車→道誤分類率、低活動開始からの経過時間を確認する。
+  画像内移動・遮蔽・画面外退出を分け、正しい物体保持と古い物体の残像を区別する。
+  現在inactiveかつ過去activeの抽出には、固定画像座標と同一物体の履歴を混同しない。
+- 参照一次情報: [RVT原論文 Fig.4(d), §5](https://arxiv.org/html/2212.05598v3)。
+  イベント不在時の部分的な検出保持を示す一方、記憶減衰と検出性能低下も明記する。
+  RVTは物体検出の教師あり学習であり、RGB特徴蒸留による保持を直接検証した論文ではない。

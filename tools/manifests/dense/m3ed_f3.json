@@ -1,0 +1,38 @@
+{
+  "name": "m3ed_f3",
+  "dataset": "m3ed",
+  "sources": [
+    {
+      "url": "https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/full_car_urban_day_gt_train.yml",
+      "revision": "833e2c65233f9787449ce0675ae41e3f6e9c193a",
+      "sha256": "7fa22eefee9318d5ba8dbbb118144bcffdf809ae85d23972cd1c3a51e45476cf"
+    },
+    {
+      "url": "https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/full_car_urban_day_gt_val.yml",
+      "revision": "833e2c65233f9787449ce0675ae41e3f6e9c193a",
+      "sha256": "aa67b4cc9e8ae21326ff69c91aa82c33264cd40c5109612287b5cb99c68365f0"
+    }
+  ],
+  "splits": {
+    "train": [
+      "car_urban_day_penno_big_loop",
+      "car_urban_day_penno_small_loop",
+      "car_urban_day_city_hall"
+    ],
+    "val": [
+      "car_urban_day_rittenhouse",
+      "car_urban_day_ucity_small_loop"
+    ],
+    "test": [
+      "car_urban_day_schuylkill_tunnel",
+      "car_urban_day_ucity_big_loop"
+    ]
+  },
+  "labels_available": {
+    "train": true,
+    "val": true,
+    "test": false
+  },
+  "test_source": "https://m3ed.io/sequences/",
+  "notes": "F3 published depth split; val is validation, never renamed test. Monocular frozen probe, not stereo benchmark reproduction."
+}

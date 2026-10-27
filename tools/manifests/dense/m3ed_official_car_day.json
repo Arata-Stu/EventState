@@ -1,0 +1,32 @@
+{
+  "name": "m3ed_official_car_day",
+  "dataset": "m3ed",
+  "sources": [
+    {
+      "url": "https://m3ed.io/sequences/",
+      "retrieved": "2026-10-27"
+    }
+  ],
+  "splits": {
+    "train": [
+      "car_urban_day_penno_big_loop",
+      "car_urban_day_penno_small_loop",
+      "car_urban_day_city_hall",
+      "car_urban_day_rittenhouse",
+      "car_urban_day_ucity_small_loop",
+      "car_urban_day_horse"
+    ],
+    "val": [],
+    "test": [
+      "car_urban_day_schuylkill_tunnel",
+      "car_urban_day_ucity_big_loop"
+    ]
+  },
+  "labels_available": {
+    "train": true,
+    "val": true,
+    "test": false
+  },
+  "test_source": "https://m3ed.io/sequences/",
+  "notes": "Official public labeled train / hidden-label test. No automatic validation or best-checkpoint selection."
+}

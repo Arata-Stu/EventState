@@ -74,8 +74,24 @@ def validate_config(config: Any) -> None:
             raise ValueError("ScaleEvent activity requires patch size 16")
         if any(int(_value(dataset, key)) % 16 for key in ("input_height", "input_width")):
             raise ValueError("ScaleEvent input dimensions must be multiples of 16")
+    dense_protocol = _value(dataset, "dense_evaluation_protocol")
+    if dense_protocol:
+        from omegaconf import OmegaConf
+        from event_state.dense.protocol import audit_pretraining, load_protocol
+
+        plain = OmegaConf.to_container(config, resolve=True) if OmegaConf.is_config(config) else config
+        protocol = load_protocol(str(dense_protocol))
+        if set(plain["dataset"].get("train_sequences") or []) != set(protocol["splits"]["train"]):
+            raise ValueError("Dense-probe pretraining requires exactly the published training sequences")
+        provenance = plain["dataset"].get("normalization_provenance", {})
+        for key in ("normalize_mean", "normalize_std"):
+            if provenance.get(key) != plain["dataset"]["representation"].get(key):
+                raise ValueError("Dense-probe normalization provenance/coefficients differ")
+        audit_pretraining(plain, protocol, statistics_sequences=provenance.get("sequences"))
     strict_joint = str(_value(dataset, "pretraining_protocol", "")) == "dsec_joint_clean"
-    if (activity_enabled and str(_value(dataset, "name", "dsec")) == "dsec") or strict_joint:
+    if not dense_protocol and (
+        (activity_enabled and str(_value(dataset, "name", "dsec")) == "dsec") or strict_joint
+    ):
         import yaml
 
         from event_state.data.split_guard import (
@@ -98,7 +114,7 @@ def validate_config(config: Any) -> None:
                 detection_split, semantic_split,
                 validation_enabled=bool(_value(training, "validation_enabled", True)),
             )
-    if str(_value(dataset, "name", "dsec")) == "m3ed" and (
+    if not dense_protocol and str(_value(dataset, "name", "dsec")) == "m3ed" and (
         activity_enabled or str(_value(dataset, "pretraining_protocol", "")) == "m3ed_activity"
     ):
         import yaml

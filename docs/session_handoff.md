@@ -1,11 +1,61 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-21
+最終更新: 2026-10-27
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況（2026-10-21）
+## Depth／視差評価の実装（2026-10-27、サーバー未実行）
+
+ユーザーが、他モデルと比較できる公開splitを維持し、事前学習/下流train・val・testの
+リークを防いだ他タスク評価の実装を指示。まずDSEC/M3EDのDepthとDSEC視差を追加。
+手順・参照・検証境界は `docs/dense_probes.md`。
+F3公開revision 833e2c65233f9787449ce0675ae41e3f6e9c193aのDepth設定から、
+DSEC37train/4val、M3ED車載昼間3train/2valをそのまま保存。
+公式DSEC41train/12hidden-test、M3ED昼間6labeled-train/2hidden-testの別protocolも監査用に追加。
+M3EDのF3 valをtestへ改称しない。公式testのGT/RGBは非公開でローカル採点不可。
+M3ED hidden-testのイベントのみ前処理・時刻生成は未対応。ローカル比較はF3 train/valを使う。
+
+`event_state/dense/` と toolsのprepare/cache/train/evaluate/compare_dense_*、
+compute_dense_normalization.py、run_dense_pretrain.py、audit_dense_protocol.pyを追加。
+特徴はfrozen z/h/concat、headは非再帰2層Conv。Depth/視差指標、同一headの保持/reset比較、
+低イベント発生率（train p10以下）と継続時間別の集計を実装。従来の活動画素率も選択可能。
+DSECはSemanticの440行cropを流用せず全480x640。M3EDは既存中央352x640で解像度差を明記。
+DSEC公式testはdisparity headのuint16 PNG出力経路を追加。提出/公式checkerは未実行。
+
+既存DSEC train41重みはF3の4valを含むため、新strict評価では拒否する。
+M3ED旧4train/1valもucity_small_loopの事前学習検証使用がF3 valに重複。
+統計も下流trainだけから再計算し、coefficients/系列を新checkpointへ保存する。
+旧成果を消さず、clean再事前学習用launcher（既定はコマンド表示、明示--executeで実行）を用意。
+factoryの新protocol分岐以外、既存protocolの検査は維持する。
+Mac: 新規stdlib16件＋既存split guard8件通過。CLI help・AST・diff確認。
+Torch/NumPy/Hydra数値・合成CLI統合テストはサーバー用に追加したが未実行。
+実データ整列/実重みの全画角推論/GPU学習/新しい精度結果は未確認。
+次はサーバーpreflight→必要GTとprepared系列の確認→train統計→clean smoke。
+今回、Optical Flow/Poseの下流headは追加していない。
+
+## 研究目的の明確化（2026-10-26）
+
+ユーザーの主目的は、過去にイベントで観測した物体について、イベント発生が弱まった／途絶えた後も
+RGB教師から蒸留した表現とLSTM状態によって認識を保持できるかを検証すること。
+非活動領域全般のmIoU改善と、特定物体の時間的保持を区別する。
+ユーザーは「イベントが弱まった車が道と推論され、周囲の輪郭から道路を補完しているのではないか」
+と問題提起。対象run・系列・時刻・head・seed・動画は未受領であり、原因も現象の定量的確認も未実施。
+詳細は台帳§46。既存reset評価は履歴依存を支持するが、観測済み物体の低活動移行後の保持は未検証。
+次の診断候補は、同一車両のイベント減少前後でRGB/ラベル・イベント・z/h予測・車/道確率を追い、
+同一headのcontinuous/resetを比較すること。新しい学習や評価実装・サーバー実行は未開始。
+固定20ms Detection数値の回収も引き続き未完了。
+
+## 最新の数値受領状況（2026-10-23）
+
+GEP20下流は追加系列修正を使って--resumeし全完了（台帳§44）。両モデルのcache removed/all completeを受領。
+出力outputs/dsec_gep20_downstream_20261021。12head+Semantic活動別6件。
+Semantic活動別数値を受領（§45）: alpha1−baseline全体z+0.068/h+0.033/concat+0.083point。
+活動領域は小幅改善、非活動は小幅低下。低活動frame対象0件。単一seedでalpha1の明確な優位性は未確認。
+concat全体baseline60.670/alpha1 60.753。約50msより双方約+0.55pointだが、窓短縮の因果効果は未確定。
+次はDetection数値の集計・受領。以下の停止/再開待ちは過去記録。
+
+## 2026-10-21の停止・修正記録
 
 GEP20下流はbaseline detection_cache_valでexit1（台帳§43）。サーバーテスト12 passed/3.39s、起動前空き322G。
 Semantic3headの学習/評価/活動別とDetection train cache/warpは次stageへ進行。alpha1未到達。

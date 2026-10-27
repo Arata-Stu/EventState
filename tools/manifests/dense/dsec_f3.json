@@ -1,0 +1,84 @@
+{
+  "name": "dsec_f3",
+  "dataset": "dsec",
+  "sources": [
+    {
+      "url": "https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/full_dsec_gt_train.yml",
+      "revision": "833e2c65233f9787449ce0675ae41e3f6e9c193a",
+      "sha256": "baf0e0fd0d292a90ccb58a5caa85f5e048547cca6de196ba5c0737d9a9c722eb"
+    },
+    {
+      "url": "https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/full_dsec_gt_val.yml",
+      "revision": "833e2c65233f9787449ce0675ae41e3f6e9c193a",
+      "sha256": "2533b3cf282744599617cace699d91641d227edee4a3271bffee45a5e41ab7d6"
+    }
+  ],
+  "splits": {
+    "train": [
+      "interlaken_00_c",
+      "interlaken_00_d",
+      "interlaken_00_e",
+      "interlaken_00_f",
+      "thun_00_a",
+      "zurich_city_00_a",
+      "zurich_city_00_b",
+      "zurich_city_01_a",
+      "zurich_city_01_b",
+      "zurich_city_01_c",
+      "zurich_city_01_d",
+      "zurich_city_01_e",
+      "zurich_city_01_f",
+      "zurich_city_02_a",
+      "zurich_city_02_b",
+      "zurich_city_02_c",
+      "zurich_city_02_d",
+      "zurich_city_03_a",
+      "zurich_city_04_a",
+      "zurich_city_04_b",
+      "zurich_city_04_c",
+      "zurich_city_04_d",
+      "zurich_city_04_e",
+      "zurich_city_04_f",
+      "zurich_city_05_a",
+      "zurich_city_05_b",
+      "zurich_city_06_a",
+      "zurich_city_07_a",
+      "zurich_city_08_a",
+      "zurich_city_09_a",
+      "zurich_city_09_b",
+      "zurich_city_09_c",
+      "zurich_city_09_d",
+      "zurich_city_10_a",
+      "zurich_city_10_b",
+      "zurich_city_11_a",
+      "zurich_city_11_b"
+    ],
+    "val": [
+      "interlaken_00_g",
+      "zurich_city_02_e",
+      "zurich_city_09_e",
+      "zurich_city_11_c"
+    ],
+    "test": [
+      "interlaken_00_a",
+      "interlaken_00_b",
+      "interlaken_01_a",
+      "thun_01_a",
+      "thun_01_b",
+      "zurich_city_12_a",
+      "zurich_city_13_a",
+      "zurich_city_13_b",
+      "zurich_city_14_a",
+      "zurich_city_14_b",
+      "zurich_city_14_c",
+      "zurich_city_15_a"
+    ]
+  },
+  "labels_available": {
+    "train": true,
+    "val": true,
+    "test": false
+  },
+  "test_source": "https://dsec.ifi.uzh.ch/disparity-submission-format/",
+  "notes": "F3 published depth split; val is validation, never renamed test. Monocular frozen probe, not stereo benchmark reproduction."
+}
