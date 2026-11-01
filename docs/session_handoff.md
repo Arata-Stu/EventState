@@ -1,11 +1,112 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-10-27
+最終更新: 2026-11-02
 
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
 
-## 最新状況：別サーバーのM3ED raw/既存targetsを確認（2026-10-27）
+## GEP20／約50ms Semantic推論動画（2026-11-02）
+
+ユーザーが追加学習なしのSemantic予測＋RGB＋イベント画像動画を希望。
+tools/visualize_dsec_gep20_semantic.sh / visualize_dsec_semantic_windows.pyを追加。
+既定は全領域baseline同士、h、val zurich_city_07_a。旧hybrid_targets dsec_z_hとgep20 baselineを使用。
+20msはrawから生成、legacyは既存GEP cache、Semantic crop/正規化を再利用。
+全入力時刻一致を検査し、系列先頭から状態保持、途中出力でも先行入力を推論。
+MP4/CSV/manifestだけ保存。全特徴cache再生成/追加学習なし。手順docs/dsec_gep20.md末尾。
+Mac stdlib2テスト/構文/help通過。サーバー推論・動画生成は未確認。
+
+## 評価目的の再確認（2026-11-02）
+
+ユーザーは、信号待ちを含む自然な低イベント区間でのLSTMの貢献を主目的として再確認。
+恣意的な毎frame state resetを主検証としない。既存reset機能/結果は補助診断として保持する。
+baseline/alpha1は両方LSTMありで、損失比較であってLSTM有無の比較ではない。
+まず既存のcontinuous z対hを同じ自然低活動区間で比較する案。
+これは同一encoderの読み出し比較であり、独立に学習したLSTMなし対照の代替とはしない。
+主張を強める追加候補は、同一split/入力窓/教師/学習予算と同型headで学習した非再帰対照。
+低イベント区間は予測結果を見ずにtrain由来閾値等で固定し、通常区間・継続時間別も併記。
+信号待ち（場面）と低イベント率（観測量）は同一視せず、物体保持は同一車両の可視性/移動/退出も確認する。
+2026-11-02実装: run_dense_f3_pipeline.sh naturalでresetなしの12head/12評価とz対h/concatを生成。
+natural-summaryで完了済みcontinuous結果だけから集計。比較はreadoutモードで同一cache/母集団を検査。
+手順docs/dense_probes.md末尾。Mac stdlib20テスト通過、GPU実行未確認。
+独立LSTMなし対照の追加学習、信号待ち場面ラベル、物体追跡評価は未実装・未起動。
+以下のDepth完了報告/未確認事項は維持する。
+
+## 最新状況：F3 clean事前学習4条件完了（2026-10-31）
+
+ユーザーがsplit/先行研究比較の検討を一旦区切り、既存4モデルのDepth下流学習へ進むよう指示。
+F3 split・既存train-only統計・最終100k重みを維持し、run_dense_f3_pipeline.sh depthをサーバーで実行する。
+RUN_ROOT=/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342。
+CACHE_ROOT例=/home/iASL/Arata_repo/dataset/downstream_scratch/dense_f3_full_20261027_172342。
+GPU0で4条件逐次、特徴train continuous/val continuous+frame、z/h/concatの12head/50epoch/seed0、
+val MAE選択、24評価と状態差/モデル差集計。test不使用、cache自動削除なし。
+実際の下流起動/完了/新Depth精度は未確認。重い処理はMacでは実行しない。
+
+EventVGGT原論文v2/公開READMEを同日確認。評価はEventScape/MVSEC/DENSEで、DSEC splitは提示なし。
+MVSECはDay2 train→Day1/Night1–3、zero-shotはEventScape学習→MVSEC/DENSE。
+公開checkpoint.ptはEventScapeのみで学習とREADME明記、training/eval codeはTODO。
+DSEC学習系列混入は公開記載上なしだが、教師の元学習集合/実checkpoint全履歴の監査ではない。
+詳細はdocs/dsec_published_split_audit.mdのEventVGGT節。DSEC再評価は別の追加実験、実装/起動未実施。
+
+同日ユーザーから、独自splitを除外し公式/先行研究splitのみでtrain→評価系列重複を監査するよう明示指示。
+正本は新規docs/dsec_published_split_audit.md/.json（全系列と交差行列、一次ソースURL/取得SHAを保存）。
+公式DSEC41/12、disparity41/12、Det41/6/13、Semantic8/3、Flow18/7は各split内・相互のtrain→評価交差0。
+F3 Depth公開37/4とDepthAnyEvent公開31/10は別分割（HTTP再取得確認）。各split内交差0。
+公式train41→F3 valは4、→DepthAnyEvent validationは10。F3 train37→DepthAnyEvent validationも9。
+以前の35系列共通事前学習案/本repo Semantic6/2は今回の監査に含めない。再学習やsplit変更なし。
+先行研究の事前学習コード使用歴は公式splitと別途監査。ScaleEvent参照revisionのdsec.txtは公式test10系列を含むが、
+実論文checkpointが同設定で作られたか未確認。GEPのvalid_dsec=公式testも勾配学習と区別。
+
+ユーザーから4条件終了と `Completed stage=pretrain run_root=.../dense_f3_full_20261027_172342` を受領（台帳§58）。
+組合せはDSEC/M3ED × baseline/alpha1。baselineはz/h全域、alpha1はz activeのみ/h全域。
+両方LSTMあり。alpha1はhを非活動限定にする条件ではない。
+F3 train37/train3のみ、各seed0/100k、Hybrid sampling、augmentation/dropoutなし、RGB間隔GEP。
+既存runnerは各job成功と最終checkpoint非空確認後に完了表示。保存config/loss/実重みロードは未確認。
+次は同RUN_ROOTでDepth特徴抽出→z/h/concatの12head→continuous/frameの24評価。
+新しいDepth精度結果はまだない。既存Mac中継/サーバー追加cacheは保持する。
+
+2026-10-31にGEP比較のsplitを調査。GEP論文DepthはMVSEC(day2 train、day1/night1–3 validation)、
+DSEC/M3ED Depthではない。詳細と比較案はdocs/dense_probes.mdのGEP節。
+今回F3 splitは維持。GEPを追加評価する案とMVSEC公表protocol追試案は提案段階、未実装/未起動。
+GEP公開DSEC事前学習重みはF3 valの使用履歴を要監査。論文Depth上限なしと公開config30mの差も確認。
+
+同日、DSEC全タスク共通splitを調査。公式の元train/testは土台として共通だが、ラベル提供系列や
+task別valが異なり、全task同一train/val/testの標準は確認できず。詳細はdocs/dense_probes.md。
+全下流splitを維持し、val/testの和集合を事前学習から除外する共通backbone案は設計可能。
+Detection+Semantic開発+F3 Depthなら候補41−Depth4val−Semantic2val=35（Flow等は別途監査）。
+これは提案例であり公式共通splitではない。現DSEC37重みはSemantic開発valを含む。
+再学習やsplit変更は未開始、今回完了した4モデルの成果物は保持する。
+
+## M3ED F3 val index作成成功（2026-10-28、経緯）
+
+sig-gpu5で `m3ed_f3 val: 26611 target timestamps; public labels=True` を受領（台帳§57）。
+M3ED train16425/val26611のindex作成を確認。公開train3/val2を維持。
+val indexはoutputs/dense_f3_full_20261027_172342/targets/m3ed_val.json。
+rittenhouseイベントをhalf_dagrへリンクし、追加rootの2val正解からindexを作る提示手順が成功。
+対象HDF5の読出し/index化は確認できたが、Macとのchecksum照合結果と全event tensor検査は未受領。
+次は4つのtrain/val index存在確認後、同RUN_ROOTでpretrain（4条件/seed0/100k、smoke継続なし）。
+DSEC index成功は未受領のため事前確認で不足なら停止。本学習/Depth精度はまだ未確認。
+
+## rittenhouse追加前処理完了（2026-10-27、以下はval index前の経緯）
+
+2026-10-28: ユーザーから「おそらく転送はできた」と報告。完了ログ/ファイル照合は未受領のため未確認。
+次はMac中継先とsig-gpu5転送先をrsync checksum dry-runで照合し、問題なければサーバー側で
+不足イベント系列をリンクしてM3ED val indexのみ作成する。旧train indexとMac中継データは保持。
+
+転送経路の更新: ユーザー環境ではaten-22からsig-gpu5への直接転送は不可。
+Macから両方へのSSH alias aten-22/sig-gpu5が設定済み（Macのconfigを接続せず確認）。
+Macへpull→sig-gpu5へpushの2段階手順を提示。転送自体はまだ未確認。
+Mac中継先の例は~/Downloads/m3ed_f3_transfer_20261027_183108。
+転送対象は追加events/targetsと既存ucity_small_loop targets、val統計は除外する。
+
+ユーザーログでaten-22の追加イベント/RGBとDepth生成完了を確認（台帳§55）。
+出力 `/media/aten-22/AT_2TB/dataset/m3ed_rittenhouse_20261027_183108`。
+イベント/RGB側9752時刻、Depth有効9746frame/134289031pixel。Depth_GT missing=[]。
+完了メッセージはmetadata.jsonとtargets/_SUCCESS存在チェック後。sig-gpu5転送/val indexは未実施。
+次は新規追加rootへevents/targetsを転送し、既存ucity_small_loop targetsも同rootへ転送、
+既存half_dagrに不足rittenhouseをリンクしてF3 val indexだけ作る。既存train indexを保持。
+event_statistics.jsonはval由来なので転送/正規化利用から除外する。DSEC index成功は未受領。
+
+## 別サーバーのM3ED raw/既存targetsを確認（2026-10-27、経緯）
 
 ユーザー指定パス: M3ED raw=`/mnt/ssd-4tb/dataset/m3ed`、追加処理出力の親=`/media/aten-22/AT_2TB/dataset`。
 rittenhouse専用の日時付き `m3ed_rittenhouse_<日時>/{events,targets}` を出力親配下に作る手順へ更新。

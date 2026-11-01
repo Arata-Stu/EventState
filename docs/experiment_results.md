@@ -1532,3 +1532,56 @@ M3ED Semantic mIoU (%)
   そのタイムスタンプにDepth正解を生成。val生成統計はtrain-only統計に使わない。
   既存train index/ucity_small_loopは保持し、不足成果物のみsig-gpu5へ追加する予定。
   seed非適用の前処理段階。実行/転送/新精度は未確認。
+
+## 55. rittenhouse追加イベント・Depth生成完了（2026-10-27受領）
+
+- aten-22のユーザーログでcar_urban_day_rittenhouseのDAGR/GEP RGB前処理とDepth生成の完了を確認。
+  raw=`/mnt/ssd-4tb/dataset/m3ed`、出力=`/media/aten-22/AT_2TB/dataset/m3ed_rittenhouse_20261027_183108`。
+  events/とtargets/を分離、新規出力。F3 val系列の前処理であり学習seedは適用なし。
+- イベント/RGB側progressは9752/9752、23:13、平均7.00frame/s。
+  これはRGB時刻数であり、保存イベントファイル数と同一とはしない（先頭にイベント窓なし）。
+  正規化集計pixel_count=2196705280、mean=[0.9198492030729801,0.8580354231309686,0.9381862200579874]、
+  std=[0.21578099757288668,0.2704278996553014,0.19099386755934836]。
+  この統計はval由来であり、train限定統計/本学習には使用しない。
+- Depth側progress=9746/9746、01:16、127.42frame/s、tasks=[depth]、missing=[]、
+  depth_frames=9746、depth_valid_pixels=134289031。
+  提示コマンドはGEP percentile90、Depth最近傍許容50000us/保存範囲0.1–200m。
+  最後の「追加処理完了」はevent metadataとtarget _SUCCESS確認後の出力。
+- sig-gpu5への転送・F3 val index・Depth精度評価は未実施。次は追加成果物と既存ucity_small_loop
+  targetsを新規rootへ転送し、既存train indexを保持してval indexだけ作る。
+
+## 56. Mac経由転送の暫定報告（2026-10-28受領）
+
+- ユーザーから「おそらく転送はできた。と思う」と報告。転送完了/整合性は未検証。
+  中継予定Macパスは~/Downloads/m3ed_f3_transfer_20261027_183108、sig-gpu5転送予定先は
+  `/home/iASL/Arata_repo/dataset/m3ed_cache/f3_val_addition_20261027_183108`。
+  対象はrittenhouse events/targetsと既存ucity_small_loop targets。val統計は除外する手順。
+- 次はchecksum dry-run照合、サーバー配置確認、M3ED val indexのみ作成。
+  splitはF3 val2のまま、前処理/転送はseed非適用。本学習/val index/新精度の成功ログは未受領。
+
+## 57. M3ED F3 val index成功（2026-10-28受領）
+
+- ユーザーからsig-gpu5実行結果 `m3ed_f3 val: 26611 target timestamps; public labels=True` を受領。
+  公開F3 val2（rittenhouse/ucity_small_loop）、seed非適用のGT index作成。
+  出力 `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342/targets/m3ed_val.json`。
+- target-rootは `/home/iASL/Arata_repo/dataset/m3ed_cache/f3_val_addition_20261027_183108/targets`。
+  提示コマンドは追加成果物のmetadata/_SUCCESS/targets.h5存在を確認し、
+  half_dagr/rittenhouseが同追加rootのevents/rittenhouseを参照するリンクを作成/確認後にindex化。
+  HDF5の時刻・有効frameを読出し、SHA256記録まで成功。Macとの差分確認出力は未受領。
+- 既存train index16425時刻を保持。次はDSEC含む4 indexの存在確認→4条件各100k/seed0の
+  新規事前学習。本学習・Depth精度結果は未確認。DSEC index成功も現時点では未受領。
+
+## 58. F3 clean事前学習4条件完了（2026-10-31受領）
+
+- ユーザーから4条件終了と `Completed stage=pretrain` を受領。
+  run_root=`/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342`。
+- runner既定4条件: pretrain/dsec_baseline、dsec_alpha1、m3ed_baseline、m3ed_alpha1。
+  baselineはz/h全領域蒸留、alpha1はz activeのみ・h全領域蒸留。全条件同じLSTM構成。
+  固定RGB DINOv3教師、RGB間隔GEP、Hybrid sampling、augmentation/dropoutなし、seed0/各100k。
+  DSEC F3 train37、M3ED F3 train3だけで勾配更新・正規化統計生成。事前学習validation無効。
+- runnerは各subprocess成功後に `checkpoints/step_00100000.pt` の非空を確認し、
+  全指定job後にCompletedを出す。ユーザーの4条件完了報告と合わせ本学習完了として記録。
+  保存config・loss・optimizer skip・実重みロードの個別ログは未受領。
+- 次は同RUN_ROOTでDepth frozen z/h/concatの12head（50epoch/seed0/val MAE選択）と
+  同一headによるcontinuous/frame resetの24評価、低イベント時間帯集計。
+  新しいDepth精度や物体保持の成功を示す結果はまだない。

@@ -2,8 +2,8 @@
 # Server-only runbook: clean pretraining, public target indexing, frozen Depth probes.
 set -euo pipefail
 
-if [[ $# != 2 || ! "$1" =~ ^(pretrain|targets|depth)$ ]]; then
-  echo "Usage: bash tools/run_dense_f3_pipeline.sh {pretrain|targets|depth} RUN_ROOT" >&2
+if [[ $# != 2 || ! "$1" =~ ^(pretrain|targets|depth|natural|natural-summary)$ ]]; then
+  echo "Usage: bash tools/run_dense_f3_pipeline.sh {pretrain|targets|depth|natural|natural-summary} RUN_ROOT" >&2
   exit 2
 fi
 stage="$1"
@@ -79,9 +79,24 @@ for ds in "${datasets[@]}"; do
       continue
     fi
 
+    if [[ "$stage" == natural-summary ]]; then
+      for feature in h concat; do
+        logged "${name}_${feature}_natural_readout" python tools/compare_dense_probes.py \
+          --baseline "$run_root/heads/$name/z/continuous.json" \
+          --candidate "$run_root/heads/$name/$feature/continuous.json" \
+          --mode readout --output "$run_root/comparison/${name}_z_vs_${feature}_natural.json"
+      done
+      continue
+    fi
     test -s "$checkpoint"
+    specs=(train:continuous val:continuous val:frame)
+    policies=(continuous frame)
+    if [[ "$stage" == natural ]]; then
+      specs=(train:continuous val:continuous)
+      policies=(continuous)
+    fi
     cache="$cache_root/$name"
-    for spec in train:continuous val:continuous val:frame; do
+    for spec in "${specs[@]}"; do
       role="${spec%:*}"
       policy="${spec#*:}"
       logged "${name}_cache_${role}_${policy}" python tools/cache_dense_features.py \
@@ -95,22 +110,32 @@ for ds in "${datasets[@]}"; do
       logged "${name}_${feature}_train" python tools/train_dense_probe.py \
         --train-cache "$cache/train_continuous" --val-cache "$cache/val_continuous" \
         --feature "$feature" --epochs 50 --batch-size 4 --seed 0 --output-dir "$head"
-      for policy in continuous frame; do
+      for policy in "${policies[@]}"; do
         logged "${name}_${feature}_${policy}" python tools/evaluate_dense_probe.py \
           --checkpoint "$head/best.pt" --cache "$cache/val_${policy}" \
           --output "$head/${policy}.json"
       done
+      if [[ "$stage" == depth ]]; then
       logged "${name}_${feature}_state_delta" python tools/compare_dense_probes.py \
         --baseline "$head/frame.json" --candidate "$head/continuous.json" \
         --mode state --output "$head/state_delta.json"
+      fi
     done
+    if [[ "$stage" == natural ]]; then
+      for feature in h concat; do
+        logged "${name}_${feature}_natural_readout" python tools/compare_dense_probes.py \
+          --baseline "$run_root/heads/$name/z/continuous.json" \
+          --candidate "$run_root/heads/$name/$feature/continuous.json" \
+          --mode readout --output "$run_root/comparison/${name}_z_vs_${feature}_natural.json"
+      done
+    fi
   done
 
   # Model comparison is available once both conditions have been evaluated.
-  if [[ "$stage" == depth && -f "$run_root/heads/${ds}_baseline/concat/continuous.json" \
+  if [[ ( "$stage" == depth || "$stage" == natural ) && -f "$run_root/heads/${ds}_baseline/concat/continuous.json" \
         && -f "$run_root/heads/${ds}_alpha1/concat/continuous.json" ]]; then
     for feature in z h concat; do
-      for policy in continuous frame; do
+      for policy in "${policies[@]}"; do
         logged "${ds}_${feature}_${policy}_model_delta" python tools/compare_dense_probes.py \
           --baseline "$run_root/heads/${ds}_baseline/$feature/${policy}.json" \
           --candidate "$run_root/heads/${ds}_alpha1/$feature/${policy}.json" \

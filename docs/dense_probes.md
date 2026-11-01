@@ -40,6 +40,58 @@ splitだけの一致をもってF3完全再現やステレオランキングの�
 
 ## リーク防止
 
+### DSEC全タスク共通splitと共通backboneの区別（2026-10-31調査）
+
+追記: ユーザー指定により独自splitを除外した公開分割監査は `dsec_published_split_audit.md` と
+同名JSONを正本とする。以下のSemantic開発6/2や35系列案はその監査に含めない。
+DSEC-DepthにはF3の37/4だけでなくDepthAnyEvent公開31/10もあり、同一splitとして扱わない。
+
+確認した公式配布/各タスク実装には、Detection/Semantic/Depth/Flowのすべてに対して同一系列・
+同一train/val/testを保証する統一標準splitは見つからなかった。
+元DSECのtrain/test区分は共通の土台だが、Semanticは11系列のみ、Detectionは追加系列を含む60系列。
+全系列に全タスクGTがあるわけではなく、Depth/Flowのtest GTは非公開。
+公式根拠: https://dsec.ifi.uzh.ch/dsec-datasets/download/ 、
+https://dsec.ifi.uzh.ch/dsec-semantic/ 、https://dsec.ifi.uzh.ch/dsec-detection/ 。
+F3のDepth4valや本repoのSemantic開発2valは、元DSECのtrain内に確保されたholdoutである。
+
+全タスクで同じ事前学習backboneを使うことは設計可能。下流の公式/公開splitを変更せず、
+共通の事前学習候補から全対象タスクのval/test系列の和集合を除外し、そのtrain-only統計で学習する。
+共有重みをfrozenで使いタスクごとに独立headを学習すれば、他タスクのhead学習でbackboneへ
+評価系列が混入することも避けられる。再帰状態も系列境界でresetする。
+例としてDetection公式+Semantic開発6/2+F3 Depth37/4だけなら、候補41系列から
+Depth4valとSemantic2valを除外し35系列となる（stdlibでmanifestから確認）。
+これは独自の「共通事前学習集合」の設計例であって、公式の35系列splitや全タスク標準ではない。
+Flow等を含めるなら、採用する先行研究のholdoutを追加監査してから確定する。
+既存dsec_joint_cleanはDetection/Semantic用であり、Depth/Flowまで監査済みと扱わない。
+今回完了したDSEC37重みはSemantic開発val07_a/08_aを含むため、この35系列案とは異なる。
+現時点で再学習や既存分割の変更は開始していない。
+
+### GEPとの比較を検討する場合（2026-10-31調査）
+
+Generative Event Pretraining with Foundation Model Alignmentの論文§4.4/Table3のDepthはMVSECであり、
+DSEC/M3EDのDepthではない。train=outdoor_day2、validation=outdoor_day1/outdoor_night1/2/3。
+独立testへの呼び替えや新しいhold-outはしない。
+論文: https://rpg.ifi.uzh.ch/docs/CVPRF26_Cao.pdf
+公式config: https://github.com/uzh-rpg/generative_event_pretraining/blob/master/src/config.py
+ローカル参照checkoutはreference_repo/generative_event_pretraining、HEAD=b07c78c8124ab60682d2aa440a2aa52911de9c36。
+DEPConfigのmvsec_train_sequences/valid_sequencesでも上記系列を確認。
+ただし論文は評価最大距離制限なし、公開configのmvsec_eval_max_depth=30かつDepthClampあり。
+公表値再現にはこの差、decoder/encoder fine-tuning/EventScape追加学習等を監査する必要がある。
+現在のDepth probe既定0.1–80mとそのまま数値比較しない。
+
+GEPのDSEC Semantic公開loaderは公式train/testフォルダを使用（config上valid_datasetがsplit=test）。
+本repoの開発6train/2valと同じ母集団ではなく、公表値比較では公式train8/test3で最終評価を揃える。
+GEP論文の主評価にM3EDやDetectionのsplitは示されていないため、今回のF3 splitをGEP由来と呼ばない。
+
+比較案は2系統: (1)MVSECを追加しGEP論文protocolに合わせる、
+(2)GEPを今回のDSEC37/4・M3ED3/2で再評価し「F3 splitでの追加実験」と明記する。
+GEP論文はEventScape/N-ImageNet/DSECのEvent-1.8M事前学習を使用、MVSECは事前学習から除外。
+DSECを含む既存GEP重みはF3 valの使用歴を監査するまでstrict未見評価に使えない。
+strict DSEC比較ならGEP側もtrain37のみで学習/統計算出する等の統制が必要。
+M3EDは論文記載の事前学習集合にないが、実際の使用重み履歴も確認する。
+事前学習データ量/教師/時間窓/headとfreeze条件を別途報告する。
+以上は比較方法の調査・提案であり、新規実装/学習/重みdownloadは未実施。
+
 事前学習の勾配更新系列だけでなく、validationによるcheckpoint選択系列、明示された過去の
 pretraining_history、正規化統計の算出系列を監査する。
 下流val/testと重複する重みを新しいstrict評価に使うと停止し、bypassは設けていない。
@@ -297,3 +349,45 @@ run_dense_f3_pipeline.shはMacでbash構文と既存CLI引数の静的照合を�
 2026-10-27の初回サーバーpreflightは6 failed/47 passed（13.22s）。
 Hydra設定の過剰解決と保存一時ファイル名を修正し、子プロセスstderrの表示を追加した。
 修正後のサーバー再実行は全通過報告あり。初回失敗の詳細は実験台帳§47を参照する。
+
+
+## 自然な低イベント区間のz/h比較（2026-11-02）
+
+主評価を、自然な入力を変更しないcontinuousのz対h（concatは補足）とする。
+同じbackboneのzにもh蒸留の学習効果が入るため、これは読み出し比較であり、
+独立に学習したLSTMなしモデルとのアーキテクチャ比較ではない。
+各入力専用の同型・同じ学習設定の非再帰headを学習する。concatは入力次元が増える。
+baseline/alpha1は両方LSTMありで、別軸の損失比較として保持する。
+
+下流をまだ開始していないRUN_ROOTで、サーバー上で実行:
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+RUN_ROOT=/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342
+CACHE_ROOT=/home/iASL/Arata_repo/dataset/downstream_scratch/dense_f3_full_20261027_172342 \
+CUDA_VISIBLE_DEVICES=0 bash tools/run_dense_f3_pipeline.sh natural "$RUN_ROOT"
+```
+
+4モデル各train/val continuousだけを抽出し、12head/12評価、z対h/concat計8比較を生成。
+frame-reset cache/評価は作らない。全入力を系列先頭から時系列順に処理し、系列境界でのみreset。
+低イベントはtrain由来p10、継続時間は未ラベル入力も含めて計測する。
+全体・低イベント・それ以外・低イベント継続0–100ms/100–500ms/500ms以上を集計。
+空群はN/A。MAE/RMSE/AbsRel差は負が改善、delta1/2/3は正が改善。
+継続時間群は同じ物体の追跡でも、一定時間後の因果効果の推定でもない。
+信号待ちの場面ラベル、物体単位の保持/退出評価、細かい秒単位の長時間分析は未実装。
+
+旧depth経路が完了済みなら、学習・cache抽出を繰り返さず既存continuous JSONから集計:
+
+```bash
+bash tools/run_dense_f3_pipeline.sh natural-summary "$RUN_ROOT"
+```
+
+比較JSONは `comparison/DATASET_CONDITION_z_vs_{h,concat}_natural.json`。
+双方の絶対値・対象frame/画素数と差を保存し、端末には短いMAE表を表示。
+backbone/cacheハッシュ、GT/有効画素、低イベント閾値、全frameの活動量/継続時間の一致を検査。
+既存headやcache、比較出力は上書きしない。途中まで進んだrunにnaturalを再実行すると
+既存出力で停止する（自動resumeではない）。natural-summaryは全必要continuous結果のある条件で使う。
+DATASETS=m3ed CONDITIONS=baselineのように対象を限定できる。
+
+Macでstdlib計20テストとbash構文・diff検査を実施。GPU・実データでの新経路は未実行。

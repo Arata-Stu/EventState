@@ -87,3 +87,41 @@ baseline→alpha1を逐次実行し、同時蓄積を避ける。
 run.json/ownerは変更せずextra_layout_resume.jsonに実行コードの変更記録を保存する。
 Semantic/Detection train完了markerを保持し、失敗したdetection_cache_valから続ける。
 未知の変更でResume identity differsとなった場合は手作業でowner/run.jsonを書き換えない。
+
+
+## 追加学習なしのSemantic比較動画（2026-11-02）
+
+`tools/visualize_dsec_gep20_semantic.sh` は、baselineのz+h全領域蒸留同士で
+約50ms（RGB間隔）と固定20msの既存backbone/各専用headを推論する。
+既定h、DSEC Semantic development valのzurich_city_07_a。FEATURE=z/concatも可能。
+RGB参照／legacyイベント／legacy予測／20msイベント／20ms予測の5列MP4。
+20msはraw HDF5から学習時の実装で生成、legacyは既存GEP cache。
+Semanticの440x640 cropとpadding/正規化を既存exporterから再利用。
+特徴はhead学習cacheと同じFP16丸めを経てFP32 headへ渡す。推論はFP32、追加学習なし。
+GPUには2モデルを常駐。特徴cacheやPNG全量は作らず、MP4/frames.csv/manifest.jsonだけ保存。
+
+サーバーでrepo同期後:
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+# 最初は約2秒の動作確認
+GPU=0 bash tools/visualize_dsec_gep20_semantic.sh --max-frames 40
+# 約30秒、既定h。毎回新規出力dirを作る
+GPU=0 bash tools/visualize_dsec_gep20_semantic.sh --max-frames 600
+# 別区間。先行入力も推論するので、途中resetにはならない
+GPU=0 SEQUENCE=zurich_city_08_a bash tools/visualize_dsec_gep20_semantic.sh \
+  --start-frame 1000 --max-frames 600
+```
+
+OUTPUT_DIR/DATA_ROOT/FEATURE/SEQUENCE/GPUを環境変数で指定可能。
+比較条件を変える場合はPython CLIの--backbone-50/20と--head-50/20を明示する。
+既存headにbackbone hashが埋め込まれていないため、重みの組合せはwrapperに既知のrunを指定し、
+manifestへ全4重みのSHA256とhead configを保存する。暗号学的なhead/backbone学習履歴照合ではない。
+input窓・cache表現/座標・完全な時刻列・frame ID・head入力/クラス/画角を検査し、不一致は停止。
+可視化対象はhead学習に使っていないdevelopment valに限定。GT不要、RGBは参照表示のみ。
+start-frameは出力範囲だけを制御し、それ以前も系列先頭からLSTMを更新する。
+動画は指定fpsの定速プレビュー。元時刻と実際のlegacy窓長をframes.csvへ保存し、
+20ms入力だから50Hzの動画/状態更新になるわけではない。
+出力dirは上書きしない。失敗時はpartial動画とcomplete=falseを残す（自動resumeなし）。
+Macのstdlib2テスト/CLI help/bash構文通過。Torch推論・raw読出し・FFmpeg動画はサーバー未検証。

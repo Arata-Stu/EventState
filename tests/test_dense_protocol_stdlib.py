@@ -174,6 +174,25 @@ class PairedMetrics(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, key):
                 compare(baseline, bad)
 
+    def test_natural_readout_requires_same_cache_and_continuous(self):
+        baseline = {**self.result(), "feature": "z", "state_policy": "continuous",
+                    "cache_metadata_sha256": "cache", "normalization_audit": {"train": True}}
+        baseline["metrics"]["empty"] = dict(valid_pixels=0, frames=0, mae=None)
+        candidate = copy.deepcopy(baseline)
+        candidate.update(feature="h", head_sha256="separate-head")
+        candidate["metrics"]["all"]["mae"] = 1.5
+        report = compare(baseline, candidate, "readout")
+        self.assertEqual(report["differences"]["all"]["mae"], -.5)
+        self.assertIsNone(report["differences"]["empty"]["mae"])
+        self.assertEqual(report["groups"]["all"]["candidate"]["valid_pixels"], 4)
+        for key, value in (("backbone_sha256", "other"), ("cache_metadata_sha256", "other"),
+                           ("frames", [{"timestamp": 5}]), ("state_policy", "frame")):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                compare(baseline, {**candidate, key: value}, "readout")
+        candidate["metrics"].pop("empty")
+        with self.assertRaisesRegex(ValueError, "groups"):
+            compare(baseline, candidate, "readout")
+
     def test_z_invariance_required(self):
         baseline = {**self.result(), "feature": "z", "z_features_sha256": "one"}
         candidate = {**baseline, "state_policy": "continuous", "z_features_sha256": "two"}
