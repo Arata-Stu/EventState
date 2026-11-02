@@ -22,6 +22,10 @@ read -r -a conditions <<< "${CONDITIONS:-baseline alpha1}"
 logged() {
   local name="$1"
   shift
+  if [[ "${RESUME:-0}" == 1 ]]; then
+    python tools/resume_dense_step.py "$@" 2>&1 | tee -a "$run_root/logs/$name.log"
+    return
+  fi
   "$@" 2>&1 | tee -a "$run_root/logs/$name.log"
 }
 
@@ -132,7 +136,7 @@ for ds in "${datasets[@]}"; do
   done
 
   # Model comparison is available once both conditions have been evaluated.
-  if [[ ( "$stage" == depth || "$stage" == natural ) && -f "$run_root/heads/${ds}_baseline/concat/continuous.json" \
+  if [[ "${SKIP_MODEL_COMPARISON:-0}" != 1 && ( "$stage" == depth || "$stage" == natural ) && -f "$run_root/heads/${ds}_baseline/concat/continuous.json" \
         && -f "$run_root/heads/${ds}_alpha1/concat/continuous.json" ]]; then
     for feature in z h concat; do
       for policy in "${policies[@]}"; do

@@ -186,7 +186,33 @@ def validate_config(config: Any) -> None:
         raise ValueError("Phase 0/1 requires teacher.frozen=true")
     if not bool(_value(teacher, "pretrained", True)):
         raise ValueError("A randomly initialized RGB teacher is not a valid distillation target")
-    if str(_value(teacher, "feature", "x_norm_patchtokens")) != "x_norm_patchtokens":
+    video_teacher = _value(teacher, "type") == "vjepa2_1_vit_base_384"
+    if video_teacher:
+        from event_state.causal_rgb import validate_context
+        input_mode = _value(teacher, "input_mode", "video")
+        validate_context(input_mode, int(_value(teacher, "context_frames", 8)), _value(teacher, "sample_fps"))
+        if bool(_value(teacher, "cache_features", False)):
+            raise ValueError("V-JEPA targets cannot use DINO feature caches")
+        feature = "image_last_layer" if input_mode == "image" else "trailing_last_tubelet"
+        if _value(teacher, "feature") != feature or teacher_dim != 768 or patch_size != 16:
+            raise ValueError(f"V-JEPA ViT-B requires {feature}, 768 channels and patch16")
+        if bool(_value(_value(dataset, "augmentation"), "enabled", False)):
+            raise ValueError("Initial causal video teacher supports no augmentation")
+        if (_value(_value(loss, "z_objective"), "type", "none") != "none"
+                or loss_kind != "dense" or activity_enabled
+                or not bool(_value(_value(loss, "h_distill"), "enabled", False))):
+            raise ValueError("Initial V-JEPA experiment requires dense h-only distillation")
+        if bool(_value(_value(training, "event_dropout"), "enabled", False)):
+            raise ValueError("Initial V-JEPA experiment requires event dropout disabled")
+        if int(_value(teacher, "micro_batch_size", 1)) < 1:
+            raise ValueError("teacher.micro_batch_size must be positive")
+        for key in ("checkpoint", "repository", "revision", "checkpoint_sha256"):
+            if not _value(teacher, key):
+                raise ValueError(f"V-JEPA requires explicit teacher.{key}")
+        for key in ("checkpoint", "backend", "repository", "source"):
+            if not _value(event_encoder, key):
+                raise ValueError(f"Student DINO initialization must specify model.event_encoder.{key}")
+    elif str(_value(teacher, "feature", "x_norm_patchtokens")) != "x_norm_patchtokens":
         raise ValueError("Phase 0/1 alignment requires DINOv3 x_norm_patchtokens")
     if str(_value(dataset, "event_window", "rgb_interval")) != "rgb_interval":
         raise ValueError("Phase 0/1 requires event_window=rgb_interval")
@@ -385,6 +411,7 @@ def _build_model(config: Any) -> nn.Module:
         temporal_model=temporal_model,
         h_projector=TeacherProjection(**projector_kwargs),
         z_projector=TeacherProjection(**projector_kwargs),
+        teacher_dim=int(_value(teacher_config, "embedding_dim", 384)),
     )
 
 
@@ -396,6 +423,17 @@ def build_model(config: Any, *, device: torch.device | str = "cpu") -> nn.Module
 
 def _build_teacher(config: Any) -> nn.Module | None:
     teacher_config = _value(config, "teacher")
+    if _value(teacher_config, "type") == "vjepa2_1_vit_base_384":
+        from event_state.models.teacher.vjepa21 import FrozenVJEPA21Teacher
+        if bool(_value(teacher_config, "cache_features", False)):
+            raise ValueError("V-JEPA requires online targets")
+        return FrozenVJEPA21Teacher(**{
+            key: _value(teacher_config, key) for key in (
+                "repository", "revision", "checkpoint", "checkpoint_sha256",
+                "context_frames", "micro_batch_size", "image_mean", "image_std",
+            )
+        }, input_mode=_value(teacher_config, "input_mode", "video"),
+            sample_fps=_value(teacher_config, "sample_fps", None))
     if bool(_value(teacher_config, "cache_features", True)):
         return None
     from event_state.models import build_dinov3_teacher

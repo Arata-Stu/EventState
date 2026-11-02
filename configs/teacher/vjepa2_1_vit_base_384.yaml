@@ -1,0 +1,20 @@
+type: vjepa2_1_vit_base_384
+feature: trailing_last_tubelet
+embedding_dim: 768
+patch_size: 16
+frozen: true
+pretrained: true
+# Explicit local official source + weights; no automatic hub download.
+repository: null
+revision: null
+checkpoint: null
+checkpoint_sha256: null
+cache_features: false
+cache_dir: null
+# Temporal reference: paper Table 11 primary phase (not a full recipe reproduction).
+input_mode: video
+context_frames: 16
+sample_fps: 4.0
+micro_batch_size: 1
+image_mean: [0.485, 0.456, 0.406]
+image_std: [0.229, 0.224, 0.225]

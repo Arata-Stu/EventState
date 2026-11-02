@@ -2,8 +2,91 @@
 
 最終更新: 2026-11-02
 
+## 学習サーバーGPU構成（2026-11-02実測）
+
+sig-gpu5はTesla V100-PCIE-32GB ×3（GPU 0/1/2）。ユーザー提示13:41のnvidia-smiでは
+GPU0にPython PID20977、548MiB、GPU1/2はXorgのみ。利用率はその瞬間の値。
+現Depth runnerはCUDA_VISIBLE_DEVICES既定0で条件を逐次実行し、3GPUへ自動分配しない。
+残りM3EDも既存プロセスが後続実行するため、同じrun/cacheへの別プロセス起動は競合する。
+今後は独立条件を3GPUへ分配する設計を優先し、単一モデルのbatch拡大/DDPとは区別する。
+ユーザーが停止・3GPU再開を依頼。tools/run_dense_f3_parallel.pyとhead resumeを実装。
+手順docs/dense_probes.md末尾。完了成果物確認・epoch境界再開・既存worker検知あり。
+Mac stdlib3件/構文通過。サーバー停止・再開操作とGPU実検証は未実施。
+
 新しい会話セッションは、最初にこの文書と `docs/experiment_results.md` を読む。
 数値の正本は `experiment_results.md` であり、この文書は研究状況を素早く復元するための要約である。
+
+## V-JEPA単画像/動画の実装更新（2026-11-02）
+
+ユーザーが両モードの実装を承認。run_vjepa21_pretrain.pyで--input-mode image|video必須。
+imageはRGB1枚を公式画像tokenizer、videoは既定16枚/4fps相当の過去履歴、末尾tubeletのみ。
+各tを右端に目標timestamp以下の最新RGBを選択（有理数計算、未来nearest/補間なし）。
+系列先頭だけ左反復しprefix maskを記録。欠損時は過去側を採用し重複/遅れを計測する。
+生徒ViT-S16+LSTM、Hybrid、h-only、split/統計/EVS入力更新間隔を両条件で固定。
+unique RGB+indexでCPUメモリ重複を抑え、padを読まないcollateとmicrobatch教師推論。
+最初のbatchのteacher_input_example.json、各学習stepの履歴時間/遅れ/prefix割合をログ集計。
+動画16/4は論文primaryの時間設定参照。空間サイズ・末尾抽出・h損失はEventState独自設計。
+Mac stdlib17件通過、構文/help確認。PyTorch/公式実重み/GPUテストは未実行。
+次はdocs/vjepa21_teacher.mdの両条件10step smokeをサーバーで実行。本学習は未起動。
+以下の初期実装/調査メモの「8枚」「単画像未実装」は旧時点の履歴。
+
+## Depth途中ログ受領（2026-11-02）
+
+台帳§60にcontinuous−frameの差を記録。続くheadは47/50 epochまで確認。
+追加logs一覧で現在DSEC alpha1 concat（既定順6/12本目）と確認。直前差分はDSEC alpha1 hに対応。
+concat完了および全12head完了は未確認。
+
+## 優先TODOとV-JEPA 2.1教師の検討（2026-11-02）
+
+研究設計の方針: ユーザーは論文化を前提に、splitだけでなく各学習parameterの根拠を
+先行研究/公式設定、比較条件の固定、train統計、資源上の暫定値に分けて記録することを希望。
+引用元の枚数だけを流用せず、fps・時間幅・解像度・評価用途まで対応させる。
+
+1. ユーザー報告でDepth下流は実行中（台帳§59）。完了ログ/精度は未受領。
+   学習後の数値確認が先。現在のF3分割は公開valでローカル採点し、hidden testと区別する。
+2. 次に自然な低イベント区間を評価。Depth完了ならnatural-summaryでcontinuous結果を再利用。
+   z/h読み出し比較が主、resetは補助診断。新規cache/再学習を重複させない。
+3. V-JEPA 2.1固定教師をユーザー承認で実装。下記・docs/vjepa21_teacher.md参照。
+   実重みロード/GPU smoke/本学習は未実施。既存Depth/低活動評価の優先順は維持。
+
+2026-11-02実装: tools/run_vjepa21_pretrain.py。既存F3 cleanのresolved_configから
+split/統計/GEP/学生ViT-S16+LSTMを継承し、新規h-only蒸留。教師ViT-B16は768次元、
+projectorだけ出力次元変更。教師はstudent checkpointに含めない。
+DSEC/M3EDの元系列から各tまでのRGB8枚（先頭のみ左反復）を取得し、末尾tubeletだけをtへ対応。
+Random/Stream clip境界で履歴を変えない。未来RGBなし、同一deterministic矩形geometry、
+augmentation/dropout/activity lossなし。GEP cache再利用、DINO教師cache不可、動画特徴cache作成なし。
+公式ローカルsourceのclean commitとcheckpoint SHA256を固定、ema_encoder strict load。
+Mac stdlib9テストと構文/help通過。PyTorchの時系列/geometry/逆伝播テストはサーバー用で未実行。
+次は公式source/重み準備→サーバーテスト→DSEC10step smoke（batch2、teacher microbatch1）。
+smokeの時間/VRAM/finite lossを見てfull計画。DINO h-only同条件対照が必要。
+履歴8枚はsmoke用の計算量を抑える暫定値。原論文推奨/実験選定の根拠はなく、
+本学習の履歴長は未確定。公式hub構築既定num_frames=64と区別する。
+
+追加調査完了: docs/vjepa21_teacher.md末尾「論文・公式コードとの照合」、
+docs/vjepa21_source_audit.jsonに固定commit 204698b45b3712590f06245fbfba32d3be539812と12file SHA。
+論文Table11はprimary16枚/4fps/256、cooldown64枚/4fps/384。公開B cooldown YAMLは256で不一致。
+公開B train entrypointはEMA target更新で、固定外部ViT-G蒸留の完全recipeとして確認できない。
+Depth/Semanticの論文評価は単画像probe。動画記憶の優位性の直接根拠にはしない。
+次の候補は16枚/4fps相当だが本学習決定ではない。現在の実装は連続RGBでfps選択未対応。
+単画像V-JEPA対照も未実装。DINO画像/V-JEPA画像/V-JEPA過去動画の3条件を提案、未起動。
+時間サンプリング・単画像モード・prefix処理を設計してからfull設定を確定する。
+
+公式確認: https://github.com/facebookresearch/vjepa2 と https://arxiv.org/html/2603.14482v1 。
+2.1はdense/temporally consistent特徴を狙い、ViT-B/16(80M、384)を含む公開重みあり。
+公式hubconfにvjepa2_1_vit_base_384等。hub backbonesの2.1既定tubelet_size=2、patch_size=16。
+調査時のrepoはfactory._build_teacherがDINO固定、engineでRGBのB,Tをflattenして画像教師へ入力。
+EventState projectorsはteacher_dim可変だが、動画入力を維持する教師adapter・時間/空間格子の
+整列・loss時刻対応・cache仕様変更が必要。単なるcheckpoint置換ではない。
+実装案: 最初はViT-B固定encoderをオンライン利用し、対象時刻までのRGB履歴だけから
+末尾tubeletの特徴をhへ蒸留する。全clip出力を各時刻へそのまま配る未来参照を避ける。
+2frame tubeletは瞬間値ではないため、教師/生徒双方の対応時間と有効領域を明示する。
+画像教師対照にはh-only DINOを同条件で置く。z=DINO/h=V-JEPAの二教師は別の後続ablation案。
+モデル差と動画文脈の効果を分けるにはV-JEPA単画像教師の対照も候補。
+既存GEP入力は再利用可能、DINO教師特徴cacheはV-JEPA特徴として再利用不可。
+まず少量オンラインでVRAM/速度/特徴形状を測り、全量cacheは容量計測後に判断する。
+公式mainは動くため採用revisionと重みSHAを固定する。今回取得したhub backbonesには
+localhostのDL base URLが残っていたため、実装時は公式READMEの配布重みを明示ローカルロードする設計が必要。
+調査後に上記adapterを実装。実重みロード・矩形GPU入力・GPUメモリ・蒸留効果は未検証。
 
 ## GEP20／約50ms Semantic推論動画（2026-11-02）
 

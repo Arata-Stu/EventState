@@ -1585,3 +1585,38 @@ M3ED Semantic mIoU (%)
 - 次は同RUN_ROOTでDepth frozen z/h/concatの12head（50epoch/seed0/val MAE選択）と
   同一headによるcontinuous/frame resetの24評価、低イベント時間帯集計。
   新しいDepth精度や物体保持の成功を示す結果はまだない。
+
+
+## 59. Depth下流実行中と次の評価順序（2026-11-02受領）
+
+- ユーザーから「depth評価中、学習終了後にスコア取得」との進捗報告。
+  文脈上の対象は§58のF3 clean4条件、run rootはoutputs/dense_f3_full_20261027_172342。
+  実行コマンド・stage別ログ・新スコアは今回未受領。完了として扱わない。
+- 予定順序: Depth通常評価→自然な低イベント区間でのcontinuous z/h比較→V-JEPA 2.1教師の実装検討。
+- ユーザーはtest評価を希望。ただし現F3公開分割でローカル採点するのはDSEC4val/M3ED2val。
+  valをtestと呼び替えない。公式hidden-testの採点/提出は別手順で未実施。
+- V-JEPA 2.1は実装可能性の調査依頼。新しい教師の実装・学習・ダウンロードは未実施。
+
+## 60. Depth状態差と次headの途中ログ受領（2026-11-02）
+
+- ユーザー提示: state比較、baseline=frame、candidate=continuous。続くhead学習は47/50 epoch、loss=0.077644（epoch1=0.165832）。全体完了ではない。
+- dataset/condition/feature、seed、split、評価出力パスは提示断片にないため未確定。文脈上の候補runは `outputs/dense_f3_full_20261027_172342`、既定はF3公開val・seed0だが、この断片の条件として確定しない。
+- continuous−frame差（MAE / RMSE / AbsRel / delta1）:
+
+| group | ΔMAE | ΔRMSE | ΔAbsRel | Δdelta1 |
+| --- | ---: | ---: | ---: | ---: |
+| all | -0.4589771264 | -0.3874998435 | -0.0352168858 | 0.0631817359 |
+| low_activity_frames | -0.3859148705 | -0.3914369042 | -0.0281646471 | 0.0421096865 |
+| other_frames | -0.4654620693 | -0.3873837153 | -0.0358428364 | 0.0650520729 |
+| low_0_100ms | -0.1459430284 | -0.0754924991 | -0.0168757873 | 0.0093792881 |
+| low_100_500ms | -0.3254569483 | -0.3506869466 | -0.0226101017 | 0.0350470851 |
+| low_500ms_plus | -0.4914464304 | -0.5054481640 | -0.0354709265 | 0.0554809534 |
+
+- この差は直前headの評価。後続epochログのhead名/通算番号は断片だけでは特定不可。ログファイル名で確認する。reset補助診断であり独立LSTMなし対照ではない。
+
+追加確認（同日）: ユーザー提示の絶対パスlogs一覧で最新が`dsec_alpha1_concat_train.log`、
+直前が`dsec_alpha1_h_state_delta.log`と確認。既定順では現在6/12本目のDSEC alpha1 concat。
+§60の直前差分はログ順と会話の対応からDSEC alpha1 hに対応する。
+run root=`/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342`、
+対応評価出力はrunner規約で`heads/dsec_alpha1/h/state_delta.json`（実ファイル内容との照合は未実施）。
+seed0/F3公開valはrunner既定であり保存configは未受領。concatは提示epoch47以降の完了未確認。

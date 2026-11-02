@@ -391,3 +391,26 @@ backbone/cacheハッシュ、GT/有効画素、低イベント閾値、全frame�
 DATASETS=m3ed CONDITIONS=baselineのように対象を限定できる。
 
 Macでstdlib計20テストとbash構文・diff検査を実施。GPU・実データでの新経路は未実行。
+
+## 中断したF3 Depthを3GPUで再開（2026-11-02）
+
+元の実行端末でCtrl-Cして、親shellと子のcache/train/evalが止まったことを確認する。
+新runnerは既存runを指す旧pipeline/workerをpsで検出すると拒否する。PIDの決め打ちはしない。
+サーバーへコード同期後、次を実行する（Macでは学習しない）。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+python tools/run_dense_f3_parallel.py \
+  outputs/dense_f3_full_20261027_172342 --gpus 0,1,2
+```
+
+既存DSEC alpha1 hのconfigに保存されたtrain cache metadata SHAで、run/featuresまたは
+既定dataset/downstream_scratch直下の既存cacheを特定。曖昧なら停止し、元の--cache-rootを明示する。
+GPU0=DSEC alpha1、GPU1=M3ED baseline、GPU2=M3ED alpha1を優先し、DSEC baselineも再利用確認する。
+独立条件並列でbatch4/seed0/50epochは維持。全worker終了後にモデル比較を直列集計。
+完了cacheはcheckpoint/target index hashとfeature存在確認、評価はhead/cache hashで再利用。
+未完cacheは削除せず停止（別名に退避してから再生成）。各headはconfig一致を検査してlast.ptから再開。
+途中epochは再実行。旧checkpointのloader乱数はseedからsamplerを再生するがbitwise一致は未保証。
+新checkpointにはloader RNGを保存。最良val MAEのbest.ptを保持しlastの評価がより良ければ復旧する。
+Macはstdlib3件・AST・shell構文通過。Torch resume/実サーバー3GPUは未検証。

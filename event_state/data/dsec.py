@@ -450,6 +450,9 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         event_window_fraction: float = 1.0,
         event_window_us: int | None = None,
         activity_mask: bool = False,
+        teacher_context_frames: int = 0,
+        teacher_input_mode: str = "video",
+        teacher_sample_fps: float | None = None,
     ) -> None:
         if sequence_length <= 0:
             raise ValueError("sequence_length must be positive")
@@ -485,6 +488,8 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         )
         self.load_events = load_events
         self.load_images = load_images
+        from .video_history import configure_video_history
+        configure_video_history(self, teacher_context_frames, teacher_input_mode, teacher_sample_fps)
         self.event_window_fraction = normalize_event_window_fraction(
             event_window_fraction
         )
@@ -977,7 +982,12 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
             event_sequence = torch.stack(event_tensors)
 
         image_sequence: Tensor | None = None
-        if self.load_images:
+        if self.teacher_context_frames:
+            from .video_history import load_video_history
+            image_sequence, history_metadata = load_video_history(
+                self, sequence_name, start, clip_length
+            )
+        elif self.load_images:
             image_sequence = torch.stack(
                 [self._load_image(record.image_path) for record in records]
             )
@@ -1010,7 +1020,11 @@ class DSECSequenceDataset(Dataset[dict[str, Any]]):
         if self.activity_mask:
             sample["event_activity"] = transformed[2]
         if image_sequence is not None:
-            sample["images"] = image_sequence
+            if self.teacher_context_frames:
+                sample["teacher_images"] = image_sequence
+                sample.update(history_metadata)
+            else:
+                sample["images"] = image_sequence
         if self.feature_cache_dir is not None:
             sample["teacher_features"] = torch.stack(
                 [self._load_teacher_feature(record) for record in records]

@@ -24,10 +24,11 @@ def main():
     p.add_argument("--minimum", type=float)
     p.add_argument("--maximum", type=float)
     p.add_argument("--device", default="cuda")
+    p.add_argument("--resume", action="store_true")
     a = p.parse_args()
     if a.epochs <= 0 or a.batch_size <= 0 or a.width <= 0 or a.learning_rate <= 0:
         raise ValueError("Training hyperparameters must be positive")
-    if a.output_dir.exists():
+    if a.output_dir.exists() and not a.resume:
         raise FileExistsError("Existing head/checkpoint artifacts are preserved; choose a new output-dir")
     import torch
     from torch.utils.data import DataLoader
@@ -57,7 +58,7 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=a.learning_rate)
     generator = torch.Generator().manual_seed(a.seed)
     loader = DataLoader(train, batch_size=a.batch_size, shuffle=True, generator=generator)
-    a.output_dir.mkdir(parents=True)
+    a.output_dir.mkdir(parents=True, exist_ok=a.resume)
     settings = dict(feature=a.feature, width=a.width, task=task, minimum=minimum, maximum=maximum,
                     epochs=a.epochs, seed=a.seed, learning_rate=a.learning_rate, batch_size=a.batch_size,
                     selection="validation_mae" if val else "fixed_final_epoch",
@@ -70,9 +71,42 @@ def main():
                     geometry=train.meta["geometry"], upstream_rgb_data="unknown",
                     in_channels=train[0]["feature"].shape[0], decoder="nonrecurrent_two_conv_probe",
                     scale_alignment="none", loss="log_l1" if task == "depth" else "l1")
-    (a.output_dir / "config.json").write_text(json.dumps(settings, indent=2) + "\n")
     best = float("inf")
-    for epoch in range(a.epochs):
+    start = 0
+    if a.resume:
+        saved = json.loads((a.output_dir / "config.json").read_text())
+        if saved != settings:
+            raise ValueError("Resume config/provenance differs from existing head")
+        payload = torch.load(a.output_dir / "last.pt", map_location=device, weights_only=False)
+        if payload["config"] != settings:
+            raise ValueError("Resume checkpoint config mismatch")
+        model.load_state_dict(payload["model"], strict=True)
+        optimizer.load_state_dict(payload["optimizer"])
+        start = int(payload["epoch"])
+        if not 0 < start <= a.epochs:
+            raise ValueError("Invalid resume epoch")
+        if (a.output_dir / "best.pt").exists():
+            previous = torch.load(a.output_dir / "best.pt", map_location="cpu", weights_only=False)
+            best = previous["validation"]["metrics"]["all"]["mae"]
+        if payload.get("validation"):
+            mae = payload["validation"]["metrics"]["all"]["mae"]
+            if mae < best:
+                best = mae
+                atomic_save(payload, a.output_dir / "best.pt")
+        if "loader_rng" in payload:
+            generator.set_state(payload["loader_rng"].cpu())
+        else:
+            # Legacy checkpoints lack RNG. Replay DataLoader iterator seed and
+            # RandomSampler consumption without loading any feature tensors.
+            for _ in range(start):
+                torch.empty((), dtype=torch.int64).random_(generator=generator)
+                for _ in loader.batch_sampler:
+                    pass
+            print("Legacy resume: replayed loader RNG; bitwise equivalence is not guaranteed", flush=True)
+        print(f"Resuming after epoch {start}/{a.epochs}: {a.output_dir}", flush=True)
+    else:
+        (a.output_dir / "config.json").write_text(json.dumps(settings, indent=2) + "\n")
+    for epoch in range(start, a.epochs):
         model.train()
         loss_sum, batches = 0.0, 0
         for batch in loader:
@@ -97,7 +131,8 @@ def main():
             raise ValueError("No valid training depth pixels")
         result = evaluate(model, val, device, include_frames=False) if val is not None else None
         payload = dict(model=model.state_dict(), config=settings, epoch=epoch + 1,
-                       optimizer=optimizer.state_dict(), validation=result)
+                       optimizer=optimizer.state_dict(), validation=result,
+                       loader_rng=generator.get_state())
         atomic_save(payload, a.output_dir / "last.pt")
         if result:
             mae = result["metrics"]["all"]["mae"]

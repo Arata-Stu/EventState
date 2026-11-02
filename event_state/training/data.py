@@ -419,6 +419,12 @@ def _dataset_options(
         ),
         "load_events": True,
         "load_images": not cache_features,
+        "teacher_context_frames": (
+            int(_value(teacher_config, "context_frames", 8))
+            if _value(teacher_config, "type") == "vjepa2_1_vit_base_384" else 0
+        ),
+        "teacher_input_mode": _value(teacher_config, "input_mode", "video"),
+        "teacher_sample_fps": _value(teacher_config, "sample_fps", None),
         "activity_mask": bool(_value(dataset_config, "activity_mask", False)),
         **(
             {
@@ -451,6 +457,7 @@ def _build_validation_dataset(
 
 
 def _loader_options(training_config: Any) -> dict[str, Any]:
+    from event_state.data.video_history import collate_teacher_history
     num_workers = int(_value(training_config, "num_workers", 0))
     if num_workers < 0:
         raise ValueError("training.num_workers must be non-negative")
@@ -461,6 +468,7 @@ def _loader_options(training_config: Any) -> dict[str, Any]:
             bool(_value(training_config, "persistent_workers", False)) and num_workers > 0
         ),
         "worker_init_fn": _seed_worker,
+        "collate_fn": collate_teacher_history,
     }
 
 

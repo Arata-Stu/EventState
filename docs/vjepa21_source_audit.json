@@ -1,0 +1,70 @@
+{
+  "checked_date": "2026-11-02",
+  "repository": "https://github.com/facebookresearch/vjepa2",
+  "revision": "204698b45b3712590f06245fbfba32d3be539812",
+  "paper": "https://arxiv.org/html/2603.14482v1",
+  "method": "Git object contents via git show; no upstream execution or model download",
+  "note": "macOS checkout has vitg/vitG case collisions; all evidence hashes use Git objects, not ambiguous working-tree paths",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "55f8485d734a08d23170322cd13ad5ac2f4d63b3d1fd542b10ec0907042c5bb6",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/README.md"
+    },
+    {
+      "path": "src/hub/backbones.py",
+      "sha256": "391cdde1e9a1da47cb8094bbea5fbbe8acac0135b27e82f1a6ab19c0b39cc692",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/src/hub/backbones.py"
+    },
+    {
+      "path": "configs/train_2_1/vitb16/pretrain-256px-16f.yaml",
+      "sha256": "df44fd5da9f5bcf9d76dbc354e1bf3fd0eef1528e26fa216ab5c91523b01285e",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/configs/train_2_1/vitb16/pretrain-256px-16f.yaml"
+    },
+    {
+      "path": "configs/train_2_1/vitb16/cooldown-256px-64f.yaml",
+      "sha256": "303de8b7ea58a2df4acdd47052d2306b9bca6e398c3facc47d8e83bdce839e88",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/configs/train_2_1/vitb16/cooldown-256px-64f.yaml"
+    },
+    {
+      "path": "configs/train_2_1/vitG16/cooldown-256px-64f.yaml",
+      "sha256": "f0e79087a6d997b331bc84377d04fd431ed6ab2d5766c244077aafdf60f76ec0",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/configs/train_2_1/vitG16/cooldown-256px-64f.yaml"
+    },
+    {
+      "path": "configs/eval_2_1/vitb-384/ek100.yaml",
+      "sha256": "05c0ed08b3cb5657cc132b0f2520e521e9eb13397627ec7937d436269e8473c1",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/configs/eval_2_1/vitb-384/ek100.yaml"
+    },
+    {
+      "path": "src/datasets/video_dataset.py",
+      "sha256": "44cee1d4d7a643acb9f26402dcec961f3193240489bb1d2ee89e00515630af4b",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/src/datasets/video_dataset.py"
+    },
+    {
+      "path": "app/vjepa_2_1/train.py",
+      "sha256": "6057c8968c90dc96935680e8f617bbe8db836fc30698a053b0aceaa985f39b93",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/app/vjepa_2_1/train.py"
+    },
+    {
+      "path": "app/vjepa_2_1/models/vision_transformer.py",
+      "sha256": "d2932eabeba684d8f558302a13cfd4be70a0170ee5112f5a794652d0a29089b9",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/app/vjepa_2_1/models/vision_transformer.py"
+    },
+    {
+      "path": "app/vjepa_2_1/models/utils/patch_embed.py",
+      "sha256": "29e11ab97ab3ccdef107d6a7d0d7b374b58e712076cc3561f07b7e603c9b5165",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/app/vjepa_2_1/models/utils/patch_embed.py"
+    },
+    {
+      "path": "app/vjepa_2_1/models/utils/modules.py",
+      "sha256": "64be6a87bd9f18d385f4e44186db3347d1665e18a1f0511d51d3b305531562e2",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/app/vjepa_2_1/models/utils/modules.py"
+    },
+    {
+      "path": "app/vjepa_2_1/transforms.py",
+      "sha256": "318cf12360f1243a5b49af3e20ac1ef22566909479418b226d5183356a13af80",
+      "url": "https://github.com/facebookresearch/vjepa2/blob/204698b45b3712590f06245fbfba32d3be539812/app/vjepa_2_1/transforms.py"
+    }
+  ]
+}

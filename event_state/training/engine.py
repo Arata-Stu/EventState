@@ -165,6 +165,30 @@ class EventStateTrainer:
         return moved
 
     def _teacher_features(self, batch: Mapping[str, Any]) -> Tensor:
+        if getattr(self.teacher, "sequence_teacher", False):
+            if "teacher_features" in batch:
+                raise ValueError("Image teacher caches cannot supervise a video teacher run")
+            self.teacher.eval()
+            # Keep the history on CPU; the teacher transfers only one small
+            # group of endpoint windows at a time, independently of BPTT clips.
+            features = self.teacher.forward_history(
+                batch["teacher_images"], batch["teacher_timestamps"], batch["timestamps"],
+                indices=batch.get("teacher_indices"), image_counts=batch.get("teacher_image_count"),
+                requested_timestamps=batch.get("teacher_requested_timestamps"),
+                prefix_padding=batch.get("teacher_prefix_padding"),
+                sequence_start_timestamps=batch.get("teacher_sequence_start_timestamp"),
+            )
+            if (not getattr(self, "_teacher_example_written", False)
+                    and callable(getattr(getattr(self, "logger", None), "write_metrics_json", None))):
+                example = {key: (value.detach().cpu().tolist() if isinstance(value, Tensor) else value)
+                           for key, value in batch.items()
+                           if key.startswith("teacher_") and key not in {"teacher_images", "teacher_features"}}
+                example["target_timestamps"] = batch["timestamps"].detach().cpu().tolist()
+                example["sequence_name"] = batch.get("sequence_name")
+                example["scope"] = "First batch only; subsequent sampling is deterministic from config/timeline"
+                self.logger.write_metrics_json("teacher_input_example.json", example)
+                self._teacher_example_written = True
+            return features
         if "teacher_features" in batch:
             features = batch["teacher_features"]
             if features.ndim != 4:
@@ -520,8 +544,14 @@ class EventStateTrainer:
             h_projected_frame_cosine = frame_cosine(
                 h_prediction.detach(), teacher_features
             )
+            if getattr(self.teacher, "sequence_teacher", False):
+                # 384-d student and 768-d teacher have no raw cosine metric.
+                # Do not mislabel an untrained z projector as raw z similarity.
+                z_frame_cosine = torch.full_like(z_projected_frame_cosine, float("nan"))
+                h_frame_cosine = torch.full_like(h_projected_frame_cosine, float("nan"))
         return {
             "loss": total_loss,
+            "teacher_history_metrics": getattr(self.teacher, "history_metrics", {}),
             "activity_fraction": (
                 activity.float().mean()
                 if bool(_value(_value(self.config, "dataset"), "activity_mask", False))
@@ -627,6 +657,7 @@ class EventStateTrainer:
                 "h_projected_cosine": result["h_projected_frame_cosine"].mean(),
                 "z_projected_cosine": result["z_projected_frame_cosine"].mean(),
             }
+            batch_metrics.update(result.get("teacher_history_metrics", {}))
             if event_dropout_mask is not None:
                 batch_metrics["event_dropout_fraction"] = (
                     event_dropout_mask.float().mean()
