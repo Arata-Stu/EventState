@@ -2,6 +2,16 @@
 
 最終更新: 2026-11-02
 
+## 最新: F3 Depth並列キャッシュ書込み失敗（2026-11-02）
+
+ユーザー報告で容量不足。M3ED baseline/alpha1両方のval_frameでtorch.save失敗、parallel終了。
+台帳§61参照。cache rootはdataset/downstream_scratch/dense_f3_full_20261027_172342。
+追加一覧でAvail0/100%を確認。DSEC全6headに_SUCCESSとcontinuous/frame JSONあり（台帳§62）。
+現cache254G、M3ED未完val_frame計約45G。旧run中間checkpointのpruneを第一候補に選定。
+旧5run prune dry-runは1170ファイル/310.75GiB。--audit-dirで空きのある別FSへ削除記録を保存可能。
+現continuous cacheと再開runnerが参照するDSEC cacheは維持。削除・再起動未実施。
+不完全cacheは現resumeで拒否される。Macでサーバー容量やプロセス停止を確認したわけではない。
+
 ## 学習サーバーGPU構成（2026-11-02実測）
 
 sig-gpu5はTesla V100-PCIE-32GB ×3（GPU 0/1/2）。ユーザー提示13:41のnvidia-smiでは

@@ -1620,3 +1620,30 @@ M3ED Semantic mIoU (%)
 run root=`/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342`、
 対応評価出力はrunner規約で`heads/dsec_alpha1/h/state_delta.json`（実ファイル内容との照合は未実施）。
 seed0/F3公開valはrunner既定であり保存configは未受領。concatは提示epoch47以降の完了未確認。
+
+## 61. F3 Depth並列実行がキャッシュ書込みで停止（2026-11-02）
+
+- ユーザーから容量不足による停止報告。M3ED baseline/alpha1双方のval_frame生成で
+  torch.saveがbasic_ios::clear / unexpected pos 677248 vs 677136、parallel runnerがGPU1 worker failedで終了。
+- run root: `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342`。
+  cache root: `/home/iASL/Arata_repo/dataset/downstream_scratch/dense_f3_full_20261027_172342`。
+  不完全対象: `m3ed_baseline/val_frame`、`m3ed_alpha1/val_frame`。部分・破損ptの可能性あり。
+- runner順では各条件train_continuous/val_continuous生成段階を通過したと考えられるが、
+  _SUCCESS/metadataと容量の実確認は未受領。M3ED head学習完了を示すログなし。
+  設計はF3公開val、head seed0/50epoch。新しい精度結果なし。
+- 次はdf/duと完了marker確認。完成cache/headを保存し、容量確保後に不完全cacheの扱いを決める。
+  現resumeは不完全cacheを自動継続せず停止する仕様。再実行だけでは復旧しない。
+
+## 62. 容量一覧・DSEC全head完了marker受領（2026-11-02）
+
+- /dev/sdb1 3.5T、使用3.3T、Avail0、100%。容量不足をdfで確認。dataset2.5T、outputs637G。
+- §61と同じrunのDSEC baseline/alpha1 × z/h/concat全6headについて_SUCCESS、continuous.json、frame.json存在を確認。数値/JSON内容の照合は未実施。F3公開val/seed0はrunner既定。
+- 同cache root254G: DSEC各51G（train41G、val continuous/frame各5.2G）、
+  M3ED train各21G・val continuous各34G、未完val_frame baseline19G/alpha1 26G。
+  cache _SUCCESS一覧は今回なし。M3ED head完了ファイルは提示一覧なし。
+- 削除候補: 旧5run群の1k刻み中間checkpoint（専用pruneでdry-runし10k/final/best等を保持）。
+  古いdetection_features372G、semantic_features DSEC112G/M3ED65Gは中身/再利用確認後の候補。
+  feature_visualization3か所合計約191Gは可視化成果物を含み得るため一括削除しない。
+- 現M3ED continuous cacheとDSEC cacheは再開runner互換性のため維持。未完val_frame計約45Gは再生成候補だが削除未実施。
+
+追加確認: 旧5run群のprune dry-runで13モデル×90=1170ファイル、310.75GiB logical size。削除は未実施。10k/final/latest/best等を保持。満杯の/home外へ監査ログを保存する--audit-dirを追加。

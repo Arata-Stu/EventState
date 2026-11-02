@@ -49,6 +49,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs", nargs="+", type=Path)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--audit-dir", type=Path,
+                        help="Existing directory on a filesystem with free space; default: outputs")
     args = parser.parse_args()
     outputs = (Path(__file__).resolve().parents[1] / "outputs").resolve()
     candidates = plan(args.runs, outputs)
@@ -67,7 +69,10 @@ def main() -> None:
     if not args.apply:
         print("Dry-run only. Use --apply to delete these intermediate files.")
         return
-    audit = outputs / f"checkpoint_prune_{time.time_ns()}.jsonl"
+    audit_dir = args.audit_dir.resolve() if args.audit_dir else outputs
+    if not audit_dir.is_dir():
+        raise ValueError(f"Audit directory must exist: {audit_dir}")
+    audit = audit_dir / f"checkpoint_prune_{time.time_ns()}.jsonl"
     # Persist the candidate list before removing anything; flush each outcome.
     with audit.open("x", encoding="utf-8") as handle:
         handle.write(json.dumps({"planned": records}) + "\n")
