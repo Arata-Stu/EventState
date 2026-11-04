@@ -1647,3 +1647,117 @@ seed0/F3公開valはrunner既定であり保存configは未受領。concatは提
 - 現M3ED continuous cacheとDSEC cacheは再開runner互換性のため維持。未完val_frame計約45Gは再生成候補だが削除未実施。
 
 追加確認: 旧5run群のprune dry-runで13モデル×90=1170ファイル、310.75GiB logical size。削除は未実施。10k/final/latest/best等を保持。満杯の/home外へ監査ログを保存する--audit-dirを追加。
+
+2026-11-02削除実行確認: ユーザーのdfで/home空き311G、使用91%へ回復。監査ログ末尾に旧e3のstep98000/99000削除記録、outputsへの監査ログコピー成功報告。全1170件の個別照合は未実施。次は未完M3ED val_frame2件を退避して再生成、完成cache/headを再利用。再開未確認。
+
+## 63. F3並列再開・DSEC再利用確認（2026-11-02）
+
+- ユーザーの再開ログ: M3ED baseline/alpha1の未完val_frameを各
+  val_frame_incomplete_20261102_230917へ退避（§61と同cache root）。
+- GPU0=DSEC alpha1→baseline、GPU1=M3ED baseline、GPU2=M3ED alpha1を起動。
+  DSEC全6headでResuming after epoch 50/50、既存評価skip、各条件のCompleted stage=depthを確認。
+  50/50なので追加epoch更新はない。legacy RNG警告はこの場合精度変更を意味しない。
+- M3EDはdeclared_inputs_disjoint監査出力とDINO hub cache読み込みまで確認。
+  val_frame再生成完了やhead学習開始、全体[parallel] completeは未受領。新精度なし。
+- run root=outputs/dense_f3_full_20261027_172342。F3公開val、seed0/50epochは既定条件。
+  貼付コマンド行には--cache-root欠落らしき崩れがあるが、実行ログは正しいcache rootを表示して起動済み。
+
+## 64. F3 Depth下流全体完了（2026-11-04受領）
+
+- ユーザーからCompleted stage=depthと[parallel] completeを受領。
+  run root=`/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342`。
+- runnerの全worker成功・最後の直列確認/モデル比較成功後のメッセージ。
+  既定DSEC/M3ED × baseline/alpha1 × z/h/concatの12head（seed0/50epoch）、
+  各head continuous/frameの24評価および状態差/モデル差集計が完了。F3公開valでありhidden testではない。
+  個別JSON全内容・best epochの照合は次の集計で行う。
+- 末尾low_500ms_plus差分断片: MAE=-0.35058658378031726、RMSE=-0.5148713458925211、
+  AbsRel=-0.054428802307710245、SqRel=-1.2409772651277167、RMSElog=-0.03652469614672599、
+  delta1=0.011448589649517227、delta2=0.003519712827321886、delta3=0.011851507113054383。
+  比較名/modeが断片にないためモデル・状態比較の帰属は未確定。指標の結論には使わない。
+- 次は全体指標とcontinuous自然低活動のreadout比較を既存結果から集計（natural-summary）。
+  V-JEPAの学習完了を示すログではない。
+
+## 65. F3 Depth continuous全体・自然低活動集計（2026-11-04受領）
+
+- 条件: DSEC/M3ED × baseline/alpha1 × z/h/concat、frozen head、continuous評価、F3公開val。
+  seed0・50epoch予算は既定設定、best epochは下表。単一seed、testではない。
+- 出力: `/home/iASL/Arata_repo/EventState/outputs/dense_f3_full_20261027_172342/heads/<model>/<feature>/continuous.json`。
+  比較スクリプトのサンプル/validity/backbone/cache/活動区分等の整合性検査通過ログを受領。
+- 以下はユーザー提示の丸め済み値。差分は丸め前計算なので表示値同士の差と末尾が異なる場合あり。
+- 解釈: h単独は全4条件の低活動MAEでzより悪い。M3ED alpha1のconcatは低活動全体でzより0.0865m、
+  500ms以上で0.1021m改善する一方、全体では0.0804m悪化。広範なLSTM優位とは結論しない。
+  同backboneの別々に学習したheadの読み出し比較であり、独立非再帰対照ではない。
+- M3ED alpha1 concatのbest epoch1、zのbest epoch50に注意。過学習/未収束の断定はせず、
+  train/val曲線・系列別support・head seed追加が次の確認候補。低活動は信号待ちラベルそのものではない。
+
+### 全体スコア：continuous / 公開val
+| model | feature | best epoch | MAE(m)↓ | RMSE(m)↓ | AbsRel↓ | δ1(%)↑ |
+|---|---|---:|---:|---:|---:|---:|
+| dsec_baseline | z | 20 | 2.7433 | 4.4005 | 0.1198 | 84.2218 |
+| dsec_baseline | h | 9 | 2.7269 | 4.3594 | 0.1218 | 84.6704 |
+| dsec_baseline | concat | 20 | 2.7144 | 4.3602 | 0.1189 | 84.5157 |
+| dsec_alpha1 | z | 20 | 2.7530 | 4.4153 | 0.1213 | 84.0586 |
+| dsec_alpha1 | h | 9 | 2.7282 | 4.3584 | 0.1220 | 84.7305 |
+| dsec_alpha1 | concat | 20 | 2.7064 | 4.3503 | 0.1186 | 84.5895 |
+| m3ed_baseline | z | 8 | 3.5282 | 6.0441 | 0.2207 | 72.4363 |
+| m3ed_baseline | h | 3 | 4.0601 | 7.5771 | 0.2367 | 69.8120 |
+| m3ed_baseline | concat | 8 | 3.5585 | 6.2496 | 0.2184 | 72.6438 |
+| m3ed_alpha1 | z | 50 | 3.5138 | 6.1734 | 0.2142 | 72.9105 |
+| m3ed_alpha1 | h | 15 | 3.9137 | 7.3149 | 0.2339 | 70.9255 |
+| m3ed_alpha1 | concat | 1 | 3.5943 | 6.1721 | 0.2181 | 71.8820 |
+
+### 損失条件の比較：alpha1 − baseline（全体）
+| dataset | feature | ΔMAE(m) | ΔRMSE(m) | ΔAbsRel | Δδ1(points) |
+|---|---|---:|---:|---:|---:|
+| dsec | z | +0.0097 | +0.0148 | +0.0016 | -0.1632 |
+| dsec | h | +0.0012 | -0.0010 | +0.0003 | +0.0601 |
+| dsec | concat | -0.0080 | -0.0099 | -0.0002 | +0.0738 |
+| m3ed | z | -0.0144 | +0.1294 | -0.0065 | +0.4742 |
+| m3ed | h | -0.1465 | -0.2623 | -0.0027 | +1.1135 |
+| m3ed | concat | +0.0358 | -0.0775 | -0.0004 | -0.7617 |
+
+### 自然低活動・読み出し比較：dsec_baseline
+全入力continuous。Δは候補 − z。MAEの負の差は改善。
+| group | frames | valid pixels | z MAE(m) | h MAE(m) | concat MAE(m) | Δh−z | Δconcat−z |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| all | 2,975 | 158,944,430 | 2.7433 | 2.7269 | 2.7144 | -0.0163 | -0.0288 |
+| low_activity_frames | 207 | 12,957,660 | 2.2479 | 2.2976 | 2.2491 | +0.0497 | +0.0012 |
+| other_frames | 2,768 | 145,986,770 | 2.7872 | 2.7650 | 2.7557 | -0.0222 | -0.0315 |
+| low_0_100ms | 21 | 1,379,529 | 2.6086 | 2.6144 | 2.6940 | +0.0057 | +0.0853 |
+| low_100_500ms | 79 | 5,366,666 | 2.4639 | 2.4871 | 2.4542 | +0.0232 | -0.0098 |
+| low_500ms_plus | 107 | 6,211,465 | 1.9812 | 2.0635 | 1.9730 | +0.0824 | -0.0081 |
+
+### 自然低活動・読み出し比較：dsec_alpha1
+全入力continuous。Δは候補 − z。MAEの負の差は改善。
+| group | frames | valid pixels | z MAE(m) | h MAE(m) | concat MAE(m) | Δh−z | Δconcat−z |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| all | 2,975 | 158,944,430 | 2.7530 | 2.7282 | 2.7064 | -0.0248 | -0.0466 |
+| low_activity_frames | 207 | 12,957,660 | 2.2448 | 2.3182 | 2.2416 | +0.0734 | -0.0032 |
+| other_frames | 2,768 | 145,986,770 | 2.7981 | 2.7645 | 2.7477 | -0.0336 | -0.0504 |
+| low_0_100ms | 21 | 1,379,529 | 2.5597 | 2.6001 | 2.6457 | +0.0404 | +0.0860 |
+| low_100_500ms | 79 | 5,366,666 | 2.4790 | 2.5118 | 2.4249 | +0.0328 | -0.0542 |
+| low_500ms_plus | 107 | 6,211,465 | 1.9725 | 2.0882 | 1.9935 | +0.1157 | +0.0210 |
+
+### 自然低活動・読み出し比較：m3ed_baseline
+全入力continuous。Δは候補 − z。MAEの負の差は改善。
+| group | frames | valid pixels | z MAE(m) | h MAE(m) | concat MAE(m) | Δh−z | Δconcat−z |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| all | 26,611 | 276,482,385 | 3.5282 | 4.0601 | 3.5585 | +0.5319 | +0.0303 |
+| low_activity_frames | 7,365 | 35,703,253 | 4.6667 | 6.2522 | 4.9725 | +1.5856 | +0.3058 |
+| other_frames | 19,246 | 240,779,132 | 3.3594 | 3.7351 | 3.3488 | +0.3757 | -0.0106 |
+| low_0_100ms | 234 | 1,417,314 | 4.5177 | 5.8678 | 4.7516 | +1.3500 | +0.2339 |
+| low_100_500ms | 737 | 4,148,253 | 4.4261 | 5.9762 | 4.6833 | +1.5500 | +0.2572 |
+| low_500ms_plus | 6,394 | 30,137,686 | 4.7068 | 6.3083 | 5.0227 | +1.6015 | +0.3159 |
+
+### 自然低活動・読み出し比較：m3ed_alpha1
+全入力continuous。Δは候補 − z。MAEの負の差は改善。
+| group | frames | valid pixels | z MAE(m) | h MAE(m) | concat MAE(m) | Δh−z | Δconcat−z |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| all | 26,611 | 276,482,385 | 3.5138 | 3.9137 | 3.5943 | +0.3998 | +0.0804 |
+| low_activity_frames | 7,365 | 35,703,253 | 4.5705 | 5.8645 | 4.4840 | +1.2940 | -0.0865 |
+| other_frames | 19,246 | 240,779,132 | 3.3571 | 3.6244 | 3.4623 | +0.2673 | +0.1052 |
+| low_0_100ms | 234 | 1,417,314 | 4.3540 | 5.6753 | 4.3463 | +1.3213 | -0.0077 |
+| low_100_500ms | 737 | 4,148,253 | 4.4487 | 5.8362 | 4.4481 | +1.3875 | -0.0006 |
+| low_500ms_plus | 6,394 | 30,137,686 | 4.5975 | 5.8773 | 4.4954 | +1.2798 | -0.1021 |
+
+集計完了：12条件。比較対象の整合性検査も通過。

@@ -1,6 +1,29 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-02
+最終更新: 2026-11-04
+
+## Depth可視化依頼（2026-11-04）
+
+M3EDから着手。tools/visualize_m3ed_dense_probe.pyを追加、RGB/GEP/GT/z/h/concat6画面。
+既存continuous特徴+評価済みheadを再利用、固定色スケール、時刻/低活動/MAE表示とCSV。
+初回候補はm3ed_alpha1・ucity_small_loop先頭600正解sample。予測結果に基づく場面選定ではない。
+Mac AST/helpのみ確認。サーバー動画生成未実施。DSEC版は未追加。
+
+## 最新集計: F3 Depth自然低活動（2026-11-04）
+
+台帳§65に12条件全体指標と活動区分別MAE/supportを保存。全てcontinuous・公開val・既定seed0。
+h単独は全4条件で低活動MAEがzより悪化。M3ED alpha1 concatはz比で低活動-0.0865m、
+500ms以上-0.1021m改善するが全体+0.0804m悪化。LSTMの一般的優位は示せていない。
+同backbone/別head読み出し比較。M3ED alpha1 concat best epoch1、z best epoch50。
+次の候補は系列別結果/val曲線/head seedによる再現性確認。新規学習は未指示・未起動。
+
+## 最新: F3 Depth下流全体完了（2026-11-04）
+
+ユーザーから[parallel] completeを受領（台帳§64）。dense_f3_full_20261027_172342の
+DSEC/M3ED × baseline/alpha1 × z/h/concat、12head/24公開val評価と差分集計が完了。
+次は指標JSONの集計とnatural-summaryによるcontinuous z/h/concat低活動比較。
+末尾差分断片だけでは比較名不明のため帰属しない。V-JEPA本学習はこの完了範囲外。
+以下の失敗・復旧・未完了メモは過去経緯。
 
 ## 最新: F3 Depth並列キャッシュ書込み失敗（2026-11-02）
 
@@ -9,8 +32,10 @@
 追加一覧でAvail0/100%を確認。DSEC全6headに_SUCCESSとcontinuous/frame JSONあり（台帳§62）。
 現cache254G、M3ED未完val_frame計約45G。旧run中間checkpointのpruneを第一候補に選定。
 旧5run prune dry-runは1170ファイル/310.75GiB。--audit-dirで空きのある別FSへ削除記録を保存可能。
-現continuous cacheと再開runnerが参照するDSEC cacheは維持。削除・再起動未実施。
-不完全cacheは現resumeで拒否される。Macでサーバー容量やプロセス停止を確認したわけではない。
+旧中間checkpoint削除後、ユーザーdfで空き311G/91%を確認、監査ログoutputsへ保存。
+現continuous/DSEC cacheは維持。次はM3ED未完val_frame2件を退避して並列再開。再開未確認。
+追加再開ログ（台帳§63）: 未完2件をval_frame_incomplete_20261102_230917へ退避済み。
+DSEC全6headは50/50で再利用確認完了。GPU1/2のM3EDは監査・教師ロードまで確認、cache完成/全体完了は未確認。
 
 ## 学習サーバーGPU構成（2026-11-02実測）
 

@@ -414,3 +414,13 @@ GPU0=DSEC alpha1、GPU1=M3ED baseline、GPU2=M3ED alpha1を優先し、DSEC base
 途中epochは再実行。旧checkpointのloader乱数はseedからsamplerを再生するがbitwise一致は未保証。
 新checkpointにはloader RNGを保存。最良val MAEのbest.ptを保持しlastの評価がより良ければ復旧する。
 Macはstdlib3件・AST・shell構文通過。Torch resume/実サーバー3GPUは未検証。
+
+## M3ED Depth動画（2026-11-04）
+
+`tools/visualize_m3ed_dense_probe.py`は既存continuous cacheと評価済みbest headを使い、
+RGB/GEP/GT/z/h/concatの6画面MP4を生成する。固定0–80m配色、GT無効画素は黒。
+manifestに重み/cache SHAと表示条件、frames.csvにtimestamp/低活動継続時間/各head MAEを保存。
+評価JSONのhead/cache hash、readout比較の母集団整合性、prepared metadata hashを検査する。
+元系列から状態を保持して生成済みのcacheなので表示区間だけ切り出してもstateをresetしない。
+1正解sample=1動画frame、既定20fpsは再生速度。欠損/不等間隔は再標本化せず実時間動画と主張しない。
+新規学習/特徴cache不要。MacでAST/help確認のみ、依存テスト・GPU描画はサーバーで未確認。
