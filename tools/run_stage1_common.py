@@ -51,8 +51,8 @@ def plan(a):
         for directory in (root, events, teacher_cache):
             if not directory.is_dir():
                 raise FileNotFoundError(directory)
-        # Keep stream microbatch=1: M3ED has three independent train sequences.
-        accumulation = 4 if ds == 'dsec' else 2
+        accumulation = 1
+        branch_batch = 4 if ds == 'dsec' else 2
         clip = 8 if ds == 'dsec' else 16
         specs = [(e, 1) for e in ('E0', 'E1', 'E2')] + [('E1', 3)]
         for condition, world in specs:
@@ -81,10 +81,12 @@ def plan(a):
                     f'++model.event_encoder.checkpoint={a.teacher_checkpoint.resolve()}',
                     '++dataset.activity_mask=false', 'dataset.augmentation.enabled=false',
                     'training.event_dropout.enabled=false', 'training.validation_enabled=false',
-                    'training.sampling.mode=mixed', 'training.sampling.random_batch_size=1',
-                    'training.sampling.stream_batch_size=1', 'training.sampling.random_weight=1.0',
+                    'training.sampling.mode=mixed', '++training.sampling.batching=joined',
+                    f'++training.sampling.stream_segments_per_sequence={1 if ds == "dsec" else 2}',
+                    f'training.sampling.random_batch_size={branch_batch}',
+                    f'training.sampling.stream_batch_size={branch_batch}', 'training.sampling.random_weight=1.0',
                     'training.sampling.stream_weight=1.0', 'training.sampling.shuffle_sequences=true',
-                    'training.batch_size=2', f'training.gradient_accumulation={accumulation}',
+                    f'training.batch_size={2*branch_batch}', f'training.gradient_accumulation={accumulation}',
                     f'++training.distributed_world_size={world}', f'dataset.sequence_length={clip}',
                     f'training.max_steps={steps}', f'scheduler.warmup_steps={warmup}',
                     'optimizer.lr=0.0001', 'training.precision=fp16',
@@ -96,8 +98,8 @@ def plan(a):
             if ds == 'm3ed':
                 cmd += [f'dataset.prepared_root={events.resolve()}']
             jobs.append(dict(name=name, world=world, command=cmd, steps=steps,
-                effective_clips=2 * accumulation * world,
-                planned_frames=steps * 2 * accumulation * world * clip,
+                effective_clips=2 * branch_batch * accumulation * world,
+                planned_frames=steps * 2 * branch_batch * accumulation * world * clip,
                 statistics=str(stats_file.resolve()), statistics_sha256=hashlib.sha256(stats_file.read_bytes()).hexdigest(),
                 protocol=protocol))
     return sorted(jobs, key=lambda j: j['world'])

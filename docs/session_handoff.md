@@ -1,6 +1,20 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-04
+最終更新: 2026-11-05
+
+## RVT型結合batchへ変更（2026-11-05）
+
+ユーザー依頼によりRandom/Streamを同一forwardに結合する経路を追加。
+新Stage 1 runnerはDSEC R4+S4=実batch8、M3ED R2+S2=実batch4、蓄積1。
+DDP3のglobal24/12、seq長8/16、教師/共通split/総予定frame予算は維持。
+Stream stateを先頭部分へ復元し、Random部分はゼロ初期化。保存するのはStream部分のみ。
+M3EDは各train系列を非重複2区間に分けた6Streamで枠を確保。区間先頭でreset。
+rank間は区間単位に非重複、短いlaneは周回するため提示頻度の差は引き続き残る。
+RVTの結合batch方針を参考にした独自samplerであり、RVT全実装再現とは呼ばない。
+旧separate経路は保持。新旧signatureが異なるため旧checkpointから再開しない。
+Mac stdlib22件/構文確認。結合batch勾配一致・state復元・Hydra・GPU/VRAMはサーバー未検証。
+新規outputでGPU smokeを先行。統計は既存common trainのものを再利用できる。
+実行中jobの有無・サーバー同期・新smoke完了は未確認。
 
 ## 研究の再出発とdataset整理（2026-11-04）
 

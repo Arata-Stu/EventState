@@ -9,9 +9,34 @@ import unittest
 from event_state.dense.common_protocol import load_common, audit_common
 from event_state.dense.protocol import digest, load_protocol
 from tools.run_stage1_common import plan
+from event_state.dense.stream_lanes import segments, FullStreamBatchSampler
 
 
 class CommonTests(unittest.TestCase):
+    def test_full_stream_lanes_are_disjoint_and_chronological(self):
+        records = [(name, start, 8) for name, count in [('a',19),('b',25),('c',32)]
+                   for start in range(count)]
+        groups = segments(records, 2)
+        flattened = [i for values in groups.values() for i in values]
+        self.assertEqual(sorted(flattened), list(range(len(records))))
+        owners = []
+        for rank in range(3):
+            sampler = FullStreamBatchSampler(groups, 2, 7, rank, 3)
+            batches = list(sampler)
+            self.assertTrue(all(len(b) == 2 for b in batches))
+            owned = {name for slot in sampler.slots for name in slot}
+            owners.append(owned)
+            self.assertTrue({i for name in owned for i in groups[name]} <=
+                            {i for b in batches for i, epoch in b})
+            for slot in range(2):
+                seq = [b[slot][0] for b in batches]
+                firsts = {values[0] for values in groups.values()}
+                for prev, cur in zip(seq, seq[1:]):
+                    self.assertTrue(cur == prev+1 or cur in firsts)
+        self.assertEqual(set.union(*owners), set(groups))
+        self.assertFalse(owners[0] & owners[1] or owners[1] & owners[2] or owners[0] & owners[2])
+        with self.assertRaises(ValueError): FullStreamBatchSampler(groups, 3, 7, 0, 3)
+
     def test_common_pool_excludes_both_task_holdouts(self):
         for ds, count in [('dsec', 35), ('m3ed', 3)]:
             p = load_common(ds)
@@ -54,6 +79,9 @@ class CommonTests(unittest.TestCase):
                 self.assertIn('model=no_memory', subset[0]['command'])
                 self.assertIn('model=lstm', subset[1]['command'])
                 self.assertIn('torch.distributed.run', subset[-1]['command'])
+                for job in subset:
+                    self.assertIn('training.gradient_accumulation=1', job['command'])
+                    self.assertIn('++training.sampling.batching=joined', job['command'])
             self.assertFalse(a.output_root.exists())
             stats['sequences'] = ['wrong']
             (root/'m3ed_common.json').write_text(json.dumps(stats))

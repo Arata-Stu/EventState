@@ -10,7 +10,7 @@ from torch import nn
 from event_state.training.engine import EventStateTrainer
 from event_state.training.distributed import NullLogger
 from event_state.training.optim import WarmupCosineScheduler
-from event_state.training.data import StatefulStreamBatchSampler, MappedStreamSampler
+from event_state.training.data import StatefulStreamBatchSampler, MappedStreamSampler, SegmentedStreamDataset
 
 
 class Tiny(nn.Module):
@@ -20,8 +20,10 @@ class Tiny(nn.Module):
         self.temporal_model = nn.Linear(4, 4)
         self.z_projector = nn.Linear(4, 4)
         self.h_projector = nn.Linear(4, 4)
+        self.forward_calls = 0
 
     def forward_sequence(self, events, state=None):
+        self.forward_calls += 1
         z = self.event_encoder(events.mean((-1,-2))).unsqueeze(2)
         previous = torch.zeros_like(z[:,0]) if state is None else state[0]
         history = []
@@ -68,7 +70,9 @@ def worker(rank, rendezvous, output):
                                         rank=rank, world_size=3, timeout=timedelta(seconds=60))
     try:
         for condition, (model, cfg, reference) in enumerate(zip(models, configs, refs)):
-            run = trainer(model, cfg)
+            joined_cfg = copy.deepcopy(cfg)
+            joined_cfg['training']['sampling'] = dict(mode='mixed', batching='joined')
+            run = trainer(model, joined_cfg)
             batches = []
             for r in range(3):
                 torch.manual_seed(100+r)
@@ -79,8 +83,11 @@ def worker(rank, rendezvous, output):
                        torch.cat([b[k] for b in batches])) for k in batches[0]}
             # Both Hybrid branches, repeated updates, unequal rank batches and carried states.
             for _ in range(2):
+                previous_calls = model.forward_calls
                 run.train_optimizer_step(Repeat(batches[rank]), Repeat(batches[rank]))
                 reference.train_optimizer_step(Repeat(full), Repeat(full))
+                assert model.forward_calls - previous_calls == 2  # accumulation=2, one joined forward each
+                assert set(run._stream_state_bank) == set(batches[rank]['sequence_name'])
                 for actual, expected in zip(model.parameters(), reference.model.parameters()):
                     torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
             run._stream_state_bank = {f'sequence_{rank}': torch.ones(1,1,4)*rank}
@@ -105,3 +112,21 @@ def test_mapped_stream_preserves_global_indices_and_epoch():
                                  seed=0, shuffle_sequences=False), [2,3])
     mapped.set_epoch(4)
     assert list(mapped) == [[(2,4)],[(3,4)]]
+
+
+def test_segment_boundaries_reset_state_without_changing_source_lookup():
+    from event_state.dense.stream_lanes import segments
+    class Source:
+        def __len__(self): return 8
+        def __getitem__(self, index):
+            i, epoch = index
+            return dict(sequence_name='original', is_sequence_start=i == 0,
+                        is_sequence_end=i == 7, original_index=i, epoch=epoch)
+    groups = segments([('original',i,1) for i in range(8)], 2)
+    dataset = SegmentedStreamDataset(Source(), groups)
+    for i in (0,4):
+        sample = dataset[(i,3)]
+        assert sample['is_sequence_start'] and sample['original_index'] == i
+        assert sample['epoch'] == 3
+    assert dataset[(0,0)]['sequence_name'] != dataset[(4,0)]['sequence_name']
+    assert dataset[(3,0)]['is_sequence_end'] and dataset[(7,0)]['is_sequence_end']

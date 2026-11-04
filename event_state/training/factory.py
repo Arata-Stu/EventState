@@ -295,6 +295,19 @@ def validate_config(config: Any) -> None:
         raise ValueError("training.gradient_clip must be non-negative")
     sampling = _value(training, "sampling", {})
     sampling_mode = str(_value(sampling, "mode", "random")).lower()
+    batching = str(_value(sampling, 'batching', 'separate'))
+    if batching not in {'separate', 'joined'}:
+        raise ValueError('Unknown Hybrid batching strategy')
+    if batching == 'joined':
+        if sampling_mode != 'mixed':
+            raise ValueError('Joined batching requires mixed sampling')
+        if (_value(sampling, 'random_batch_size') != _value(sampling, 'stream_batch_size') or
+            float(_value(sampling, 'random_weight', 1)) != float(_value(sampling, 'stream_weight', 1))):
+            raise ValueError('Joined batching requires equal branch sizes and weights')
+        if activity_enabled or bool(_value(_value(training, 'event_dropout', {}), 'enabled', False)):
+            raise ValueError('Joined batching currently supports unmasked distillation only')
+        if not bool(_value(teacher, 'cache_features', False)):
+            raise ValueError('Joined batching currently requires cached image teacher features')
     if sampling_mode not in {"random", "stream", "mixed"}:
         raise ValueError("training.sampling.mode must be random, stream, or mixed")
     for name in ("random_batch_size", "stream_batch_size"):

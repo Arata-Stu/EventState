@@ -1,4 +1,4 @@
-# 共通Stage 1と3 GPU DDP（2026-11-04）
+# 共通Stage 1と3 GPU DDP（2026-11-05 RVT型結合batch）
 
 ## 目的と固定条件
 
@@ -27,21 +27,30 @@ V-JEPA教師比較とDSEC+M3ED混合は今回の8runには含めない。
 
 | dataset | 条件 | GPU数 | local Hybrid microbatch | 蓄積回数 | global clips/update | full updates |
 |---|---|---:|---|---:|---:|---:|
-| DSEC | E0/E1/E2 各1run | 1 | Random1+Stream1 | 4 | 8 | 99,999 |
-| DSEC | E1 | 3 | 各rank Random1+Stream1 | 4 | 24 | 33,333 |
-| M3ED | E0/E1/E2 各1run | 1 | Random1+Stream1 | 2 | 4 | 99,999 |
-| M3ED | E1 | 3 | 各rank Random1+Stream1 | 2 | 12 | 33,333 |
+| DSEC | E0/E1/E2 各1run | 1 | Random4+Stream4を結合 | 1 | 8 | 99,999 |
+| DSEC | E1 | 3 | 各rank Random4+Stream4を結合 | 1 | 24 | 33,333 |
+| M3ED | E0/E1/E2 各1run | 1 | Random2+Stream2を結合 | 1 | 4 | 99,999 |
+| M3ED | E1 | 3 | 各rank Random2+Stream2を結合 | 1 | 12 | 33,333 |
 
 clip長はDSEC8、M3ED16。全full runで予定入力は6,399,936 frame。
 基準100kを3で割り切れる99,999に揃える。warmupも999/333更新、LRは1e-4固定
 （encoder倍率0.1）、cosine/min ratio0.01。seed0。
 batch定義はクリップ数であり、時刻数・パッチ数ではない。
-本条件はVRAM最大化実験ではなく実効batch/分散方式の比較。物理microbatchは小さく、
-3GPUによる速度改善は実測するまで未確認。毎microbatchでDDP同期する初期実装。
+training.sampling.batching=joinedでStream→Randomの順にbatch軸で結合し、1回forward/backward。
+Stream部分のstateだけ復元/保存し、Random部分はゼロ初期状態を使う。等数・等重みのため
+結合loss平均が両branchの等重み平均になる。無効projectorの勾配なしを維持する。
+今回の対応はcached画像教師・全領域loss・event dropoutなしに限定し、それ以外は拒否する。
+旧設定はbatching=separate（未指定時）で保持。旧runからのresumeは設定signature不一致で拒否。
+VRAM実測前のためbatch8/4がV100に収まることや高速化は未確認。OOM時は自動縮小しない。
 
-系列をrankへ固定配分し、各rankで状態保持・clip境界detachする。Random側は
-DistributedSamplerで分割。Streamは各shardを独立に周回し、rank間で系列を重複させない。
-M3EDはrankあたり1系列。これは単GPUと系列提示順・反復頻度が変わるため、結果を
+Streamを独立laneへ固定配分し、各rankで状態保持・clip境界detachする。Random側は
+DistributedSamplerで分割。DSECは原系列単位、M3EDは各train系列をclip境界で2等分した
+非重複の6区間（segment）を使用。単GPU/3GPUとも同じ分割で、区間先頭ではstateをreset。
+cache読出しは元の系列名を使い、読出し後のstate keyだけ区間名へ変更する。
+laneの長さを均衡化して割り当て、短いlaneはepoch内で周回して常に完全なbatchを作る。
+したがって短いlaneの反復と区間境界resetが発生する。これはRVTの結合batchに着想を得た
+EventState独自のsamplingであり、RVT samplerそのものの再現ではない。
+rank間の担当区間は非重複。単GPUとDDPでは提示順・反復頻度が変わるため、結果を
 「batchだけの因果効果」と呼ばず、単GPU/3GPU学習方式比較として報告する。
 最小限の追加比較としてまずE1に限定。E0/E2のDDP比較は今回未指定。
 FP16 overflowで更新がskipされると実入力数が増える。training_summary.jsonの
@@ -81,8 +90,23 @@ unused projectorは勾配なし。各rankの実batch数で勾配を補正。rank
 全rankのiterator/state bank/RNGを集約してcheckpointへ保存。重みはmodule prefixなし。
 DDPは現時点でtrain-only・clip境界TBPTTに限定。内部detach_state_everyは拒否。
 
-Mac: stdlib21テスト、構文/CLI/bash確認。PyTorch/Gloo/Hydra/NCCL/実データのテストは未実行。
-サーバーpreflightに3rank合成勾配一致、Hybrid持越し状態、checkpoint rank状態復元、
+Mac: stdlib22テスト、構文/CLI/bash確認。PyTorch/Gloo/Hydra/NCCL/実データのテストは未実行。
+サーバーpreflightに3rank結合batch対逐次基準の勾配一致（持越しstateあり）、
+1回forwardの検査、区間境界reset、checkpoint rank状態復元、
 8commandのHydra合成/runtime guardを含む。本学習開始を示す実行結果は未受領。
 
 DDP API参照: https://docs.pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html
+
+RVT結合batch参照: https://github.com/uzh-rpg/RVT/blob/master/modules/utils/detection.py
+状態更新参照: https://github.com/uzh-rpg/RVT/blob/master/modules/detection.py
+
+直接Pythonで新設定のsmokeを行う例（旧統計が正常に作成済みの場合）:
+
+```bash
+python tools/run_stage1_common.py --stage smoke --phase all \
+  --statistics-dir outputs/stage1_common_20261105/statistics \
+  --output-root outputs/stage1_rvt_smoke_20261105 --gpus 0,1,2 --execute
+```
+
+このsmokeは自動でfullへ進まない。成功後、--stage fullと新しい--output-rootを指定する。
+統計は同じtrain poolなので再生成不要。旧run/checkpointは保持し、結合batch学習には流用しない。

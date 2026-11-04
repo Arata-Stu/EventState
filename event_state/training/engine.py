@@ -367,6 +367,7 @@ class EventStateTrainer:
         batch: Mapping[str, Any],
         *,
         event_dropout_mask: Tensor | None,
+        random_batch: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         names_field = batch.get("sequence_name")
         starts = batch.get("is_sequence_start")
@@ -381,9 +382,27 @@ class EventStateTrainer:
         for name, is_start in zip(names, starts.tolist()):
             if bool(is_start):
                 self._stream_state_bank.pop(name, None)
-        state = self._stack_stream_states(
-            [self._stream_state_bank.get(name) for name in names]
-        )
+        states = [self._stream_state_bank.get(name) for name in names]
+        total_batch_size = len(names)
+        if random_batch is not None:
+            random_size = int(random_batch['events'].shape[0])
+            if random_size != len(names):
+                raise ValueError('Joined Hybrid requires equal Random/Stream batch sizes')
+            if batch.keys() != random_batch.keys():
+                raise ValueError('Joined Hybrid requires matching batch fields')
+            merged = {}
+            for key in batch:
+                left, right = batch[key], random_batch[key]
+                if isinstance(left, Tensor) and isinstance(right, Tensor):
+                    merged[key] = torch.cat((left, right), dim=0)
+                elif isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+                    merged[key] = list(left) + list(right)
+                else:
+                    raise TypeError(f'Unsupported joined batch field: {key}')
+            batch = merged
+            states += [None] * random_size
+            total_batch_size += random_size
+        state = self._stack_stream_states(states)
         result = self._forward_objectives(
             batch,
             state=state,
@@ -393,7 +412,7 @@ class EventStateTrainer:
         if next_state is not None:
             for name, item in zip(
                 names,
-                self._split_stream_state(next_state, len(names)),
+                self._split_stream_state(next_state, total_batch_size)[:len(names)],
             ):
                 self._stream_state_bank[name] = item
         self._previous_stream_names = current_names
@@ -650,23 +669,36 @@ class EventStateTrainer:
         if not sources or total_source_weight <= 0:
             raise ValueError("At least one training source must have positive weight")
 
+        joined = str(_value(sampling, 'batching', 'separate')) == 'joined'
+        if joined:
+            if iterator is None or stream_iterator is None or random_weight != stream_weight or random_weight <= 0:
+                raise ValueError('Joined Hybrid requires both branches with equal positive weights')
+            sources = [('joined', stream_iterator, total_source_weight)]
+
         for source_name, source_iterator, source_weight in sources * accumulation:
             assert source_iterator is not None
             previous_epoch = source_iterator.epoch
             batch = self._move_batch(next(source_iterator))
-            if source_name == "stream" and source_iterator.epoch != previous_epoch:
+            if source_name in ("stream", "joined") and source_iterator.epoch != previous_epoch:
                 self._stream_state_bank.clear()
                 self._previous_stream_names.clear()
-            batch, event_dropout_mask = self._apply_training_event_dropout(batch)
-            result = (
-                self._stream_forward(
-                    batch, event_dropout_mask=event_dropout_mask
+            if joined:
+                if bool(_value(_value(self.training_config, 'event_dropout', {}), 'enabled', False)):
+                    raise ValueError('Joined Hybrid event dropout is not implemented')
+                random_batch = self._move_batch(next(iterator))
+                event_dropout_mask = None
+                result = self._stream_forward(batch, event_dropout_mask=None, random_batch=random_batch)
+                # Accounting uses the actual merged shape; keep source fields for event counts.
+                batch = dict(batch, events=torch.cat((batch['events'], random_batch['events']), dim=0))
+                if 'event_counts' in batch:
+                    batch['event_counts'] = torch.cat((batch['event_counts'], random_batch['event_counts']), dim=0)
+            else:
+                batch, event_dropout_mask = self._apply_training_event_dropout(batch)
+                result = (
+                    self._stream_forward(batch, event_dropout_mask=event_dropout_mask)
+                    if source_name == "stream"
+                    else self._forward_objectives(batch, event_dropout_mask=event_dropout_mask)
                 )
-                if source_name == "stream"
-                else self._forward_objectives(
-                    batch, event_dropout_mask=event_dropout_mask
-                )
-            )
             normalized_weight = source_weight / total_source_weight
             scaled_loss = result["loss"] * normalized_weight / accumulation
             if self.distributed:
@@ -754,6 +786,8 @@ class EventStateTrainer:
                 "frames_per_update": frames,
             }
         )
+        if joined:
+            metrics['joined_batch_size_per_gpu'] = int(batch['events'].shape[0])
         for name, norm in gradient_norms.items():
             metrics[f"grad_norm/{name}"] = norm
         for index, (group, learning_rate) in enumerate(

@@ -612,6 +612,9 @@ def build_dataloaders(config: Any) -> DataLoaders:
     )
     if random_batch_size <= 0 or stream_batch_size <= 0:
         raise ValueError("training.sampling branch batch sizes must be positive")
+    if (train_dataset is not None and str(_value(sampling, 'batching', 'separate')) == 'joined'
+            and len(train_dataset) < random_batch_size):
+        raise ValueError('Not enough random clips for a full joined batch')
     random_sampler = None
     if distributed and train_dataset is not None:
         random_sampler = torch.utils.data.DistributedSampler(
@@ -625,7 +628,7 @@ def build_dataloaders(config: Any) -> DataLoaders:
             shuffle=random_sampler is None,
             sampler=random_sampler,
             generator=generator,
-            drop_last=distributed,
+            drop_last=distributed or str(_value(sampling, "batching", "separate")) == "joined",
             **loader_options,
         )
         if train_dataset is not None
@@ -633,50 +636,68 @@ def build_dataloaders(config: Any) -> DataLoaders:
     )
     stream_loader = None
     if stream_dataset is not None:
-        records = stream_dataset.clip_records
-        # Assign complete sequences, never individual chronological clips, to ranks.
-        # Every rank independently cycles its shard; no padding/duplicate sequence.
-        index_map = None
-        if distributed:
-            names = sorted({str(record[0]) for record in records})
-            if len(names) < world * stream_batch_size:
-                raise ValueError("Stream DDP needs world_size * local stream_batch_size sequences")
-            random.Random(seed + 10_000).shuffle(names)
-            owned = set(names[rank::world])
-            index_map = [i for i, record in enumerate(records) if str(record[0]) in owned]
-            records = [records[i] for i in index_map]
-        stream_sampler = StatefulStreamBatchSampler(
-            records,
-            batch_size=stream_batch_size,
-            seed=seed + 10_000,
-            shuffle_sequences=bool(_value(sampling, "shuffle_sequences", True)),
-        )
-        if index_map is not None:
-            stream_sampler = MappedStreamSampler(stream_sampler, index_map)
-        stream_loader = DataLoader(
-            stream_dataset,
-            batch_sampler=stream_sampler,
-            **loader_options,
-        )
+        if str(_value(sampling, "batching", "separate")) == "joined":
+            from event_state.dense.stream_lanes import segments, FullStreamBatchSampler
+            groups = segments(stream_dataset.clip_records,
+                              int(_value(sampling, "stream_segments_per_sequence", 1)))
+            stream_sampler = FullStreamBatchSampler(groups, stream_batch_size, seed+10_000, rank, world)
+            stream_dataset = SegmentedStreamDataset(stream_dataset, groups)
+            stream_loader = DataLoader(stream_dataset, batch_sampler=stream_sampler, **loader_options)
+        else:
+            stream_loader = _legacy_stream_loader(stream_dataset, stream_batch_size, seed, sampling,
+                                                 distributed, rank, world, loader_options)
     validation_loader = (
-        DataLoader(
-            validation_dataset,
-            # Chronological state must never be mixed across sequences. A batch of
-            # one also lets the final clip of each sequence be shorter than T.
-            batch_size=1,
-            shuffle=False,
-            drop_last=False,
-            **loader_options,
-        )
-        if validation_dataset is not None
-        else None
+        DataLoader(validation_dataset, batch_size=1, shuffle=False, drop_last=False, **loader_options)
+        if validation_dataset is not None else None
     )
-    return DataLoaders(
-        train=train_loader,
-        stream=stream_loader,
-        validation=validation_loader,
-        generator=generator,
+    return DataLoaders(train=train_loader, stream=stream_loader, validation=validation_loader, generator=generator)
+
+
+class SegmentedStreamDataset:
+    def __init__(self, dataset, groups):
+        self.dataset = dataset
+        self.metadata = {index: (name, pos == 0, pos == len(indices)-1)
+                         for name, indices in groups.items() for pos, index in enumerate(indices)}
+
+    def __len__(self): return len(self.dataset)
+
+    def __getitem__(self, index):
+        item = dict(self.dataset[index])
+        name, first, last = self.metadata[index[0] if isinstance(index, tuple) else index]
+        # Cache/RGB lookup has already used the original sequence name.
+        item['sequence_name'] = name
+        item['is_sequence_start'], item['is_sequence_end'] = first, last
+        return item
+
+
+def _legacy_stream_loader(stream_dataset, stream_batch_size, seed, sampling,
+                          distributed, rank, world, loader_options):
+    records = stream_dataset.clip_records
+    # Assign complete sequences, never individual chronological clips, to ranks.
+    # Every rank independently cycles its shard; no padding/duplicate sequence.
+    index_map = None
+    if distributed:
+        names = sorted({str(record[0]) for record in records})
+        if len(names) < world * stream_batch_size:
+            raise ValueError("Stream DDP needs world_size * local stream_batch_size sequences")
+        random.Random(seed + 10_000).shuffle(names)
+        owned = set(names[rank::world])
+        index_map = [i for i, record in enumerate(records) if str(record[0]) in owned]
+        records = [records[i] for i in index_map]
+    stream_sampler = StatefulStreamBatchSampler(
+        records,
+        batch_size=stream_batch_size,
+        seed=seed + 10_000,
+        shuffle_sequences=bool(_value(sampling, "shuffle_sequences", True)),
     )
+    if index_map is not None:
+        stream_sampler = MappedStreamSampler(stream_sampler, index_map)
+    stream_loader = DataLoader(
+        stream_dataset,
+        batch_sampler=stream_sampler,
+        **loader_options,
+    )
+    return stream_loader
 
 
 class CyclingDataIterator:
