@@ -592,6 +592,10 @@ def build_dataloaders(config: Any) -> DataLoaders:
     if batch_size <= 0:
         raise ValueError("training.batch_size must be positive")
     generator = torch.Generator().manual_seed(seed)
+    from .distributed import active
+    distributed = active()
+    rank = torch.distributed.get_rank() if distributed else 0
+    world = torch.distributed.get_world_size() if distributed else 1
     loader_options = _loader_options(training_config)
     default_branch_batch = max(1, batch_size // 2) if sampling_mode == "mixed" else batch_size
     configured_random_batch = _value(sampling, "random_batch_size", None)
@@ -608,13 +612,20 @@ def build_dataloaders(config: Any) -> DataLoaders:
     )
     if random_batch_size <= 0 or stream_batch_size <= 0:
         raise ValueError("training.sampling branch batch sizes must be positive")
+    random_sampler = None
+    if distributed and train_dataset is not None:
+        random_sampler = torch.utils.data.DistributedSampler(
+            train_dataset, num_replicas=world, rank=rank, seed=seed, drop_last=True)
+        if len(random_sampler) < random_batch_size:
+            raise ValueError("Not enough random clips for one full batch per rank")
     train_loader = (
         DataLoader(
             train_dataset,
             batch_size=random_batch_size,
-            shuffle=True,
+            shuffle=random_sampler is None,
+            sampler=random_sampler,
             generator=generator,
-            drop_last=False,
+            drop_last=distributed,
             **loader_options,
         )
         if train_dataset is not None
@@ -622,12 +633,26 @@ def build_dataloaders(config: Any) -> DataLoaders:
     )
     stream_loader = None
     if stream_dataset is not None:
+        records = stream_dataset.clip_records
+        # Assign complete sequences, never individual chronological clips, to ranks.
+        # Every rank independently cycles its shard; no padding/duplicate sequence.
+        index_map = None
+        if distributed:
+            names = sorted({str(record[0]) for record in records})
+            if len(names) < world * stream_batch_size:
+                raise ValueError("Stream DDP needs world_size * local stream_batch_size sequences")
+            random.Random(seed + 10_000).shuffle(names)
+            owned = set(names[rank::world])
+            index_map = [i for i, record in enumerate(records) if str(record[0]) in owned]
+            records = [records[i] for i in index_map]
         stream_sampler = StatefulStreamBatchSampler(
-            stream_dataset.clip_records,
+            records,
             batch_size=stream_batch_size,
             seed=seed + 10_000,
             shuffle_sequences=bool(_value(sampling, "shuffle_sequences", True)),
         )
+        if index_map is not None:
+            stream_sampler = MappedStreamSampler(stream_sampler, index_map)
         stream_loader = DataLoader(
             stream_dataset,
             batch_sampler=stream_sampler,
@@ -671,6 +696,9 @@ class CyclingDataIterator:
         set_epoch = getattr(batch_sampler, "set_epoch", None)
         if callable(set_epoch):
             set_epoch(self.epoch)
+        sampler_set_epoch = getattr(getattr(self.loader, "sampler", None), "set_epoch", None)
+        if callable(sampler_set_epoch):
+            sampler_set_epoch(self.epoch)
         self._iterator = iter(self.loader)
         skipped = 0
         while skipped < self.batch_in_epoch:
@@ -697,3 +725,19 @@ class CyclingDataIterator:
 
     def state_dict(self) -> dict[str, int]:
         return {"epoch": self.epoch, "batch_in_epoch": self.batch_in_epoch}
+
+
+class MappedStreamSampler:
+    """Map shard-local clip indices back to the shared, read-only dataset."""
+    def __init__(self, sampler, indices):
+        self.sampler, self.indices = sampler, indices
+
+    def set_epoch(self, epoch):
+        self.sampler.set_epoch(epoch)
+
+    def __len__(self):
+        return len(self.sampler)
+
+    def __iter__(self):
+        for batch in self.sampler:
+            yield [(self.indices[index], epoch) for index, epoch in batch]

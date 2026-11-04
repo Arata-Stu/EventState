@@ -75,6 +75,12 @@ def validate_config(config: Any) -> None:
         if any(int(_value(dataset, key)) % 16 for key in ("input_height", "input_width")):
             raise ValueError("ScaleEvent input dimensions must be multiples of 16")
     dense_protocol = _value(dataset, "dense_evaluation_protocol")
+    if _value(dataset, "common_stage1", False):
+        from omegaconf import OmegaConf
+        from event_state.dense.protocol import pretraining_audit_config
+        from event_state.dense.common_protocol import audit_common
+        audit_common(pretraining_audit_config(config, to_plain=lambda value:
+            OmegaConf.to_container(value, resolve=True) if OmegaConf.is_config(value) else value))
     if dense_protocol:
         from omegaconf import OmegaConf
         from event_state.dense.protocol import (

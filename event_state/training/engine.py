@@ -69,6 +69,8 @@ class EventStateTrainer:
         self._restored_data_state: dict[str, Any] = {}
         self._stream_state_bank: dict[str, Any] = {}
         self._previous_stream_names: set[str] = set()
+        self.input_frames_seen = 0
+        self.optimizer_attempts = 0
 
         self.precision = str(_value(self.training_config, "precision", "fp16")).lower()
         if self.precision not in {"bf16", "fp16", "float16", "fp32", "float32"}:
@@ -95,6 +97,21 @@ class EventStateTrainer:
                 0,
             )
         self.scaler = self._make_scaler()
+        from .distributed import active, wrap
+        self.distributed = active()
+        self.rank = torch.distributed.get_rank() if self.distributed else 0
+        self.world_size = torch.distributed.get_world_size() if self.distributed else 1
+        self.ddp = None
+        if self.distributed:
+            temporal = _value(_value(config, "model"), "temporal")
+            if _value(temporal, "detach_state_every") is not None:
+                raise ValueError("DDP currently supports clip-boundary TBPTT only")
+            if bool(_value(self.training_config, "validation_enabled", True)):
+                raise ValueError("DDP requires train-only fixed-step selection")
+            self.ddp = wrap(model,
+                bool(_value(_value(self.loss_config, "h_distill"), "enabled", False)),
+                str(_value(_value(self.loss_config, "z_objective"), "type", "none")) == "direct_dino",
+                device)
 
         if self.teacher is None and not bool(
             _value(_value(config, "teacher"), "cache_features", False)
@@ -145,13 +162,22 @@ class EventStateTrainer:
             scheduler=self.scheduler,
             scaler=self.scaler,
             device=self.device,
-            restore_rng=True,
+            restore_rng=not self.distributed,
             expected_config=self.checkpoint_config,
             compatibility_mode="resume",
         )
         self.global_step = state.global_step
         self.best_validation_loss = state.best_validation_loss
         self._restored_data_state = state.data_state
+        if self.distributed:
+            from .checkpoint import _restore_rng_state
+            if state.data_state.get("world_size") != self.world_size:
+                raise ValueError("DDP resume requires the original world size and rank stream shards")
+            restored = state.data_state["ranks"][self.rank]
+            _restore_rng_state(restored["rng"])
+            self._restored_data_state = restored["data"]
+        self.input_frames_seen = int(self._restored_data_state.get("input_frames_seen", 0))
+        self.optimizer_attempts = int(self._restored_data_state.get("optimizer_attempts", 0))
         self.logger.text("run/resume", str(Path(path).expanduser()), self.global_step)
 
     def _move_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
@@ -466,13 +492,16 @@ class EventStateTrainer:
         with self._autocast():
             # Every randomly sampled clip starts from an empty state. Since every sample in
             # DSECSequenceDataset belongs to exactly one sequence, state cannot cross a boundary.
-            outputs = self._forward_student(events, state=state)
+            outputs = (self.ddp(events, state=state) if self.ddp is not None
+                       else self._forward_student(events, state=state))
             if not isinstance(outputs, Mapping) or "z" not in outputs or "h" not in outputs:
                 raise TypeError("EventStateModel.forward_sequence() must return z and h tensors")
             z = outputs["z"]
             h = outputs["h"]
-            z_prediction = self.model.project_z(z) if z_enabled else None
-            h_prediction = self.model.project_h(h) if h_enabled else None
+            z_prediction = (outputs["z_prediction"] if self.ddp is not None
+                            else self.model.project_z(z) if z_enabled else None)
+            h_prediction = (outputs["h_prediction"] if self.ddp is not None
+                            else self.model.project_h(h) if h_enabled else None)
 
         # Disabled objectives remain visible as diagnostics, but their
         # projectors must not receive zero gradients (AdamW would otherwise
@@ -640,6 +669,12 @@ class EventStateTrainer:
             )
             normalized_weight = source_weight / total_source_weight
             scaled_loss = result["loss"] * normalized_weight / accumulation
+            if self.distributed:
+                # A shard can have a short final stream batch. Weight gradients
+                # by actual clips, rather than giving a small rank equal weight.
+                count = torch.tensor(float(batch["events"].shape[0]), device=self.device)
+                torch.distributed.all_reduce(count)
+                scaled_loss = scaled_loss * (batch["events"].shape[0] * self.world_size / count)
             if self.scaler is None:
                 scaled_loss.backward()
             else:
@@ -715,6 +750,8 @@ class EventStateTrainer:
                 "optimizer_step_skipped": float(not optimizer_updated),
                 "samples_per_second": samples / elapsed,
                 "frames_per_second": frames / elapsed,
+                "clips_per_update": samples,
+                "frames_per_update": frames,
             }
         )
         for name, norm in gradient_norms.items():
@@ -726,6 +763,27 @@ class EventStateTrainer:
             metrics[f"learning_rate/{group_name}"] = learning_rate
         if self.device.type == "cuda":
             metrics["gpu_memory_mb"] = torch.cuda.max_memory_allocated(self.device) / 2**20
+        if self.distributed:
+            # Loss diagnostics are rank means; throughput uses total work / slowest rank.
+            if self.device.type == "cuda":
+                peak = torch.tensor(metrics["gpu_memory_mb"], device=self.device)
+                torch.distributed.all_reduce(peak, op=torch.distributed.ReduceOp.MAX)
+                metrics["gpu_memory_max_mb"] = float(peak)
+            names = sorted(metrics)
+            packed = torch.tensor([metrics[n] for n in names], device=self.device, dtype=torch.float64)
+            torch.distributed.all_reduce(packed)
+            metrics = {n: float(v / self.world_size) for n, v in zip(names, packed.tolist())}
+            timing = torch.tensor(elapsed, device=self.device, dtype=torch.float64)
+            torch.distributed.all_reduce(timing, op=torch.distributed.ReduceOp.MAX)
+            for name in ("clips_per_update", "frames_per_update"):
+                metrics[name] *= self.world_size
+            metrics["samples_per_second"] = metrics["clips_per_update"] / float(timing)
+            metrics["frames_per_second"] = metrics["frames_per_update"] / float(timing)
+            metrics["world_size"] = self.world_size
+        self.input_frames_seen += int(metrics["frames_per_update"])
+        self.optimizer_attempts += 1
+        metrics["input_frames_seen"] = self.input_frames_seen
+        metrics["optimizer_attempts"] = self.optimizer_attempts
         return metrics
 
     @torch.inference_mode()
@@ -819,7 +877,15 @@ class EventStateTrainer:
     def _save(self, path: Path, data_state: Mapping[str, Any]) -> Path:
         if self.optimizer is None or self.scheduler is None:
             raise RuntimeError("Checkpoint saving requires optimizer and scheduler components")
-        return save_checkpoint(
+        if self.distributed:
+            from .checkpoint import _rng_state
+            ranks = [None] * self.world_size
+            torch.distributed.all_gather_object(ranks, dict(data=dict(data_state), rng=_rng_state()))
+            data_state = dict(world_size=self.world_size, ranks=ranks)
+        if self.rank != 0:
+            torch.distributed.barrier()
+            return path
+        result = save_checkpoint(
             path,
             model=self.model,
             optimizer=self.optimizer,
@@ -830,6 +896,9 @@ class EventStateTrainer:
             data_state=data_state,
             config=self.checkpoint_config,
         )
+        if self.distributed:
+            torch.distributed.barrier()
+        return result
 
     def _training_data_state(
         self,
@@ -848,6 +917,8 @@ class EventStateTrainer:
             return value
 
         return {
+            "input_frames_seen": self.input_frames_seen,
+            "optimizer_attempts": self.optimizer_attempts,
             "random": (
                 None if random_iterator is None else random_iterator.state_dict()
             ),
@@ -957,3 +1028,7 @@ class EventStateTrainer:
                 self.checkpoint_directory / f"step_{self.global_step:08d}.pt",
                 self._training_data_state(iterator, stream_iterator),
             )
+        self.logger.write_metrics_json("training_summary.json", dict(
+            successful_updates=self.global_step, optimizer_attempts=self.optimizer_attempts,
+            input_frames_seen=self.input_frames_seen, world_size=self.world_size,
+            optimizer_skips=self.optimizer_attempts - self.global_step))

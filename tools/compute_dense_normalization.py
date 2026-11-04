@@ -12,7 +12,9 @@ from event_state.dense.protocol import digest, load_protocol, sequences_for, sha
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--protocol", required=True)
+    selection = p.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--protocol")
+    selection.add_argument("--common-stage1", choices=("dsec", "m3ed"))
     p.add_argument("--event-cache-dir", type=Path)
     p.add_argument("--raw-event-root", type=Path)
     p.add_argument("--window-us", type=int)
@@ -20,7 +22,11 @@ def main():
     a = p.parse_args()
     if a.output.exists():
         raise FileExistsError(a.output)
-    protocol = load_protocol(a.protocol)
+    if a.common_stage1:
+        from event_state.dense.common_protocol import load_common
+        protocol = load_common(a.common_stage1)
+    else:
+        protocol = load_protocol(a.protocol)
     if (a.event_cache_dir is None) == (a.raw_event_root is None):
         raise ValueError("Choose event-cache-dir or raw-event-root")
     if a.raw_event_root is not None and (protocol["dataset"] != "dsec" or not a.window_us or a.window_us <= 0):

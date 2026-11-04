@@ -1,0 +1,47 @@
+{
+  "name": "m3ed_stage1_common_v1",
+  "dataset": "m3ed",
+  "sources": [
+    {
+      "url": "https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/full_car_urban_day_gt_train.yml",
+      "revision": "833e2c65233f9787449ce0675ae41e3f6e9c193a",
+      "sha256": "7fa22eefee9318d5ba8dbbb118144bcffdf809ae85d23972cd1c3a51e45476cf"
+    },
+    {
+      "url": "https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/full_car_urban_day_gt_val.yml",
+      "revision": "833e2c65233f9787449ce0675ae41e3f6e9c193a",
+      "sha256": "aa67b4cc9e8ae21326ff69c91aa82c33264cd40c5109612287b5cb99c68365f0"
+    },
+    {
+      "path": "tools/manifests/m3ed_downstream_split.yaml",
+      "sha256": "9229d4e65e1adb8808e36d62770a5468bc346c9d79369a851d1e4eafd411c489"
+    }
+  ],
+  "splits": {
+    "train": [
+      "car_urban_day_penno_big_loop",
+      "car_urban_day_penno_small_loop",
+      "car_urban_day_city_hall"
+    ],
+    "val": [
+      "car_urban_day_rittenhouse",
+      "car_urban_day_ucity_small_loop"
+    ],
+    "test": [
+      "car_urban_day_schuylkill_tunnel",
+      "car_urban_day_ucity_big_loop"
+    ]
+  },
+  "labels_available": {
+    "train": true,
+    "val": true,
+    "test": false
+  },
+  "test_source": "https://m3ed.io/sequences/",
+  "notes": "Common Stage 1 pool, not a new official task split. Task head splits remain separate. Foundation teacher upstream data not audited.",
+  "kind": "project_common_pretraining_not_official_task_split",
+  "downstream_notes": {
+    "semantic": "Existing train4/val ucity/test rittenhouse; InternImage pseudo-labels",
+    "depth": "F3 train3/val2 unchanged; horse excluded from Stage 1"
+  }
+}

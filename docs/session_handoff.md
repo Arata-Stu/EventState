@@ -2,6 +2,95 @@
 
 最終更新: 2026-11-04
 
+## 研究の再出発とdataset整理（2026-11-04）
+
+同期方針: ユーザーが今回もGit commit/push→サーバーpullを明示指定。
+転送用tarの案は取り下げ、docs/stage1_common_ddp.mdのGit手順を使う。
+
+起動準備更新: ユーザーがDSEC/M3ED E0/E1/E2の学習開始とbatch実験を依頼。
+2倍案を問い直し、勾配蓄積だけではなく「DDPを追加し3 GPUで1学習」を明示選択。
+tools/start_stage1_common.sh / run_stage1_common.pyとtorchrun対応を追加。
+計画は基本6run＋E1のDDP3比較2run。DINOv3、Hybrid、seed0、同一最終重みを各taskへ。
+共通trainはDSEC35（F3 train37−Semantic開発2val）、M3ED F3 train3。
+公式共通splitではなく既存holdoutを保護するStage 1用pool。M3ED全raw/horseは含まない。
+各rank R1+S1、蓄積DSEC4/M3ED2でglobal clips/update=8→24 / 4→12。
+基準99,999対DDP33,333更新、warmup999対333、LR固定、予定frame数同一。
+rank別Stream shardで提示頻度も変わるため、純粋batch効果ではなく分散方式比較。
+詳細・実行手順docs/stage1_common_ddp.md。scriptはCPU preflight→統計→GPU smoke→full。
+Mac stdlib21件/構文確認のみ。サーバーへの同期・Gloo/Hydra/NCCL・実学習は未実施。
+以下の「未確定」は過去の検討記録。今回の設定は実行準備案として明記し、実測結果と区別。
+
+MVSECをユーザーが候補として提示。提案はDSEC/M3EDで学習したStage 1を固定し、
+MVSECをDepth/Flowの追加下流転移評価に使う（MVSECでのStage 1追加は必須にしない）。
+MVSECラベルでheadを学習する場合はzero-shotとは呼ばない。
+GEPのDepth評価への接続が利点。ただしsplit以外の前処理・距離範囲・head・fine-tuning条件も
+合わせなければ公表値との公平な直接比較にはならない。FlowはDepthと独立にprotocol監査。
+公式MVSECはDepth/poseとFlow生成code・処理済みFlowリンクを提供。Semanticの標準GTは未確認。
+採用・取得・実装・学習は未実施。https://daniilidis-group.github.io/mvsec/download/
+
+Flowもユーザーが下流候補として提示（採用確定ではない）。DSEC公式Flowはtrain GT公開、
+test GT非公開で提出評価。M3ED標準配布のFlow GTは未確認。Flow headは未実装。
+提案: Semantic/Depthに加える運動表現の追加評価としてDSECで検討し、Stage 1は共通重みを使用。
+Flowの開発valを含むholdoutをStage 1前に固定する。入力時刻対・正解時間幅・未来参照の有無と
+headへの時間情報をE0/E1/E2で揃える。低活動かつ小変位での低EPEを記憶の証明としない。
+
+Stage 1方針（ユーザー指定）: タスク別の事前学習を避け、データセット×条件ごとに
+共通backboneを1回学習して各下流taskに転用する。seed追加時はseedごとの共通重みとする。
+教師をDINOv3/V-JEPA 2.1で変える場合は別条件。教師やtask別のcheckpoint選別で
+共通表現比較が崩れないよう、Stage 1 checkpoint選択規則も共通化する案。
+GEPおよび教師モデルの下流評価を参考にtaskを決めることをユーザーが提案。
+一次資料再確認: GEPは分類(N-ImageNet/N-Caltech101)、Semantic(DSEC/DDD17)、
+Depth(MVSEC)。DINOv3とV-JEPA 2.1もSemantic/Depthのdense probeを評価。
+提案: Semantic必須＋Depth補助、同一frozen backboneから独立head、Detection任意。
+これはGEPと同じtask種別を参考にする案で、DSEC/M3ED DepthをGEP protocolと呼ばない。
+全採用taskのval/test系列の和集合をStage 1から除外する共通train manifestを先に作る。
+具体的split/採用task最終決定/新学習は未実施。新たな公式共通splitの存在を意味しない。
+参考: https://rpg.ifi.uzh.ch/docs/CVPRF26_Cao.pdf
+https://arxiv.org/html/2508.10104v1 、 https://arxiv.org/html/2603.14482v1
+
+下流評価のユーザー確定方針: Semantic segmentationは必須。Detectionは任意で省略可能。
+Depthとの併用を検討中であり、Depth必須や同時multi-task学習は未決定。
+提案は同じfrozen backboneに独立したSemantic/Depth headを学習する評価。
+両taskの評価系列を事前学習から除外するsplit監査を先に行う。
+特にDSEC公式Semantic testと独自開発valを区別し、既存F3 trainを無検査で転用しない。
+
+ユーザー確定方針: ここから先の時系列実験はHybrid dataloaderを標準とする。
+初期比較の再出発もRandomへ戻さず、E0/E1/E2でRandom+Streamの入力samplingを揃える。
+E0はLSTMなしのz蒸留で状態保持はしない。E1はh、E2はz+hを蒸留し、
+Stream側で状態を継承してclip境界でdetach、Random側ではclipごとに状態を初期化する。
+混合比・clip長・batch・学習予算は未確定。過去のRandom結果は履歴として保持し、
+新Hybrid条件と区別する。今回の方針記録による学習起動・config変更はなし。
+
+ユーザーは研究の軸を整理し、最初のE0/E1/E2から再出発する方針。
+主datasetはDSECとM3ED。rawと今回のE0/E1/E2に必要なcacheだけを残す整理を依頼。
+M3ED rawは別PCにある（既存記録: aten-22 `/mnt/ssd-4tb/dataset/m3ed`、現存は未再確認）。
+まずsig-gpu5のdataset/outputsの容量・配置・symlinkと利用中processを読取専用で棚卸しする。
+共有event/RGB/teacher cache、GT/calibrationは旧モデル由来の特徴cacheと区別し、
+新条件での再利用可否を確認するまで保持。旧実験の結果・設定・重みは今回のdataset整理と区別する。
+新しいsplit/入力窓/学習予算は未確定。samplingは上記Hybridに確定。新学習は未実施。
+過去の「M3ED cache全保持」方針は今回の整理方針で見直すが、一括削除はしない。
+
+棚卸し受領: /home 3.5T中3.1T使用、空き244G/93%。dataset2.6T、outputs327G。
+旧特徴cacheの整理対象はDSEC_cache/detection_features372G、semantic_features112G、
+m3ed_cache/semantic_features65G、downstream_scratch/dense_f3_full_20261027_172342 322G
+（表示値合計871G）。削除コマンド提示段階であり実行・回収は未確認。
+提示psには学習/特徴抽出processなし（一覧取得時点）。outputsの重み/head/結果は保持。
+M3ED half_dagr/rittenhouseはf3_val_addition_20261027_183108/events/同系列へのsymlink。
+追加root31Gを削除すると入力参照が壊れるので保持する。
+DSEC入力events275G・教師410G、M3ED入力97G・教師343G・GT5.8Gを当面保持し、
+E0/E1/E2の入力条件決定後に内部を選別する。outputs内feature_visualization計191Gは
+画像/動画と特徴cacheの内訳未確認なので現段階では削除しない。
+
+追加内訳受領: DSEC eventsはgep_rgb270Gとsparse_windows5.6G。
+sparse_windowsは短縮窓評価用（末尾50/25/12.5%）なので今回の初期3条件から除外し削除対象。
+可視化3rootのcontext/条件別directoryはexport_feature_sequence.pyが生成する連番6桁.ptの
+特徴/context cacheに対応。3root限定で連番.ptだけを削除し、動画/画像/JSON/logは保持する手順を提示。
+191G全量回収は未確定。前回871G分を含め削除完了ログ/新dfは未受領。
+
+その後のユーザー出力: /home使用2.0T、空き1.3T、61%。可視化3rootは160M/223M/131M。
+今回の連番.pt削除対象は0件。容量減少は確認できたが、各旧cacheの削除完了や
+可視化cacheが消えた操作の個別帰属はこの出力のみでは確定しない。
+
 ## Depth可視化依頼（2026-11-04）
 
 M3EDから着手。tools/visualize_m3ed_dense_probe.pyを追加、RGB/GEP/GT/z/h/concat6画面。

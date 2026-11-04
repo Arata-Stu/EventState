@@ -29,6 +29,16 @@ def _resume_path(value: str | None) -> Path | None:
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(config: DictConfig) -> None:
+    import torch
+    from event_state.training.distributed import setup, NullLogger
+    rank, world = setup()
+    if int(config.training.get("distributed_world_size", world)) != world:
+        raise ValueError("Configured world size differs from torchrun; use the saved launch command")
+    if world > 1:
+        OmegaConf.update(config, "training.distributed_world_size", world, force_add=True)
+        config.device = f"cuda:{torch.cuda.current_device()}"
+        if config.training.validation_enabled:
+            raise ValueError("DDP currently requires train-only fixed-step checkpoint selection")
     from event_state.data.fixed_normalization import resolve_fixed_normalization
     resolve_fixed_normalization(config)
     resolved_yaml = OmegaConf.to_yaml(config, resolve=True)
@@ -48,7 +58,7 @@ def main(config: DictConfig) -> None:
         flush=True,
     )
     runtime = build_runtime(config)
-    logger = TrainingLogger(config.output.directory, resolved_yaml)
+    logger = TrainingLogger(config.output.directory, resolved_yaml) if rank == 0 else NullLogger()
     try:
         trainer = EventStateTrainer(
             model=runtime.model,
@@ -76,6 +86,8 @@ def main(config: DictConfig) -> None:
         trainer.fit()
     finally:
         logger.close()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
