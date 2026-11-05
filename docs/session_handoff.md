@@ -2,6 +2,17 @@
 
 最終更新: 2026-11-05
 
+2026-11-05 sig-gpu5の本番DDP E1（seed 0、DSEC共通train 35系列／M3ED共通train 3系列）。親ログでDSEC完了、子ログでM3ED step 27,040到達を確認。各33,333更新予定。出力は outputs/stage1_rvt_ddp_full_20261105/{dsec_E1_w3,m3ed_E1_w3}。実設定は各GPU Random1＋Stream1、蓄積DSEC 4／M3ED 2の旧方式。
+
+## サーバーsmoke起動ログ受領（2026-11-05）
+
+ユーザー提示ログではcommon統計DSEC35/M3ED3系列の完了表示後、
+`outputs/stage1_common_20261105/smoke`でphase=allを起動。
+DSEC E0/E1/E2をGPU0/1/2へ各単GPUで起動した表示まで確認。
+表示コマンドはR1+S1、蓄積DSEC4/M3ED2の旧方式であり、RVT joined版ではない。
+子jobログ・step・完了結果は未受領。長時間の原因はまだ確定していない。
+確認先は同rootの`logs`。以前提示した`stage1_rvt_smoke_20261105/logs`とは異なる。
+
 ## RVT型結合batchへ変更（2026-11-05）
 
 ユーザー依頼によりRandom/Streamを同一forwardに結合する経路を追加。

@@ -1,10 +1,14 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-10-27
+最終更新: 2026-11-05
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
 `seed=0` の単一試行であり、平均・標準偏差や統計的有意差を示すものではない。
+
+2026-11-05 sig-gpu5の本番DDP E1（seed 0、DSEC共通train 35系列／M3ED共通train 3系列）。親ログでDSEC完了、子ログでM3ED step 27,040到達を確認。各33,333更新予定。出力は outputs/stage1_rvt_ddp_full_20261105/{dsec_E1_w3,m3ed_E1_w3}。実設定は各GPU Random1＋Stream1、蓄積DSEC 4／M3ED 2の旧方式。
+
+単一stepの実測（両方とも192 frames/update）：DSEC step 33,320で117.33 frames/s、loss 0.11176。M3ED step 27,040で279.46 frames/s、loss 0.085008。
 
 ## 1. 事前学習条件
 
