@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import TemporalBackbone, TemporalState, detach_temporal_state
+from .convlstm import ConvLSTM
 from .identity import IdentityTemporal, IdentityTemporalBackbone
 from .lstm import LSTMState, PatchwiseLSTM, PatchwiseLSTMTemporalBackbone
 from .mamba import MambaTemporal, MambaTemporalBackbone
@@ -17,6 +18,7 @@ def build_temporal_backbone(
     num_layers: int = 1,
     dropout: float = 0.0,
     detach_state_every: int | None = None,
+    grid_size: tuple[int, int] | None = None,
 ) -> TemporalBackbone:
     normalized_kind = str(kind).lower()
     if normalized_kind in {"none", "identity"}:
@@ -32,12 +34,17 @@ def build_temporal_backbone(
             dropout=dropout,
             detach_state_every=detach_state_every,
         )
+    if normalized_kind == "convlstm":
+        if grid_size is None or num_layers != 1 or dropout or detach_state_every is not None:
+            raise ValueError("ConvLSTM requires a patch grid and one layer without internal dropout or truncation")
+        return ConvLSTM(input_dim, hidden_dim, output_dim, grid_size)
     if normalized_kind == "mamba":
         return MambaTemporalBackbone(input_dim=input_dim, output_dim=output_dim)
-    raise ValueError("temporal kind must be one of: none, identity, lstm, mamba")
+    raise ValueError("temporal kind must be one of: none, identity, lstm, convlstm, mamba")
 
 
 __all__ = [
+    "ConvLSTM",
     "IdentityTemporal",
     "IdentityTemporalBackbone",
     "LSTMState",
