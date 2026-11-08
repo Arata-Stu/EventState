@@ -1,6 +1,21 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-05
+最終更新: 2026-11-08
+
+実装済み（実GPU未検証、手順 docs/four_stage_depth.md）：ViTの3/6/9/12層後に各1個のLSTMを置き、各段のhを次段とdecoderへ渡す。
+LSTMなしは同じ4層のzを読み出す。Flowでは同じ特徴・時刻を使う直接CNNとRAFT型反復headの比較を検討。
+現行のE1 Encoder＋LSTM（h蒸留）は最終段にLSTMが1個ある条件で、4段型は別のStage 1条件。
+
+DSEC下流評価はSemantic（mIoU）を必須とし、Depth系とFlowの最終比較には公式testサーバーを使う。
+Depth系は左単眼イベントからの視差推定としてDisparityに提出し、推論入力を明記する。
+Flowは公式forward flowに提出する。headの選択にはローカルvalを使い、test採点前に設定を固定する。
+
+共通Stage 2: M3ED Semantic 3train/2val（連続状態、旧4trainを保持）とDSEC forward Flow
+14train/4val/7testの経路を追加。実行入口tools/run_common_stage2.sh、詳細docs/downstream_protocol_summary.md末尾。
+公式Flow時刻ZIP照合済み（416対）。raw/GT/空き容量preflightとGPU実行・提出はサーバーで未確認。
+
+
+2026-11-07 ユーザー報告で旧方式・RVT型のE1 DDP本番はともに完了。各方式ともseed 0、DSEC共通train 35系列・M3ED共通train 3系列。出力先は旧方式が `outputs/stage1_rvt_ddp_full_20261105`、RVT型が `outputs/stage1_joined_ddp_full_20261105`。各rootのjob名は `dsec_E1_w3` と `m3ed_E1_w3`。単GPU baselineの本番6条件は完了未確認。
 
 2026-11-05 sig-gpu5の本番DDP E1（seed 0、DSEC共通train 35系列／M3ED共通train 3系列）。親ログでDSEC完了、子ログでM3ED step 27,040到達を確認。各33,333更新予定。出力は outputs/stage1_rvt_ddp_full_20261105/{dsec_E1_w3,m3ed_E1_w3}。実設定は各GPU Random1＋Stream1、蓄積DSEC 4／M3ED 2の旧方式。
 
@@ -1294,3 +1309,10 @@ normalization validation failedで学習開始前に停止した。実際のJSON
 別名event_statistics_train4.jsonへ保存する。rawも教師cacheも不要、既存ファイル上書き拒否。
 次の手順はサーバー同期→統計再計算→--event-statisticsで新JSON指定→smoke。
 MacはAST/--helpのみ確認、数値テストはtests/test_m3ed_activity.pyに追加しサーバーで実行する。
+
+2026-11-07追加方針: 既存F3 val結果とは別に、M3EDは公式F³ローダ/採点、DSECはhidden test視差提出へ。
+tools/run_f3_depth_benchmarks.sh、手順docs/dense_probes.md末尾。開始条件はM3ED raw2系列・公式ソース・依存の準備、
+DSEC公式時刻ZIP/元データ/校正/固定dsec_alpha1 concat。サーバー推論・実提出・新スコア未確認。
+
+2026-11-07 DSEC提出の追記: 1Hzは出力指定、蓄積窓は公開valだけで比較して選び全test系列に固定。
+DSEC_WINDOW_MSとdsec-valを実装。test系列の事前学習混入は許さない。実GPU比較・提出は未実施。

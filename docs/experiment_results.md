@@ -1,6 +1,8 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-11-05
+最終更新: 2026-11-07
+
+2026-11-07 ユーザー報告で旧方式・RVT型のE1 DDP本番はともに完了。各方式ともseed 0、DSEC共通train 35系列・M3ED共通train 3系列。出力先は旧方式が `outputs/stage1_rvt_ddp_full_20261105`、RVT型が `outputs/stage1_joined_ddp_full_20261105`。各rootのjob名は `dsec_E1_w3` と `m3ed_E1_w3`。単GPU baselineの本番6条件は完了未確認。
 
 この文書を、会話セッションに依存しない実験結果の正本とする。数値を追加するときは、
 比較条件、seed、評価split、対応する出力ディレクトリを併記する。特記がない結果は
@@ -9,6 +11,8 @@
 2026-11-05 sig-gpu5の本番DDP E1（seed 0、DSEC共通train 35系列／M3ED共通train 3系列）。親ログでDSEC完了、子ログでM3ED step 27,040到達を確認。各33,333更新予定。出力は outputs/stage1_rvt_ddp_full_20261105/{dsec_E1_w3,m3ed_E1_w3}。実設定は各GPU Random1＋Stream1、蓄積DSEC 4／M3ED 2の旧方式。
 
 単一stepの実測（両方とも192 frames/update）：DSEC step 33,320で117.33 frames/s、loss 0.11176。M3ED step 27,040で279.46 frames/s、loss 0.085008。
+
+2026-11-06 ユーザー観測：DSECのRVT型学習でVRAM使用量は約18 GB。対応する実行設定はE1、seed 0、共通train 35系列、3 GPU DDP、各GPUでRandom 4＋Stream 4、系列長8、蓄積1。指定出力先は `outputs/stage1_joined_ddp_full_20261105/dsec_E1_w3`。測定方法・集計単位・ピーク値かどうかは未確認。
 
 ## 1. 事前学習条件
 

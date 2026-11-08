@@ -47,3 +47,15 @@ def read_target(record, task):
         raise ValueError("Unknown official target encoding")
     valid &= np.isfinite(value) & (value > 0)
     return value, valid
+
+
+def depth_to_disparity(depth, q):
+    """Invert the same homogeneous event Q used by disparity_to_depth, in native pixels."""
+    z, q = np.asarray(depth, dtype=np.float64), np.asarray(q, dtype=np.float64)
+    if z.ndim != 2 or q.shape != (4, 4) or not np.isfinite(q).all() or not np.isfinite(z).all() or (z <= 0).any():
+        raise ValueError('Expected finite positive depth and calibrated 4x4 Q')
+    y, x = np.ogrid[:z.shape[0], :z.shape[1]]
+    denom = z*q[3, 2]-q[2, 2]
+    if (denom == 0).any():
+        raise ValueError('Singular depth-to-disparity calibration')
+    return ((q[2,0]*x+q[2,1]*y+q[2,3])-z*(q[3,0]*x+q[3,1]*y+q[3,3]))/denom

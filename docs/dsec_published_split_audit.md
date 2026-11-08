@@ -485,3 +485,15 @@ Dsec→DistillDataset→pretrain_ddpのサンプリング経路ではこれら�
 GEP公開configはDSEC trainをtrain_dataset、DSEC testをvalid_datasetへ設定。testを勾配学習に使うこととは区別し、モデル選択への使用歴はcheckpoint別に確認が必要。
 DepthAnyEventを継承するScaleEvent Depthの正確な実行系列は、公開downstream実行設定が揃わないため未確定。ここではDepthAnyEventの公開31/10を、その著者の設定としてのみ掲載。
 これらは公式splitそのもののtrain/test混入を意味しない。学習コード設定、実際のcheckpoint、論文評価条件は別途確認する。
+
+### F³採点コードの追加照合（2026-11-07）
+
+公式repoのHEAD `833e2c65233f9787449ce0675ae41e3f6e9c193a` を取得し、公開実装を静的照合した。
+[DSECローカルval設定](https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/eval_dsec_gt.yml)は `eval: disparity`。
+[公式test用の別経路](https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/src/f3/tasks/depth/dsec_benchmark.py)は指定CSV時刻・番号で視差×256のuint16 PNGを出力する。生成機能は投稿・採点の証跡とは区別する。
+[M3ED評価設定](https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/confs/monocular_depth/eval_m3ed_gt.yml)は車載昼間2val、batch1、depth、0.1/80m。
+[評価ループ](https://github.com/grasp-lyrl/fast-feature-fields/blob/833e2c65233f9787449ce0675ae41e3f6e9c193a/src/f3/tasks/depth/evaluate.py#L84-L103)は視差をfbで距離に変換、上下限とも厳密不等号、有効画素10未満を除外。各frameのRMSE等を最後にnsamplesで平均する。EventStateは上限を含み、有効画素をプールしてRMSEを計算する。系列と距離範囲の数値が一致しても直接比較ではない。Fig.11に使われた個々の実行ログとの同一性は未検証。
+
+### F³論文v2の補足による確定（2026-11-07）
+
+[PDF p.40、補足§S.3.4 Evaluation on DSEC](https://arxiv.org/pdf/2509.25146v2#page=40)に、DSECのmetric disparityの学習はoriginal train split、評価はDSECサイトのdisparity benchmarkと明記（脚注5）。したがってv2 Fig.7(f)は著者報告として公式test評価。公開37/4のローカルvalスコアを意味しない。DSEC直接学習行はMAE 2.07 px / RMSE 3.03 px。前節のコードだけからの保留を更新する。同節のM3EDでは80m以内に有効LiDAR点10以上、Depth時刻を中心とする20msにイベント200K超を要求し、車載昼間は5,387例。EventStateの26,611フレーム全体や自然低活動群と母集団が異なる。

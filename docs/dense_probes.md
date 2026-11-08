@@ -424,3 +424,65 @@ manifestに重み/cache SHAと表示条件、frames.csvにtimestamp/低活動継
 元系列から状態を保持して生成済みのcacheなので表示区間だけ切り出してもstateをresetしない。
 1正解sample=1動画frame、既定20fpsは再生速度。欠損/不等間隔は再標本化せず実時間動画と主張しない。
 新規学習/特徴cache不要。MacでAST/help確認のみ、依存テスト・GPU描画はサーバーで未確認。
+
+## F³ M3EDネイティブ採点・DSEC公式test（2026-11-07）
+
+既存F3 clean runのweightsを使用。旧continuous.jsonの上書き・再学習なし。
+サーバー上で env を有効化し、`bash tools/run_f3_depth_benchmarks.sh <stage>` を使う。
+`RUN_ROOT`, `DATA_ROOT`, `BENCH_ROOT`で既定パスを変更できる。出力先は新規のみ。
+
+**M3ED**: 旧26,611 RGB時刻のtargets.h5ではなく、rawの `{car_urban_day_rittenhouse,car_urban_day_ucity_small_loop}_{data,depth_gt}.h5` が必要。rawは従来aten-22側の/mnt/ssd-4tb/dataset/m3edに存在報告。
+4ファイルを読める場所をM3ED_RAW_ROOTに指定（もしくは重みをraw側へ持っていく）。
+固定版のF³ cloneをF3_REPOに指定する。GPU実行前にソース・raw・依存を準備：
+
+```bash
+git clone https://github.com/grasp-lyrl/fast-feature-fields.git /home/iASL/Arata_repo/fast-feature-fields
+git -C /home/iASL/Arata_repo/fast-feature-fields checkout --detach 833e2c65233f9787449ce0675ae41e3f6e9c193a
+export F3_REPO=/home/iASL/Arata_repo/fast-feature-fields
+# EventStateとF³双方の依存が必要。既存学習envを丸ごと上書きしないこと。
+PYTHONPATH="$F3_REPO/src" python -c 'from f3.tasks.depth.utils.dataloader import TimeAlignedDepthAndEvents; import hdf5plugin'
+export M3ED_RAW_ROOT=/path/to/raw/m3ed
+CUDA_VISIBLE_DEVICES=1 bash tools/run_f3_depth_benchmarks.sh m3ed-audit
+CUDA_VISIBLE_DEVICES=1 FEATURE=z bash tools/run_f3_depth_benchmarks.sh m3ed
+CUDA_VISIBLE_DEVICES=2 FEATURE=concat bash tools/run_f3_depth_benchmarks.sh m3ed
+```
+
+実データの読み出しは公式TimeAlignedDepthAndEventsを直接使用。50kHzの左イベント索引だけ原コードと同じsearchsortedで一時生成。各系列で新しい一時dirを作り過去のmetadata_depths.jsonを拾わない。raw座標1280×720、LiDAR時刻中心20ms、公式コードの200k以上・最大800k・決定的subsample、0.1<GT<80かつ10点以上、frameごとの公式eval_depth関数の算術平均。SqRelも従来EventStateとは式が違うため公式関数に従う。5,387件が必要、さらにauditと本番の系列/時刻/GT/マスクのdigestを照合し、異なる場合metrics.jsonを出さない。samples.csv/support.jsonは診断用。元論文が個別IDを公表したわけではなく、論文件数+公開実装で確認する。
+
+EventState側は同じ選択済みevent列からGEPを作り、全画角を352×640にresize、固定headの予測をnativeに補間。旧DAGR/rectified cropやRGB更新時刻と異なる**新しい推論条件**。イベント窓は未来10msも含むオフライン比較。LSTMは系列冒頭でresetしサンプル間で状態保持。F³自身は極性を除いた3列を使う。教師/学習過程の一致ではなく、評価対象と採点規約を合わせる。自然低活動の検証は別表に残す。
+
+F³モデル自身を同じ採点器で再実行する場合は、公式の**車載昼間metric stage-2**のdepth_config.yml（参照先F³ backbone設定/重みを含む）とbest.pthが必要。通常の公式download_models.sh depthが取得するpseudo stage-1は代用不可。相対モデルパスはF³ repoをcwdとして解決すること。公式F³環境で実行例：
+
+```bash
+# ES / OUT / METRIC_CFG / METRIC_CKPT は絶対パスを指定
+(cd "$F3_REPO" && python "$ES/tools/eval_m3ed_f3_native.py" --f3-repo "$F3_REPO" \
+  --raw-root "$M3ED_RAW_ROOT" --reference-support "$OUT/m3ed_reference/support.json" \
+  --f3-model-config "$METRIC_CFG" --f3-model-weights "$METRIC_CKPT" --output "$OUT/f3_reference_model")
+```
+
+**DSEC**: 事前に公開valで選んだdsec_alpha1/concat bestを全12系列で固定。左イベントと全画像時刻列のみを使い、テスト画像の画素は読まない。元RGB intervalの全時刻で更新し、公式指定時刻のみ予測。native 480×640の深度を各sequenceのtest_calibration/disparity_to_depth/cams_03の同次Qで逆変換（主点offsetも含む）。PNGの表現範囲のみ飽和し個数を記録。旧視差head exportとは独立。公式ZIPのSHA256と全CSVのhashを検査。552枚の名前・CRC・IHDRを検査してからsubmission.zipを確定する。大きなtest特徴cacheは作らない。
+
+```bash
+bash tools/run_f3_depth_benchmarks.sh dsec-preflight
+CUDA_VISIBLE_DEVICES=0 bash tools/run_f3_depth_benchmarks.sh dsec
+git clone https://github.com/uzh-rpg/DSEC.git /tmp/dsec-official-checker
+DSEC_CHECKER=/tmp/dsec-official-checker/scripts/check_disparity_submission.py bash tools/run_f3_depth_benchmarks.sh dsec-check
+```
+
+[公式サイト](https://dsec.ifi.uzh.ch/uzh/disparity-benchmark/)のinstitutional accountで、検査済み dsec/submission.zip を一度だけ提出。RGB教師を訓練時に使用、推論は左イベントのみと申告。提出条件・report要件は公式ページ参照。スコアとsubmission IDを記録する。Macでは軽量数値テストのみ、実重み/実rawでの推論・ZIP・投稿は未検証。
+
+検証範囲: 公式時刻ZIP本体を取得、12系列・552枚を実CSVで確認。仮のデータ配置/校正と公式CSVを組み合わせたpreflight通過、CSV改変を拒否。数値テストは主点offset付きQの往復、50kHz時刻の重複・ブロック境界、PNGのuint16形式を確認。実HDF5の内容/モデル/公式checkerでの検証はサーバーで行う。M3EDはF³のuint64索引算術のためNumPy 2.x（公式環境は2.1.2）を使う。support.jsonでは正解・画素・時刻に加え、公式ローダが返したイベント列のSHA256も比較する。
+
+### DSEC公式規則と蓄積窓の選択（2026-11-07）
+
+[公式規則](https://dsec.ifi.uzh.ch/uzh/disparity-benchmark/)と[提出形式](https://dsec.ifi.uzh.ch/disparity-submission-format/)で1Hzは指定出力時刻。20ms入力窓の指定なし。
+DSEC_WINDOW_MSはrgb-interval（従来通り）または正の整数ms。固定窓は毎画像時刻tで(t-W,t]の同一系列のrawイベントを読む。画像間隔より長ければ隣接更新の入力は重なる。時刻列/LSTM更新は変えず、公式552枚だけ出力。既存重みと正規化はRGB間隔で学習したものに固定。これは再学習でなく推論窓の比較。
+同じモデル・同じ窓を全test系列で使用し、test上で窓選定をしない。正解なし事前学習、モデル選択、統計計算、申告済みの先行学習履歴にもtest系列を混ぜない。既存の重み監査を通さず推論しない（外部RGB教師の全履歴は不明）。窓と監査結果を提出manifestに保存。
+
+候補比較は **dsec-val** のみ（公開4系列、保存済みdsec_val.jsonから元視差GTを使用）。例：
+```bash
+for w in rgb-interval 20 50; do
+  DSEC_WINDOW_MS="$w" bash tools/run_f3_depth_benchmarks.sh dsec-val || break
+done
+```
+出力のmean_sequence_mae_pxを事前に主指標と決め、1条件を固定後に限り、同じDSEC_WINDOW_MSでdsec-preflight→dsec→dsec-check。提出先ディレクトリは窓別に増やさず既存ZIPを保護。M3EDのF³再現用中央20ms窓は変更しない。

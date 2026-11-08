@@ -1,0 +1,18 @@
+{
+  "source": "https://download.ifi.uzh.ch/rpg/DSEC/test_disparity_timestamps.zip",
+  "zip_sha256": "403f3ad5d28ae2ddc3737c54039b9a737af210236fb084c8cde1de33cb6dd609",
+  "csv_sha256": {
+    "interlaken_00_a": "078779548b2fef46ca9ce662f15fb564a1b0fc166de2270cc1fa9b3a9376f8e1",
+    "interlaken_00_b": "6275bdae2649d9b4539e4d6a4668e0d7373f0b4642b845ade1eaa71381330b11",
+    "interlaken_01_a": "76cac76b4b39be988fbe2da158e7f915edb91e1d89f5ae89bd1387c9bfc9e0bc",
+    "thun_01_a": "7e175fb2d3c2cf509efd0390aca15dbd2debd3bf120a0535e064cad0f8b5cc3b",
+    "thun_01_b": "ed2c08c31d9c104aa57e3ceb12a00eb0c8df84677ddc718ad4b8dfa94fc1b4c1",
+    "zurich_city_12_a": "40179a44a5aaf6aae2ba8173d5d9d69378b647730b0859dcf83c8b60d0c604b5",
+    "zurich_city_13_a": "775368f00901e68fb4469dffbe84fa582a6d2a03f5731e663101c6a00834b05c",
+    "zurich_city_13_b": "c1ee300aa9cb22d08925fa4937d29ae2bf73176d27b98e57fd80c5ec4308ba43",
+    "zurich_city_14_a": "c89be803d7438f44ee977242986e73d2ce175c15408de7935dc6ae1e76be6b80",
+    "zurich_city_14_b": "3531eb7cc09902ca92a27c6fd950be6d393bbb9e106217b282056047d38ca3e3",
+    "zurich_city_14_c": "a6204e2e267bb64c5e5d02c4b9a77c4ab4e861780aaf0d554c6f48ef1666d892",
+    "zurich_city_15_a": "a3b18d74cadea321a1c55805b78d4327fb7455061d177d4227c3e962208c11c9"
+  }
+}
