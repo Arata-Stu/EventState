@@ -28,6 +28,7 @@ def main():
     p.add_argument("--low-event-rate-threshold", type=float,
                    help="Predeclared training-derived rate; default is matching-window train p10 from statistics")
     p.add_argument("--device", default="cuda")
+    p.add_argument("--four-level", action="store_true", help="Cache four consecutive stage outputs for DPT-style fusion")
     p.add_argument("--audit-only", action="store_true")
     a = p.parse_args()
     if not 0 <= a.low_activity_threshold <= 1:
@@ -95,6 +96,8 @@ def main():
                     normalization_audit=audit, dataset=protocol["dataset"], task=index["task"],
                     role=index["role"], labeled=index["labeled"],
                     geometry="DSEC full rectified 480x640; M3ED half-scale rectified crop rows4:356")
+    if a.four_level:
+        identity["feature_layers"] = [3, 6, 9, 12]
     a.output_dir.mkdir(parents=True)
     (a.output_dir / "run_identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     records, skipped, source_identity = [], [], {}
@@ -138,13 +141,18 @@ def main():
                     if not torch.isfinite(std).all() or (std <= 0).any():
                         raise ValueError("Invalid checkpoint normalization")
                     normalized = ((events - mean) / std).to(device)[None, None]
-                    outputs = model(normalized, state=None if a.state_policy == "frame" else state)
-                    state = outputs.get("state")
+                    previous_state = None if a.state_policy == "frame" else state
+                    if a.four_level:
+                        stages, state = model.forward_depth_stages(normalized, previous_state)
+                    else:
+                        outputs = model(normalized, state=previous_state)
+                        state = outputs["state"]
                     if stamp not in requested:
                         continue  # All intervening frames still update the state and activity duration.
                     target = requested.pop(stamp)
+                    outputs = {"stages": torch.cat(stages, dim=-1)} if a.four_level else outputs
                     maps = {key: tokens_to_map(outputs[key][0, 0], (height // 16, width // 16)).cpu().half()
-                            for key in ("z", "h")}
+                            for key in (("stages",) if a.four_level else ("z", "h"))}
                     if any(not torch.isfinite(value).all() for value in maps.values()):
                         raise ValueError("Nonfinite frozen features")
                     payload = dict(sequence=sequence, timestamp=stamp, checkpoint_sha256=checkpoint_hash,

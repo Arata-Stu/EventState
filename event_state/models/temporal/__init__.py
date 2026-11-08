@@ -6,6 +6,7 @@ from .base import TemporalBackbone, TemporalState, detach_temporal_state
 from .convlstm import ConvLSTM
 from .identity import IdentityTemporal, IdentityTemporalBackbone
 from .lstm import LSTMState, PatchwiseLSTM, PatchwiseLSTMTemporalBackbone
+from .stages import FourStageLSTM
 from .mamba import MambaTemporal, MambaTemporalBackbone
 
 
@@ -34,6 +35,10 @@ def build_temporal_backbone(
             dropout=dropout,
             detach_state_every=detach_state_every,
         )
+    if normalized_kind == "four_stage_lstm":
+        if num_layers != 1 or dropout or detach_state_every is not None:
+            raise ValueError("Expected one LSTM layer per ViT stage")
+        return FourStageLSTM(input_dim, hidden_dim, output_dim)
     if normalized_kind == "convlstm":
         if grid_size is None or num_layers != 1 or dropout or detach_state_every is not None:
             raise ValueError("ConvLSTM requires a patch grid and one layer without internal dropout or truncation")

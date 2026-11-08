@@ -55,19 +55,24 @@ def plan(a):
         branch_batch = 4 if ds == 'dsec' else 2
         clip = 8 if ds == 'dsec' else 16
         specs = [(e, 1) for e in ('E0', 'E1', 'E2')] + [('E1', 3)]
+        four_stage = getattr(a, 'four_stage_lstm', False)
+        if four_stage:
+            specs = [('E1', world) for world in (1, 3)]
         for condition, world in specs:
             if a.phase == 'baseline' and world != 1 or a.phase == 'ddp' and world != 3:
                 continue
             base_steps = 99 if a.stage == 'smoke' else 99999
             steps = base_steps // world
             warmup = (9 if a.stage == 'smoke' else 999) // world
-            name = f'{ds}_{condition}_w{world}'
+            variant = 'four_stage_lstm' if four_stage else condition
+            name = f'{ds}_{variant}_w{world}'
+            model_kind = 'four_stage_lstm' if four_stage else ('no_memory' if condition == 'E0' else 'lstm')
             experiment = {'E0': 'gep_baseline', 'E1': 'h_distill_lstm', 'E2': 'h_distill_lstm_zloss'}[condition]
             cmd = [sys.executable]
             if world > 1:
                 cmd += ['-m', 'torch.distributed.run', '--standalone', '--nnodes=1', f'--nproc-per-node={world}']
             cmd += ['train.py', f'dataset={"dsec_det_train41" if ds == "dsec" else "m3ed_half_dagr"}',
-                    f'model={"no_memory" if condition == "E0" else "lstm"}', f'experiment={experiment}',
+                    f'model={model_kind}', f'experiment={experiment}',
                     f'seed={a.seed}', 'device=auto', f'dataset.root={root.resolve()}',
                     '++dataset.common_stage1=true',
                     'dataset.train_sequences=' + json.dumps(protocol['splits']['train'], separators=(',', ':')),
@@ -97,7 +102,12 @@ def plan(a):
                     'hydra.output_subdir=null', 'hydra/job_logging=disabled', 'hydra/hydra_logging=disabled']
             if ds == 'm3ed':
                 cmd += [f'dataset.prepared_root={events.resolve()}']
-            jobs.append(dict(name=name, world=world, command=cmd, steps=steps,
+            label = {'E0': 'Encoder（z蒸留）', 'E1': 'Encoder＋LSTM（h蒸留）',
+                     'E2': 'Encoder＋LSTM（z+h蒸留）'}[condition]
+            if four_stage:
+                label = "Encoder＋4段LSTM（最終h蒸留）"
+                cmd.append("experiment.name=four_stage_lstm_h_distill")
+            jobs.append(dict(name=name, label=label, world=world, command=cmd, steps=steps,
                 effective_clips=2 * branch_batch * accumulation * world,
                 planned_frames=steps * 2 * branch_batch * accumulation * world * clip,
                 statistics=str(stats_file.resolve()), statistics_sha256=hashlib.sha256(stats_file.read_bytes()).hexdigest(),
@@ -150,7 +160,7 @@ def execute(a, jobs):
                 running.append((proc, log, job, assigned))
                 pending.remove(job)
                 used.update(assigned)
-                print(f'[stage1] GPUs {assigned}: {job["name"]}', flush=True)
+                print(f'[stage1] GPUs {assigned}: {job["name"]} {job["label"]}', flush=True)
             for item in running[:]:
                 proc, log, job, _ = item
                 if proc.poll() is None:
@@ -160,7 +170,7 @@ def execute(a, jobs):
                 ckpt = a.output_root / job['name'] / 'checkpoints' / f'step_{job["steps"]:08d}.pt'
                 if proc.returncode or not ckpt.is_file() or not ckpt.stat().st_size:
                     raise RuntimeError(f'{job["name"]} failed or missing final checkpoint; inspect log')
-                print(f'[stage1] complete: {job["name"]}', flush=True)
+                print(f'[stage1] complete: {job["name"]} {job["label"]}', flush=True)
             time.sleep(.5)
     finally:
         for proc, _, _, _ in running:
@@ -189,12 +199,13 @@ def main():
     p.add_argument('--gpus', default='0,1,2')
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--num-workers', type=int, default=2)
+    p.add_argument('--four-stage-lstm', action='store_true', help='Run final-h distillation with LSTMs after blocks 3/6/9/12')
     p.add_argument('--execute', action='store_true')
     p.add_argument('--skip-preflight', action='store_true', help='Only after same-code server preflight passes')
     a = p.parse_args()
     jobs = plan(a)
     for job in jobs:
-        print(f'{job["name"]}: clips/update={job["effective_clips"]}, steps={job["steps"]}, frames={job["planned_frames"]}')
+        print(f'{job["name"]} {job["label"]}: clips/update={job["effective_clips"]}, steps={job["steps"]}, frames={job["planned_frames"]}')
         print(shlex.join(job['command']))
     if a.execute:
         execute(a, jobs)

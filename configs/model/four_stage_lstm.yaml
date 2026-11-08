@@ -1,0 +1,6 @@
+defaults:
+  - lstm
+  - _self_
+
+temporal:
+  type: four_stage_lstm

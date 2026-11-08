@@ -82,6 +82,14 @@ class CommonTests(unittest.TestCase):
                 for job in subset:
                     self.assertIn('training.gradient_accumulation=1', job['command'])
                     self.assertIn('++training.sampling.batching=joined', job['command'])
+            a.four_stage_lstm = True
+            a.phase = 'baseline'
+            staged = plan(a)
+            self.assertEqual([j['name'] for j in staged],
+                             ['dsec_four_stage_lstm_w1', 'm3ed_four_stage_lstm_w1'])
+            for job in staged:
+                self.assertIn('model=four_stage_lstm', job['command'])
+                self.assertIn('experiment=h_distill_lstm', job['command'])
             self.assertFalse(a.output_root.exists())
             stats['sequences'] = ['wrong']
             (root/'m3ed_common.json').write_text(json.dumps(stats))

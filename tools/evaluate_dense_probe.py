@@ -23,7 +23,7 @@ def main():
         raise FileExistsError("Existing evaluation/predictions are preserved")
     import torch
     from event_state.dense.data import DenseFeatureDataset
-    from event_state.dense.head import DenseRegressionHead
+    from event_state.dense.head import build_dense_head
     from event_state.dense.protocol import sha256_file
     from event_state.dense.runtime import evaluate
     payload = torch.load(a.checkpoint, map_location="cpu", weights_only=False)
@@ -38,7 +38,7 @@ def main():
                           ("normalization_audit", config["normalization_audit"])):
         if dataset.meta[key] != expected:
             raise ValueError(f"Head/evaluation feature provenance mismatch: {key}")
-    model = DenseRegressionHead(config["in_channels"], config["width"]).to(a.device)
+    model = build_dense_head(config["feature"], config["in_channels"], config["width"]).to(a.device)
     model.load_state_dict(payload["model"], strict=True)
     model.eval()
     report = dict(protocol=dataset.protocol, role=dataset.meta["role"], task=config["task"],

@@ -27,8 +27,10 @@ class DenseFeatureDataset(Dataset):
                          training=dict(validation_enabled=bool(audit["pretrain_validation_used"]))),
                           self.protocol, statistics_sequences=audit["statistics_sequences"])
         names = set(sequences_for(self.protocol, self.meta["role"], labels=require_labels))
-        if feature not in {"z", "h", "concat"} or not 0 <= minimum < maximum:
+        if feature not in {"z", "h", "concat", "stages"} or not 0 <= minimum < maximum:
             raise ValueError("Invalid feature or regression range")
+        if feature == "stages" and self.meta.get("feature_layers") != [3, 6, 9, 12]:
+            raise ValueError("Expected a cache built with --four-level")
         self.minimum, self.maximum, self.feature = minimum, maximum, feature
         self.records = self.meta["records"]
         identities = [(r["sequence"], r["timestamp"]) for r in self.records]

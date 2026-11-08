@@ -14,7 +14,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--train-cache", type=Path, required=True)
     p.add_argument("--val-cache", type=Path)
-    p.add_argument("--feature", choices=("z", "h", "concat"), required=True)
+    p.add_argument("--feature", choices=("z", "h", "concat", "stages"), required=True)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=4)
@@ -33,7 +33,7 @@ def main():
     import torch
     from torch.utils.data import DataLoader
     from event_state.dense.data import DenseFeatureDataset
-    from event_state.dense.head import DenseRegressionHead
+    from event_state.dense.head import build_dense_head
     from event_state.dense.runtime import evaluate, atomic_save, validate_pair
     from event_state.dense.protocol import digest, sha256_file
 
@@ -54,7 +54,7 @@ def main():
             raise ValueError("Only published validation with continuous state may select checkpoints")
     torch.manual_seed(a.seed)
     device = torch.device(a.device)
-    model = DenseRegressionHead(train[0]["feature"].shape[0], a.width).to(device)
+    model = build_dense_head(a.feature, train[0]["feature"].shape[0], a.width).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=a.learning_rate)
     generator = torch.Generator().manual_seed(a.seed)
     loader = DataLoader(train, batch_size=a.batch_size, shuffle=True, generator=generator)
@@ -69,7 +69,7 @@ def main():
                     low_activity_threshold=train.meta["low_activity_threshold"],
                     low_activity_metric=train.meta["low_activity_metric"],
                     geometry=train.meta["geometry"], upstream_rgb_data="unknown",
-                    in_channels=train[0]["feature"].shape[0], decoder="nonrecurrent_two_conv_probe",
+                    in_channels=train[0]["feature"].shape[0], decoder="four_level_dpt" if a.feature == "stages" else "nonrecurrent_two_conv_probe",
                     scale_alignment="none", loss="log_l1" if task == "depth" else "l1")
     best = float("inf")
     start = 0

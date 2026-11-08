@@ -7,6 +7,8 @@ from typing import Any
 from torch import Tensor, nn
 
 from .event_encoder import EventEncoder
+from .temporal.stages import FourStageLSTM
+from .temporal.identity import IdentityTemporalBackbone
 from .projectors import TeacherProjection
 from .temporal import TemporalBackbone, TemporalState
 
@@ -120,6 +122,19 @@ class EventStateModel(nn.Module):
             )
         return h, new_state
 
+    def forward_depth_stages(self, events: Tensor, state: TemporalState = None):
+        """Return four ordered [B,T,N,D] features and the next stream state."""
+        batch, time = events.shape[:2]
+        frames = events.flatten(0, 1)
+        backbone = self.event_encoder.backbone
+        if isinstance(self.temporal_model, FourStageLSTM):
+            _, stages, state = self.temporal_model(backbone, frames, batch, time, state)
+            return stages, state
+        if not isinstance(self.temporal_model, IdentityTemporalBackbone) or state is not None:
+            raise ValueError("Four-level depth requires an encoder-only or four-stage LSTM checkpoint")
+        stages = backbone.get_intermediate_layers(frames, n=[2, 5, 8, 11])
+        return tuple(x.unflatten(0, (batch, time)) for x in stages), None
+
     def forward_sequence(
         self,
         events: Tensor,
@@ -136,6 +151,11 @@ class EventStateModel(nn.Module):
         flat_events = events.reshape(
             batch_size * sequence_length, channels, height, width
         )
+        if isinstance(self.temporal_model, FourStageLSTM):
+            z, stages, new_state = self.temporal_model(
+                self.event_encoder.backbone, flat_events, batch_size, sequence_length, state
+            )
+            return {"z": z, "h": stages[-1], "state": new_state}
         flat_z = self.encode_event(flat_events)
         z = flat_z.reshape(
             batch_size, sequence_length, flat_z.shape[1], flat_z.shape[2]

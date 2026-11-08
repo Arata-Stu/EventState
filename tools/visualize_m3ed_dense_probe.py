@@ -31,7 +31,7 @@ def main():
     import imageio_ffmpeg
     from PIL import Image, ImageDraw
     from event_state.dense.data import DenseFeatureDataset
-    from event_state.dense.head import DenseRegressionHead
+    from event_state.dense.head import build_dense_head
     from event_state.dense.protocol import sha256_file
     from compare_dense_probes import compare
     from visualize_m3ed_downstream import _crop_rgb, _event_image
@@ -52,7 +52,7 @@ def main():
                               ('geometry', cfg['geometry']), ('normalization_audit', cfg['normalization_audit'])]:
             if ds.meta[key] != expected:
                 raise ValueError(f'Head provenance mismatch: {key}')
-        model = DenseRegressionHead(cfg['in_channels'], cfg['width']).to(a.device)
+        model = build_dense_head(cfg['feature'], cfg['in_channels'], cfg['width']).to(a.device)
         model.load_state_dict(payload['model'], strict=True)
         models[feature] = model.eval()
         datasets[feature], reports[feature], configs[feature] = ds, report, cfg
