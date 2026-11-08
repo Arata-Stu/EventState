@@ -6,22 +6,25 @@ from .lstm import PatchwiseLSTM
 
 
 class FourStageLSTM(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
+    def __init__(self, input_dim, hidden_dim, output_dim, first_stage=1):
         super().__init__()
         if input_dim != output_dim:
             raise ValueError("Direct stage connections require the ViT token dimension")
         self.input_dim, self.output_dim = input_dim, output_dim
+        if first_stage not in (1, 2, 3, 4):
+            raise ValueError("first_stage must be 1, 2, 3 or 4")
+        self.first_stage = first_stage
         self.stages = nn.ModuleList(
-            PatchwiseLSTM(input_dim, hidden_dim, output_dim) for _ in range(4)
+            PatchwiseLSTM(input_dim, hidden_dim, output_dim) for _ in range(first_stage, 5)
         )
 
     def forward(self, backbone, frames, batch, time, state=None):
         if len(backbone.blocks) != 12:
             raise ValueError("Four-stage LSTM requires a 12-block DINOv3")
         if state is None:
-            state = (None,) * 4
-        if len(state) != 4:
-            raise ValueError("Expected four stage states")
+            state = (None,) * len(self.stages)
+        if len(state) != len(self.stages):
+            raise ValueError("Expected one state per active LSTM stage")
         tokens, (height, width) = backbone.prepare_tokens_with_masks(frames)
         prefix = 1 + backbone.n_storage_tokens
         outputs, states = [], []
@@ -31,7 +34,11 @@ class FourStageLSTM(nn.Module):
             if index % 3 == 0:
                 patches = backbone.norm(tokens[:, prefix:])
                 z = patches.reshape(batch, time, height * width, self.input_dim)
-                h, carried = self.stages[len(outputs)](z, state[len(outputs)])
+                if index // 3 < self.first_stage:
+                    outputs.append(z)
+                    continue
+                active = len(states)
+                h, carried = self.stages[active](z, state[active])
                 outputs.append(h)
                 states.append(carried)
                 if index < 12:

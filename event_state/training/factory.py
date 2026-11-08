@@ -421,6 +421,7 @@ def _build_model(config: Any) -> nn.Module:
         grid_size = patch_grid(size, event_encoder.patch_size, require_divisible=True)
     temporal_model = build_temporal_backbone(
         grid_size=grid_size,
+        first_stage=_value(temporal_config, "first_stage", 1),
         kind=str(_value(temporal_config, "type")),
         input_dim=int(_value(temporal_config, "input_dim")),
         hidden_dim=int(_value(temporal_config, "hidden_dim", _value(temporal_config, "input_dim"))),

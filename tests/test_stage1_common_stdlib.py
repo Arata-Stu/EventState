@@ -90,6 +90,11 @@ class CommonTests(unittest.TestCase):
             for job in staged:
                 self.assertIn('model=four_stage_lstm', job['command'])
                 self.assertIn('experiment=h_distill_lstm', job['command'])
+            a.four_stage_lstm = False
+            for first in range(1, 5):
+                a.lstm_from_stage = first
+                for job in plan(a):
+                    self.assertIn(f"model.temporal.first_stage={first}", job["command"])
             self.assertFalse(a.output_root.exists())
             stats['sequences'] = ['wrong']
             (root/'m3ed_common.json').write_text(json.dumps(stats))

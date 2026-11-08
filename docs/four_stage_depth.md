@@ -22,3 +22,8 @@ Encoder＋4段LSTM（最終h蒸留）は各ブロック群の後で位置別LSTM
 
 このheadは4解像度に再配置した特徴を深い段から残差畳み込みで融合し、各画素の正のスカラーを返す。
 単位は訓練ターゲットに従う（depthはm、disparityはpx）。ScaleEventの学習済みdecoder重みは使用しない。
+
+配置比較では `--lstm-from-stage N` でSNからS4までを有効にする（N=1,2,3,4）。
+有効段はh、無効段はzを同じ順序でdecoderに渡す。事前学習時の損失は全条件で最終段のみ。
+全段なしは既存E0 Encoder（z蒸留）、S4のみは既存E1 Encoder＋LSTM（h蒸留）を再利用できる。
+各配置の出力・特徴cacheは別ディレクトリに保存する。

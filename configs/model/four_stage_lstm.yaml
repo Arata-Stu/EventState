@@ -4,3 +4,4 @@ defaults:
 
 temporal:
   type: four_stage_lstm
+  first_stage: 1

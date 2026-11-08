@@ -1,3 +1,4 @@
+import pytest
 import torch
 from torch import nn
 
@@ -22,10 +23,12 @@ class TinyViT(nn.Module):
         return frames, (2, 3)
 
 
-def test_four_stage_carry_fusion_and_feedback():
+@pytest.mark.parametrize("first_stage", [1, 2, 3, 4])
+def test_four_stage_carry_fusion_and_feedback(first_stage):
     torch.manual_seed(3)
     vit = TinyViT()
-    memory = FourStageLSTM(4, 4, 4)
+    memory = FourStageLSTM(4, 4, 4, first_stage)
+    assert len(memory.stages) == 5 - first_stage
     frames = torch.randn(3, 8, 4)  # two prefix tokens and six patches
     z, stages, _ = memory(vit, frames, 1, 3)
     state = None

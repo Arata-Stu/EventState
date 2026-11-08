@@ -7,6 +7,7 @@ from typing import Any
 from torch import Tensor, nn
 
 from .event_encoder import EventEncoder
+from .temporal.lstm import PatchwiseLSTM
 from .temporal.stages import FourStageLSTM
 from .temporal.identity import IdentityTemporalBackbone
 from .projectors import TeacherProjection
@@ -130,10 +131,12 @@ class EventStateModel(nn.Module):
         if isinstance(self.temporal_model, FourStageLSTM):
             _, stages, state = self.temporal_model(backbone, frames, batch, time, state)
             return stages, state
-        if not isinstance(self.temporal_model, IdentityTemporalBackbone) or state is not None:
-            raise ValueError("Four-level depth requires an encoder-only or four-stage LSTM checkpoint")
+        if not isinstance(self.temporal_model, (IdentityTemporalBackbone, PatchwiseLSTM)):
+            raise ValueError("Four-level depth requires an encoder-only or supported PatchwiseLSTM checkpoint")
         stages = backbone.get_intermediate_layers(frames, n=[2, 5, 8, 11])
-        return tuple(x.unflatten(0, (batch, time)) for x in stages), None
+        levels = [x.unflatten(0, (batch, time)) for x in stages]
+        levels[-1], state = self.temporal_model(levels[-1], state)
+        return tuple(levels), state
 
     def forward_sequence(
         self,

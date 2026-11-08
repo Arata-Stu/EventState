@@ -55,7 +55,8 @@ def plan(a):
         branch_batch = 4 if ds == 'dsec' else 2
         clip = 8 if ds == 'dsec' else 16
         specs = [(e, 1) for e in ('E0', 'E1', 'E2')] + [('E1', 3)]
-        four_stage = getattr(a, 'four_stage_lstm', False)
+        first_stage = getattr(a, 'lstm_from_stage', None)
+        four_stage = getattr(a, 'four_stage_lstm', False) or first_stage is not None
         if four_stage:
             specs = [('E1', world) for world in (1, 3)]
         for condition, world in specs:
@@ -65,6 +66,8 @@ def plan(a):
             steps = base_steps // world
             warmup = (9 if a.stage == 'smoke' else 999) // world
             variant = 'four_stage_lstm' if four_stage else condition
+            if first_stage and first_stage > 1:
+                variant = f'lstm_from_s{first_stage}'
             name = f'{ds}_{variant}_w{world}'
             model_kind = 'four_stage_lstm' if four_stage else ('no_memory' if condition == 'E0' else 'lstm')
             experiment = {'E0': 'gep_baseline', 'E1': 'h_distill_lstm', 'E2': 'h_distill_lstm_zloss'}[condition]
@@ -106,7 +109,10 @@ def plan(a):
                      'E2': 'Encoder＋LSTM（z+h蒸留）'}[condition]
             if four_stage:
                 label = "Encoder＋4段LSTM（最終h蒸留）"
-                cmd.append("experiment.name=four_stage_lstm_h_distill")
+                if first_stage is not None:
+                    cmd.append(f"model.temporal.first_stage={first_stage}")
+                    label = f"Encoder＋S{first_stage}以降LSTM（最終h蒸留）"
+                cmd.append(f"experiment.name={variant}_h_distill")
             jobs.append(dict(name=name, label=label, world=world, command=cmd, steps=steps,
                 effective_clips=2 * branch_batch * accumulation * world,
                 planned_frames=steps * 2 * branch_batch * accumulation * world * clip,
@@ -199,6 +205,7 @@ def main():
     p.add_argument('--gpus', default='0,1,2')
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--num-workers', type=int, default=2)
+    p.add_argument('--lstm-from-stage', type=int, choices=(1, 2, 3, 4), help='Insert LSTMs from this stage through S4')
     p.add_argument('--four-stage-lstm', action='store_true', help='Run final-h distillation with LSTMs after blocks 3/6/9/12')
     p.add_argument('--execute', action='store_true')
     p.add_argument('--skip-preflight', action='store_true', help='Only after same-code server preflight passes')
