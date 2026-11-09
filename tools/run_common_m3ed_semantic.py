@@ -2,6 +2,7 @@
 """Frozen common Stage 1 -> causal semantic features -> 3-train/2-val heads."""
 import argparse
 import json
+import math
 from pathlib import Path
 import shutil
 import subprocess
@@ -49,6 +50,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for k in ('checkpoint','prepared-root','target-root','cache','output'):
         p.add_argument('--'+k,type=Path,required=True)
+    p.add_argument('--statistics', type=Path, help='Original common Stage 1 train statistics JSON')
     p.add_argument('--extra-target-root',type=Path,help='Prefer available semantic targets here (e.g. additionally prepared Rittenhouse)')
     p.add_argument('--features',nargs='+',choices=['z','h','concat'],default=['z','h','concat'])
     p.add_argument('--device',default='cuda')
@@ -71,7 +73,17 @@ def main():
     common=load_common('m3ed')['splits']
     if list(split.train)!=common['train'] or list(split.validation)!=common['val']: raise ValueError('Split mismatch')
     keys=sorted(set(k for f in a.features for k in (('z','h') if f=='concat' else (f,))))
-    threshold=float(cfg['dataset']['normalization_provenance']['event_rate_p10_hz'])
+    stats = cfg['dataset']['normalization_provenance']
+    if a.statistics:
+        from event_state.dense.protocol import load_statistics_provenance
+        stats = load_statistics_provenance(a.statistics, cfg)
+        if stats.get('event_window_us') is not None:
+            raise ValueError('Expected RGB-interval train statistics')
+    if 'event_rate_p10_hz' not in stats:
+        raise ValueError('Pass --statistics with the original m3ed_common.json')
+    threshold = float(stats['event_rate_p10_hz'])
+    if not math.isfinite(threshold) or threshold < 0:
+        raise ValueError('Invalid train event-rate threshold')
     targets={}; paths={}; sizes=0
     identity=dict(low_rate_p10_hz=threshold,checkpoint_sha256=sha256_file(a.checkpoint),features=keys,split_sha256=sha256_file(MANIFEST),sources={})
     for seq in (*split.train,*split.validation):
