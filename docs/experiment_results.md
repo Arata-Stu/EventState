@@ -1,6 +1,14 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-11-07
+最終更新: 2026-11-09
+
+DSEC Semantic公式test 3系列、seed 0、E1 Encoder＋LSTM（h蒸留）、凍結h＋linear CE。開発6/2→全8系列で再学習。旧型DDP 59.49%、新型（RVT型）DDP 59.46%（各790,169,600画素）。新型−旧型は−0.03ポイント。出力 `outputs/stage2_dsec_semantic_e1_ddp_compare_20261109/{old_ddp,new_ddp}/test_metrics.json`。新型単GPU 60.48%との差は表示値から旧型−0.99、新型−1.02ポイント。
+
+DSEC E1 Encoder＋LSTM（h蒸留）DDPの実パス訂正（サーバー出力確認）：新型は `outputs/stage1_joined_ddp_full_new_20261106`（joined、R4/S4、蓄積1）、旧型は `outputs/stage1_rvt_ddp_full_20261105`（separate、R1/S1、蓄積4）。いずれも `dsec_E1_w3/checkpoints/step_00033333.pt` が存在。
+
+DSEC Semantic linear probe（seed 0、凍結単GPU Stage 1重み）：E0 Encoder（z蒸留）はz、E1 Encoder＋LSTM（h蒸留）とE2 Encoder＋LSTM（z+h蒸留）はhを使用。開発6/2→全8系列で再学習→公式test3系列の3条件すべて完了（ユーザーログ）。出力は `outputs/stage2_dsec_semantic_linear_20261109/{E0,E1,E2}/test_metrics.json`。公式test mIoUは順に59.73%、60.48%、60.12%。各条件790,169,600評価画素。丸め前の差はE1−E0が+0.76ポイント、E2−E1が−0.36ポイント。
+
+2026-11-09：ユーザー提示の親ログで単GPU Stage 1本番6件の完了を確認。DSEC共通train35系列／M3ED共通train3系列、各seed 0、RVT型Hybrid、99,999更新。両datasetで E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）が完了。最終重みは `outputs/stage1_joined_baseline_full_20261107/{dataset}_{条件ID}_w1/checkpoints/step_00099999.pt`。次はこれらの重みを固定したSemantic linear probe。
 
 2026-11-07 ユーザー報告で旧方式・RVT型のE1 DDP本番はともに完了。各方式ともseed 0、DSEC共通train 35系列・M3ED共通train 3系列。出力先は旧方式が `outputs/stage1_rvt_ddp_full_20261105`、RVT型が `outputs/stage1_joined_ddp_full_20261105`。各rootのjob名は `dsec_E1_w3` と `m3ed_E1_w3`。単GPU baselineの本番6条件は完了未確認。
 
