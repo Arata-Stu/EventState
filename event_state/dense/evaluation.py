@@ -28,19 +28,39 @@ def accumulate(meter, prediction, target, valid):
 
 
 class DenseEvaluator:
-    def __init__(self, task):
+    def __init__(self, task, *, frame_metrics=False):
         self.task = task
         self.groups = {name: RegressionSums(task) for name in
                        ("all", "low_activity_frames", "other_frames", "low_0_100ms",
                         "low_100_500ms", "low_500ms_plus")}
+        self.frame_groups = None
+        if frame_metrics:
+            if task != "depth":
+                raise ValueError("F3 frame metrics require metric depth")
+            from .depth_frame_metrics import FrameMeanSums
 
-    def update(self, prediction, target, valid, *, low_activity, low_duration_us):
+            self.frame_groups = {name: FrameMeanSums() for name in self.groups}
+
+    def update(self, prediction, target, valid, *, low_activity, low_duration_us,
+               frame_result=None):
         names = ["all", "low_activity_frames" if low_activity else "other_frames"]
         if low_activity:
             names.append("low_0_100ms" if low_duration_us < 100_000 else
                          "low_100_500ms" if low_duration_us < 500_000 else "low_500ms_plus")
         for name in names:
             accumulate(self.groups[name], prediction, target, valid)
+        if self.frame_groups is not None:
+            if frame_result is None:
+                from .depth_frame_metrics import compute_frame_metrics
+
+                frame_result = compute_frame_metrics(prediction, target, valid)
+            for name in names:
+                self.frame_groups[name].add(*frame_result)
 
     def compute(self):
         return {key: meter.compute() for key, meter in self.groups.items()}
+
+    def compute_frame_mean(self):
+        if self.frame_groups is None:
+            raise ValueError("Frame metrics were not enabled")
+        return {key: meter.compute() for key, meter in self.frame_groups.items()}

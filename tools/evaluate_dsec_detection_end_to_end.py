@@ -19,6 +19,12 @@ from event_state.detection import (
     load_dsec_detection_split,
 )
 from event_state.training import build_model
+from event_state.detection.activity_evaluation import (
+    activity_evaluator,
+    add_activity_arguments,
+    detector_checkpoint_identity,
+    write_activity_csv,
+)
 from train_dsec_detection_end_to_end import (
     DEFAULT_SPLIT,
     _freeze_disposable_projectors,
@@ -42,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--precision", choices=("fp32", "fp16"), default="fp16")
     parser.add_argument("--output", type=Path, default=None)
+    add_activity_arguments(parser)
     return parser.parse_args()
 
 
@@ -123,6 +130,17 @@ def main() -> None:
         event_std=event_std,
         continuous=True,
     )
+    evaluator, activity_states = activity_evaluator(
+        args,
+        expected_keys=((sample["sequence_name"], sample["timestamp"])
+                       for sample in dataset.samples if sample["target"] is not None),
+        sequences=split.sequences(args.role), event_cache_dir=args.event_cache_dir,
+    )
+    if activity_states is not None and (
+        _value(reference_config.dataset, "event_window_us") is not None
+        or float(_value(reference_config.dataset, "event_window_fraction", 1.0)) != 1.0
+    ):
+        raise ValueError("Activity percentiles currently require full RGB-interval inputs")
     loader = DataLoader(
         dataset,
         batch_size=1,
@@ -140,6 +158,7 @@ def main() -> None:
         device,
         feature=feature,
         use_amp=use_amp,
+        evaluator=evaluator,
     )
     result = {
         "role": args.role,
@@ -156,12 +175,18 @@ def main() -> None:
         "official_split_counts": {"train": 41, "val": 6, "test": 13},
         **metrics,
     }
-    encoded = json.dumps(result, indent=2, sort_keys=True) + "\n"
+    if activity_states is not None:
+        result["activity_evaluation"]["state_policy_by_sequence"] = activity_states
+        result["activity_evaluation"]["detector_checkpoint"] = detector_checkpoint_identity(checkpoint_path)
+    encoded = json.dumps(result, indent=2, sort_keys=True,
+                         **({"allow_nan": False} if activity_states is not None else {})) + "\n"
     print(encoded, end="", flush=True)
     if args.output is not None:
         output = args.output.expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(encoded, encoding="utf-8")
+        if activity_states is not None:
+            write_activity_csv(output, result)
 
 
 if __name__ == "__main__":

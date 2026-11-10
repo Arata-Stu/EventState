@@ -234,12 +234,16 @@ def evaluate(
     *,
     feature: str,
     use_amp: bool,
-) -> dict[str, float]:
+    evaluator: Any = None,
+) -> dict[str, Any]:
     student.eval()
     detector.eval()
-    evaluator = COCODetectionEvaluator()
+    if evaluator is None:
+        evaluator = COCODetectionEvaluator()
     recurrent_state = None
-    for batch in tqdm(loader, desc="DSEC-Det continuous validation", unit="frame"):
+    label = getattr(evaluator, "condition_label", "")
+    description = f"{label} | DSEC-Det continuous evaluation" if label else "DSEC-Det continuous validation"
+    for batch in tqdm(loader, desc=description, unit="frame"):
         if len(batch["sequence_names"]) != 1:
             raise ValueError("Continuous validation requires batch size 1")
         if bool(batch["is_sequence_start"][0]):

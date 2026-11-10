@@ -18,7 +18,16 @@ def main():
                    help="Evaluation JSON, or a new prediction directory with --export")
     p.add_argument("--export", action="store_true")
     p.add_argument("--device", default="cuda")
+    p.add_argument("--activity-manifest", type=Path,
+                   help="Per-dataset train-fitted event-rate quintile manifest")
+    p.add_argument("--condition-label", help="Condition ID and name for activity reports")
     a = p.parse_args()
+    if a.activity_manifest is not None and a.export:
+        raise ValueError("Activity metrics cannot be computed for hidden-test export")
+    if a.activity_manifest is not None and not a.condition_label:
+        raise ValueError("--activity-manifest requires --condition-label")
+    if a.condition_label is not None and a.activity_manifest is None:
+        raise ValueError("--condition-label requires --activity-manifest")
     if a.output.exists():
         raise FileExistsError("Existing evaluation/predictions are preserved")
     import torch
@@ -53,9 +62,24 @@ def main():
                   metric_aggregation="valid-pixel pooled; lower errors are better",
                   units="meters" if config["task"] == "depth" else "native disparity pixels")
     if not a.export:
-        report.update(evaluate(model, dataset, torch.device(a.device)))
+        activity_options = {}
+        if a.activity_manifest is not None:
+            from event_state.activity_quantiles import ActivityIndex
+
+            activity_options = dict(activity_index=ActivityIndex.load(a.activity_manifest),
+                                    condition_label=a.condition_label)
+            print(f'{a.condition_label} | {dataset.meta["dataset"]} {config["task"]} activity quintiles',
+                  flush=True)
+        # Evaluation adds an equal-frame F3-formula view. Training still selects
+        # the original pooled validation MAE and existing score keys are retained.
+        report.update(evaluate(model, dataset, torch.device(a.device),
+                               include_frame_metrics=config["task"] == "depth", **activity_options))
         a.output.parent.mkdir(parents=True, exist_ok=True)
         a.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+        if a.activity_manifest is not None:
+            from event_state.activity_reporting import write_activity_csv
+
+            write_activity_csv(a.output, report["activity_evaluation"])
         print(json.dumps(report["metrics"], indent=2))
         return
     if dataset.meta["dataset"] != "dsec" or config["task"] != "disparity":

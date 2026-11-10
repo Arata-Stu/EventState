@@ -306,6 +306,13 @@ DSEC視差はL1で学習し、native pixel単位MAE/RMSEと1PE/2PE（%）を出�
 全体、低活動frame、その他、低活動継続0–100ms/100–500ms/500ms以上を集計する。
 空群はnull。有効画素数とframe数も保存する。
 
+2026-11-10追加：Depthの再評価CLIは、上記既存欄に加えF³公式式によるframe等重み平均を
+`metrics_frame_mean_f3`へ保存する。活動5分位も同じ追加欄を持つ。
+RMSEは各frameのRMSEの平均、SqRelは公式通り分母GT²。元のmask/評価対象を維持し、
+学習時のvalidationとbest選択は従来のpooled MAEのまま。追加欄はfloat64なので公式float32とbit一致ではない。
+F³との計算/集計を揃えた比較にこの追加欄を使用するが、input/GT座標・populationまで一致したとは扱わない。
+出力の読み方・公式sourceは[semantic_depth_activity.md](semantic_depth_activity.md)を参照。
+
 低活動は今回、既定で**trainだけから求めたイベント発生率の下位10%閾値以下**。
 同じwindowでcompute_dense_normalization.pyが算出したevent_rate_p10_hzをval/testにも固定適用する。
 各frameのevent_rate_hz（実際の入力表現に残るイベント数/窓長）を保存する。

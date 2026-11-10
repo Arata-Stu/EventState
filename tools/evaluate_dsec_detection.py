@@ -19,6 +19,12 @@ from event_state.detection import (
     detection_collate,
     load_dsec_detection_split,
 )
+from event_state.detection.activity_evaluation import (
+    activity_evaluator,
+    add_activity_arguments,
+    detector_checkpoint_identity,
+    write_activity_csv,
+)
 
 
 DEFAULT_SPLIT = Path(__file__).parent / "manifests" / "dsec_det_official_split.yaml"
@@ -44,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--precision", choices=("fp32", "fp16"), default="fp16")
     parser.add_argument("--output", type=Path, default=None)
+    add_activity_arguments(parser)
     return parser.parse_args()
 
 
@@ -68,6 +75,10 @@ def main() -> None:
         sequences=split.sequences(args.role),
         feature=args.feature,
         protocol=protocol,
+    )
+    evaluator, activity_states = activity_evaluator(
+        args, expected_keys=((sample[0], sample[1]) for sample in dataset.samples),
+        sequences=split.sequences(args.role), feature_cache_dir=args.feature_cache_dir,
     )
     loader = DataLoader(
         dataset,
@@ -94,10 +105,12 @@ def main() -> None:
     ).to(device)
     model.load_state_dict(checkpoint["model"])
     model.eval()
-    evaluator = COCODetectionEvaluator()
+    if evaluator is None:
+        evaluator = COCODetectionEvaluator()
     use_amp = args.precision == "fp16" and device.type == "cuda"
     with torch.inference_mode():
-        for batch in tqdm(loader, desc=f"DSEC-Det {args.role}", unit="batch"):
+        label = f"{args.condition_label} | " if args.activity_manifest else ""
+        for batch in tqdm(loader, desc=f"{label}DSEC-Det {args.role}", unit="batch"):
             features = batch["features"].to(device, non_blocking=True)
             with torch.autocast(
                 device_type=device.type, dtype=torch.float16, enabled=use_amp
@@ -119,11 +132,17 @@ def main() -> None:
         ),
         **evaluator.compute(),
     }
-    encoded = json.dumps(metrics, indent=2, sort_keys=True) + "\n"
+    if activity_states is not None:
+        metrics["activity_evaluation"]["state_policy_by_sequence"] = activity_states
+        metrics["activity_evaluation"]["detector_checkpoint"] = detector_checkpoint_identity(args.checkpoint)
+    encoded = json.dumps(metrics, indent=2, sort_keys=True,
+                         **({"allow_nan": False} if activity_states is not None else {})) + "\n"
     print(encoded, end="")
     if args.output is not None:
         args.output.expanduser().parent.mkdir(parents=True, exist_ok=True)
         args.output.expanduser().write_text(encoded, encoding="utf-8")
+        if activity_states is not None:
+            write_activity_csv(args.output.expanduser(), metrics)
 
 
 if __name__ == "__main__":

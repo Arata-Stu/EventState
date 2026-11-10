@@ -2,6 +2,14 @@
 
 最終更新: 2026-11-10
 
+2026-11-10ユーザー訂正：現在はSemantic segmentation・Depthが最優先、次に可能ならFlow。
+Detectionは過去に多数実験したが、現在の優先度は低い。活動5分位をSemantic/Depthにも接続する実装を依頼。
+
+2026-11-10ユーザー報告：現在Depthを学習中。完了・新スコアは未受領。
+比較順序はDepth → Patchwise LSTM対ConvLSTM → LSTM配置比較。
+教授の指摘を受け、ユーザーはイベント活動・速度別の性能差を全評価で調べる方針を明示。
+実行条件の受領範囲と共通評価方針は§66に記録。
+
 M3ED Semantic linear probe（seed 0、凍結backbone、linear CE、50 epoch、3 train / 2 val）。公開valはcar_urban_day_rittenhouseとcar_urban_day_ucity_small_loop、InternImage由来11クラス疑似ラベル。各条件5,079,348,727有効画素。ユーザー受領のval mIoUは単GPUのE0 Encoder（z蒸留）/z 36.72%、E1 Encoder＋LSTM（h蒸留）/h 38.70%、E2 Encoder＋LSTM（z+h蒸留）/h 37.29%。E1 Encoder＋LSTM（h蒸留）/hの旧型DDPは38.64%、新型RVT DDPは38.22%。結果は `outputs/stage2_m3ed_semantic_linear_20261109/{E0/z,E1/h,E2/h,E1_old_ddp/h,E1_new_ddp/h}/continuous_groups.json` のall。
 
 DSEC Semantic公式test 3系列、seed 0、E1 Encoder＋LSTM（h蒸留）、凍結h＋linear CE。開発6/2→全8系列で再学習。旧型DDP 59.49%、新型（RVT型）DDP 59.46%（各790,169,600画素）。新型−旧型は−0.03ポイント。出力 `outputs/stage2_dsec_semantic_e1_ddp_compare_20261109/{old_ddp,new_ddp}/test_metrics.json`。新型単GPU 60.48%との差は表示値から旧型−0.99、新型−1.02ポイント。
@@ -1779,3 +1787,171 @@ seed0/F3公開valはrunner既定であり保存configは未受領。concatは提
 | low_500ms_plus | 6,394 | 30,137,686 | 4.5975 | 5.8773 | 4.4954 | +1.2798 | -0.1021 |
 
 集計完了：12条件。比較対象の整合性検査も通過。
+
+## 66. Depth学習中の報告とイベント量・速度別評価案（2026-11-10受領）
+
+- ユーザーから「Depth学習中」と報告。学習完了ログ・精度結果は今回未受領。
+  文脈は共通Stage 1重みによるDepth比較だが、現在のdataset/条件/step、実行コマンド、
+  seed、評価split、実出力パスは提示されていないため、実稼働の詳細は確定しない。
+- 参考となる実装は `tools/run_common_depth.py`。既定計画はDSEC/M3ED各5条件：
+  E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）の単GPU、
+  およびE1 Encoder＋LSTM（h蒸留）の旧型/新型DDP。
+  Stage 1はseed 0、DepthはF3公開valで評価する経路。既定出力は
+  `outputs/stage2_common_depth_vkitti_20261110`。これらの既定値を今回の実行設定として断定しない。
+- 比較順序をユーザーが再確認：Depth比較 → 最終段のPatchwise LSTMと1層3×3 ConvLSTMの比較
+  → Patchwise LSTMの配置比較。後続の本学習を新たに起動した報告ではない。
+- 教授から、イベント量の多寡、または車両速度で評価を分ける案が出たとユーザー報告。
+  これは評価案であり、層別スコアや採用済みの閾値はまだない。
+  既存Depth evaluatorは低活動/その他と低活動継続時間（100ms未満、100–500ms、500ms以上）を集計し、
+  cacheにはevent_count、event_rate_hz、activity_fractionを保存する。
+- 検討案：イベント量は入力窓の長さを考慮したイベント率で区分し、速度は自車の移動速度として別軸で扱う。
+  イベント率別と速度別の両方を全評価で調べ、十分なsupportがあれば両者の交差集計も行う方針。
+  区分はtrain由来統計または事前に決めた物理閾値で固定し、予測精度に合わせて調整しない。
+  各区分のframe数・有効GT画素数・系列別supportと、条件間で共通の評価時刻集合を確認する。
+  推論は元の系列順で状態を保持し、評価時の集計だけを区分する。
+  速度の取得・時刻整合・欠損の扱い、新しい段階別/速度別集計の実装・実行は未確認。
+- 実装確認：M3EDは `tools/prepare_m3ed_downstream.py` に、公式poseから
+  `linear_velocity_mps` / `angular_velocity_radps` を `targets.h5` へ保存する経路がある。
+  現在のサーバーtargetsに保存済みかは未確認。公式poseの仕様は https://m3ed.io/data_overview/folderst/ 。
+  現行 `continuous.json` はframe別の誤差統計を保存しないため、新しい区分は既存JSONだけでは再集計できない。
+  学習済み重みで再評価する追加が必要で、学習完了後に一時特徴cacheが消えていれば特徴抽出も必要になる。
+- イベント量、車両速度、信号待ち、対象物体の局所的な非活動は異なる観測量。
+  これらの層別評価だけで、特定物体の記憶保持や速度の因果効果を証明したとは扱わない。
+
+### 同日追記：活動・速度別分析の対象を全評価に明確化
+
+- ユーザーが「全ての評価において、イベント活動や速度に関する差別化が知りたい」と明示。
+  先のDepth中心の説明を修正し、Semantic・Depth・実施するDetection/Flowと全モデル比較の共通評価方針とする。
+  E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、旧新DDP、
+  後続のPatchwise LSTM/ConvLSTM・配置比較にも同じ区分規則を使う。
+- 各taskの全体指標と活動別・速度別指標、モデル間差分、件数・有効GT量・速度coverageを併記する。
+  task内の条件間で同一時刻・GTを比較し、task間で異なるsplitやGT時刻を無理に共通化しない。
+  速度が得られない場合や非公開GTで区分採点できない場合は、その制約を明記する。
+- 詳細要件は `docs/downstream_protocol_summary.md` に追記。新しい層別スコア・実装完了の報告はない。
+
+## 67. DSEC Detectionの活動分位別mAPを実装（2026-11-10）
+
+- ユーザーがイベント活動%の意味を、イベント量の分位（下位20%・20〜40%…の5群）と明示し、
+  DSECのmAPを区分評価できるよう実装を依頼。画像内の活動画素率ではない。
+- 共通train35のprepared GEP RGB全frameのevents/sから20/40/60/80%境界を固定するmanifest生成と、
+  Frozen/End-to-end Detection評価への接続を実装。既存head・状態継承・評価splitを維持する追加採点で、再学習ではない。
+  同値境界は統合し、群内の全予測/GTからmAP/AP50/AP75・クラス別APを再計算。supportと入力来歴もJSON/CSVへ保存。
+- 実行seed・対象head/checkpoint・role（val/test）・実出力は今後のサーバー実行で記録する。
+  手順の例は `outputs/dsec_activity_quantiles_20261110.json`、`outputs/dsec_activity_map/E1_val.json`。
+  これらは予定パスであり成果物の存在を示さない。手順は `docs/dsec_detection_activity.md`。
+- Macのstdlib24件・構文・差分確認通過。PyTorch/COCOテスト3件はサーバー用として追加し、実データ採点は未実施。
+  追加のmAP結果なし。現在のDepth学習中という状況と比較順序は維持する。
+
+## 68. Semantic・Depthの共通活動5分位評価とtask優先順位（2026-11-10）
+
+- ユーザーが現在の優先順位を明示：Semantic segmentation・Depthを最優先とし、その次に可能ならFlow。
+  Detectionは以前に多数実験したが現在は低優先度。構造比較のDepth → Patchwise LSTM/ConvLSTM → 配置比較は維持。
+- DSEC train35とM3ED train3からそれぞれ固定した活動5分位を、同datasetのSemantic/Depthで共有する実装を追加。
+  DSECはrectified480×640、M3EDはDAGR/rectify後360×640全体のevent_count/実RGB間隔を使う。
+  同値境界は統合し、val/test・予測結果から境界を選び直さない。
+- Semanticは群内の混同行列からmIoU/クラスIoUを再計算し、Depthは有効GT画素の誤差和から各指標を算出する。
+  全体と既存の低活動・継続時間別指標を保持し、群別support・入力来歴をJSON/CSVへ保存する。
+  E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、旧新DDPと今後の構造比較で同じ区分を使う。
+- 既存Semantic headのstandalone再評価と、完了済みDepth headのvalだけを再抽出・再推論する`--activity-only`を追加。
+  後者は既存headの完了markerを確認し、新しい学習や公式提出を起動しない。
+  対応手順は `docs/semantic_depth_activity.md`。実行seed・head・split・実出力はサーバー実行後に個別記録する。
+- 予定出力例：`outputs/semantic_activity/E1_dsec_test.json`、`E1_m3ed_val.json`、
+  Depth runの各head配下`activity_continuous.json`および`activity_summary.json`。実成果物の存在は未確認。
+- Macのstdlib56件・構文・CLI・差分確認通過。Semantic/Depth用の依存テスト5件を追加したがサーバー未実行。
+  新しい精度値やDepth学習完了の報告はまだない。
+- 同日、Depth完了後の一括実行用に`tools/run_semantic_depth_activity.py`を追加。
+  既存Semanticの学習時configからcache/ラベルrootを復元し、dataset別manifest生成から両task・各5条件の追加評価を直列実行する。
+  予定集約先は`outputs/semantic_depth_activity_20261110/summary.json`。実際のDepth run rootは起動時に指定する。
+  学習は起動せず、完了markerとlock、必要ファイルの存在を事前確認する。成功済み評価は入力・出力hash一致時に再利用。
+  一括入口のstdlib7件を含め関連63件が通過。実データ・GPU採点は未実施、seed/split/head・新スコアの受領ではない。
+
+## 69. DepthのF³式frame平均を追加（2026-11-10）
+
+- ユーザーがresize/crop差は認識した上で、Depthの指標計算・集計がF³と異なる点を懸念。
+  固定版F³の指標関数と評価loopを一次情報から照合し、再評価CLIへ追加統計を実装した。
+  対象は既存Semantic/Depth一括実行のDepth部分。新しい学習結果を受領したものではない。
+- `metrics`は有効画素poolの既存値を保持。`metrics_frame_mean_f3`にはframeごとの公式式指標を等重み平均して保存する。
+  全体・低活動/継続時間別・活動5分位の全群を対象とし、CSVの追加列は`f3_frame_mean_`で識別する。
+  RMSEは各frameの平方根を計算してから平均。F³ SqRelの分母はGT²で、既存欄のGTと異なる。
+  公式9指標と追加MAE、supportを保存。既存GT mask/評価集合を維持し、有効GTゼロのframeを平均分母から除外する。
+- source: `grasp-lyrl/fast-feature-fields` revision `833e2c65233f9787449ce0675ae41e3f6e9c193a`、
+  `src/f3/tasks/depth/utils/utils.py::eval_depth`、SHA256 `7e66611dd25c61c85b56f5a00786ac9b9fd208def2c95c3e5257e190de5b54f3`。
+  `src/f3/tasks/depth/evaluate.py`のframe別計算・frame数による平均も確認した。
+  内部float64で数式を再現するため、公式float32とbit単位一致は主張しない。
+- 追加統計はF³の10点以上/中心20ms内20万イベント超filterを加えず、入力/cropも変更しない。
+  F³公表値との完全同条件評価ではない。学習lossやbest選択は既存pooled val MAEを維持し、再学習不要。
+- 既存活動reportが旧集計だけなら、元JSON/CSVを保持して同headの`activity_continuous_frame_mean.json`/CSVへ再評価。
+  一括`summary.json`はDepthの実reportパスを参照する。予定run root・seed・splitは§66/68と同じで、実サーバー設定は未受領。
+- Mac関連stdlib73件・構文/差分確認通過。公式式との数値比較テストとTorch接続テストはサーバー用として追加/拡張し、未実行。
+  新しい精度値・Depth学習完了の報告はない。
+
+## 70. 共通DepthのDSEC E0が50 epochへ到達（2026-11-11受領）
+
+- ユーザーから「終わりそう」とログを受領。原文は
+  Macの`docs/evaluation_records/20261111_common_depth_dsec_E0_progress.log`へ保存した（原文logはGit非管理）。
+- 実行場所は`/home/iASL/Arata_repo/EventState`、`source env/bin/activate`後、
+  `git pull --ff-only && python -u tools/run_common_depth.py`。追加引数なし。
+  pullは`54f6111`→`3465ccd`のfast-forward。該当commitのrunnerをローカルGit objectで照合した。
+- 対象はDSECのE0 Encoder（z蒸留）、凍結common Stage 1＋VKITTI初期化4段DPT head。
+  出力rootは`outputs/stage2_common_depth_vkitti_20261110`、headは`heads/dsec_E0/stages`。
+  Depth head splitはF³公開37train/4val、Stage 1のtrain/統計は35系列。
+  head seed=0・50epochは引数なし起動のコード既定。保存configそのものは今回未受領。
+- DSEC train37系列・val4系列のfeatures completeが表示され、epoch1〜50の全表示を受領。
+  training log-L1 lossはepoch1の0.118059からepoch50の0.048680へ低下。
+  この値はMAE/RMSEやvalスコアではなく、epochごとの学習loss。
+- `epoch 50/50`は最終epochのval評価・last/best checkpoint保存後の表示。
+  その次の`_SUCCESS`書込、standalone公開val採点`continuous.json`、disparity val、
+  他条件・最終`Completed: .../summary.json`はこの貼付ログには含まれない。
+- 同起動ログでM3ED val target indexの26,611 timestamp・public labels=Trueと、
+  公式DSEC test12系列/552枚のpreflight表示を確認した。M3ED学習やtest予測ZIP完了を意味しない。
+- 既定runnerはDSEC5条件→DSEC選択条件のtest ZIP→M3ED5条件の直列処理。
+  他9条件の完了状況は未受領。既存reportはskipされ得るため、残時間・全体進捗率は断定しない。
+  活動5分位評価や新しいDepth精度値は今回未受領。
+
+## 71. 共通Depth DSEC E0の公開valスコア受領（2026-11-11）
+
+- §70と同じ起動ログの続き。ユーザーから「これってまだ続く？」と追加ログを受領。
+  原文はMacの`docs/evaluation_records/20261111_common_depth_dsec_E0_metrics.log`（原文logはGit非管理）、
+  採点JSON全量は同stemの`.json`へ保存した。frames/pixelsの内訳とpooled MAEの整合を確認。
+- 条件はE0 Encoder（z蒸留）、DSEC、凍結common Stage 1から4段readout、VKITTI初期化DPT head。
+  seed0は引数なし起動のコード既定、50epoch到達。採点対象はbest.ptだがbest epochは今回未受領。
+  Stage 2 split=F³公開37train/4val、評価は公開val4、0.1<GT≤80m、全有効画素pool。
+  出力は`/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/dsec_E0/stages/continuous.json`。
+- 以下は受領JSONの丸め値。旧低活動/継続時間別であり、活動5分位ではない。
+
+| 群 | frame数 | 有効GT画素数 | MAE(m)↓ | RMSE(m)↓ |
+|---|---:|---:|---:|---:|
+| 全体 | 2,975 | 158,944,430 | 2.546841 | 4.210218 |
+| low_activity_frames | 197 | 12,335,065 | 2.189689 | 3.766512 |
+| other_frames | 2,778 | 146,609,365 | 2.576890 | 4.245435 |
+| low_0_100ms | 16 | 1,026,757 | 2.315356 | 3.824801 |
+| low_100_500ms | 76 | 5,211,397 | 2.354620 | 3.956648 |
+| low_500ms_plus | 105 | 6,096,911 | 2.027550 | 3.585656 |
+
+- 全体の他指標：AbsRel=0.10963351243118039、通常SqRel=0.6480476521718792、
+  RMSElog=0.16127174136847883、delta1=0.8704824698795673、
+  delta2=0.9778200595012987、delta3=0.9951515318907369。
+- 末尾はDINO hub cache読込で、エラー・次条件名・全体Completed表示はない。
+  pinned commit3465ccdの呼出し順では、E0公開val採点後に`evaluate_dsec_disparity_window.py`を起動する。
+  この視差val再推論へ進んだ表示と推定できる。同scriptは4系列終了まで途中printがなく、
+  全RGB間隔を最終GT時刻まで再推論してから視差MAE(px)のJSONを出す。プロセス生存は直接確認していない。
+- DSEC残4条件・test552枚ZIP・M3ED5条件・全体完了は未受領。既存reportがあればskipされる。
+  この単一条件の結果からモデル間優劣や残時間は結論しない。活動5分位/追加frame平均指標も今回未受領。
+
+## 72. Common Depthの3GPU並列実行へ対応（2026-11-11）
+
+- ユーザーが3GPUサーバーでの全GPU利用を希望。`tools/run_common_depth.py --gpus 0,1,2`を追加した。
+  独立した条件を各GPUに1本ずつ、最大3本実行する。Depth headのbatch/loss/seed/epoch/split/best選択は維持する。
+  対象はDSEC/M3EDのE0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、
+  E1 Encoder＋LSTM（h蒸留）・旧型DDP／新型DDPの計10条件。DDP表記はStage 1由来で、Depth headは各単GPU。
+- 予定出力rootは既存の`outputs/stage2_common_depth_vkitti_20261110`、head seedは既定0。
+  DSECのF³公開37train/4val、M3EDの公開車載昼間3train/2val、DSEC val選択後の公式test ZIP生成を維持する。
+  並列経路ではDSEC/M3EDを同時に進め得る。`--gpus`なしは既存のDSEC→M3ED直列順を維持する。
+- 完了済みheadと正常な評価JSONを再利用。不足した評価だけ行う。学習途中のheadは保全してepoch1から再実行する。
+  通常評価JSONの中断・破損は別名に保全して再評価し、入力来歴の不一致は停止する。
+  scratch予約を合算し、容量不足時はGPUを待機させる。親がrun lock・最終summary・提出ZIPを管理する。
+- 切替手順は`docs/common_depth_parallel.md`。旧runを元ターミナルで停止し、子処理の終了を確認した後、
+  pull→`--gpus 0,1,2 --preflight`→同run rootで本実行する。preflightは無推論・無出力の計画確認。
+- Mac関連stdlib91件（並列18件を含む）・構文34ファイル・CLI/差分確認通過。
+  模擬workerで最大3同時・GPU環境分離・scratch予約/待機・停止時の子孫終了を検証した。
+- サーバーでの切替・3GPU使用・所要時間・新しい精度値は未受領。§70/71の受領済み進捗だけを実行証拠として扱う。

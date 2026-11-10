@@ -11,11 +11,25 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from event_state.dense.protocol import sha256_file
 from event_state.dense.common_protocol import load_common
+from event_state.activity_reporting import (
+    add_activity_arguments, load_activity_options, validate_activity_source, write_activity_csv,
+)
 
 MANIFEST=ROOT/'tools/manifests/m3ed_semantic_common_v1.yaml'
 
 
-def score_groups(head_dir,cache,target_root,split,feature,device):
+def score_groups(head_dir,cache,target_root,split,feature,device,*,activity_manifest=None,
+                 condition_label=None,prepared_root=None):
+    if activity_manifest is not None:
+        from tools.evaluate_m3ed_semantic import evaluate_m3ed_semantic
+        report=evaluate_m3ed_semantic(checkpoint=head_dir/'best.pt',feature_cache_dir=cache,
+            target_cache_dir=target_root,split_manifest=MANIFEST,feature=feature,device=device,
+            activity_manifest=activity_manifest,condition_label=condition_label,prepared_root=prepared_root)
+        (head_dir/'continuous_groups.json').write_text(json.dumps(report['continuous_groups'],indent=2,allow_nan=False))
+        output=head_dir/'activity_groups.json'
+        output.write_text(json.dumps(report,indent=2,ensure_ascii=False,allow_nan=False))
+        write_activity_csv(output,report['activity_evaluation'])
+        return report
     import torch
     from torch.utils.data import DataLoader
     from event_state.segmentation import (EventStateSegmentationHead, M3EDSemanticFeatureDataset,
@@ -55,7 +69,9 @@ def main():
     p.add_argument('--features',nargs='+',choices=['z','h','concat'],default=['z','h','concat'])
     p.add_argument('--device',default='cuda')
     p.add_argument('--preflight',action='store_true')
+    add_activity_arguments(p)
     a=p.parse_args()
+    activity_index=load_activity_options(a.activity_manifest,a.condition_label,dataset='m3ed')
     import h5py
     from event_state.dense.temporal import LowActivityClock
     import hdf5plugin
@@ -105,6 +121,10 @@ def main():
         targets[seq]={int(i):int(timestamps[i]) for i in valid}
         sizes+=len(valid)
         identity['sources'][seq]=[sha256_file(raw),sha256_file(path)]
+    if activity_index is not None:
+        for seq in split.validation:
+            validate_activity_source(activity_index,seq,json.loads((a.prepared_root/seq/'metadata.json').read_text()))
+            for timestamp in targets[seq].values(): activity_index.lookup(seq,timestamp)
     estimate=sizes*(len(keys)*384*22*40*2+4096)
     print(f'{sizes} labeled samples; approx {estimate/2**30:.1f} GiB feature storage',flush=True)
     if a.preflight: return
@@ -132,7 +152,8 @@ def main():
             if seen!=list(expected): raise ValueError(f'{seq}: incomplete labels')
             (dest/'low_duration_us.json').write_text(json.dumps(durations))
             (dest/'metadata.json').write_text(json.dumps(dict(task='m3ed_semantic',features=keys,label_size=[352,640],patch_size=16,
-                sequence_name=seq,checkpoint_sha256=identity['checkpoint_sha256'],state_policy='continuous',cached_frame_indices=seen)))
+                sequence_name=seq,checkpoint_sha256=identity['checkpoint_sha256'],state_policy='continuous',cached_frame_indices=seen,
+                source_event_cache_metadata=json.loads((a.prepared_root/seq/'metadata.json').read_text()))))
         del net
         (a.cache/'identity.json').write_text(json.dumps(identity))
         (a.cache/'_SUCCESS').touch()
@@ -144,7 +165,8 @@ def main():
         subprocess.run([sys.executable,str(ROOT/'tools/train_m3ed_semantic.py'),'--split-manifest',str(MANIFEST),
             '--feature-cache-dir',str(a.cache),'--target-cache-dir',str(view),'--feature',feature,
             '--output-dir',str(a.output/feature),'--device',a.device],check=True)
-        score_groups(a.output/feature,a.cache,view,split,feature,a.device)
+        score_groups(a.output/feature,a.cache,view,split,feature,a.device,
+            activity_manifest=a.activity_manifest,condition_label=a.condition_label,prepared_root=a.prepared_root)
     (a.output/'_SUCCESS').touch()
 
 
