@@ -24,6 +24,7 @@ def main():
     p.add_argument("--minimum", type=float)
     p.add_argument("--maximum", type=float)
     p.add_argument("--device", default="cuda")
+    p.add_argument("--dav2-weights", type=Path, help="Initialize the metric DPT head from the VKITTI Small checkpoint")
     p.add_argument("--resume", action="store_true")
     a = p.parse_args()
     if a.epochs <= 0 or a.batch_size <= 0 or a.width <= 0 or a.learning_rate <= 0:
@@ -54,7 +55,15 @@ def main():
             raise ValueError("Only published validation with continuous state may select checkpoints")
     torch.manual_seed(a.seed)
     device = torch.device(a.device)
-    model = build_dense_head(a.feature, train[0]["feature"].shape[0], a.width).to(device)
+    decoder = "four_level_dpt" if a.feature == "stages" else "nonrecurrent_two_conv_probe"
+    if a.dav2_weights:
+        if task != "depth" or a.feature != "stages":
+            raise ValueError("VKITTI DPT produces metric depth from four stages")
+        decoder = "dav2_vkitti_small"
+    model = build_dense_head(a.feature, train[0]["feature"].shape[0], a.width, decoder)
+    if a.dav2_weights:
+        model.initialize_vkitti(a.dav2_weights)
+    model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=a.learning_rate)
     generator = torch.Generator().manual_seed(a.seed)
     loader = DataLoader(train, batch_size=a.batch_size, shuffle=True, generator=generator)
@@ -69,8 +78,10 @@ def main():
                     low_activity_threshold=train.meta["low_activity_threshold"],
                     low_activity_metric=train.meta["low_activity_metric"],
                     geometry=train.meta["geometry"], upstream_rgb_data="unknown",
-                    in_channels=train[0]["feature"].shape[0], decoder="four_level_dpt" if a.feature == "stages" else "nonrecurrent_two_conv_probe",
+                    in_channels=train[0]["feature"].shape[0], decoder=decoder,
                     scale_alignment="none", loss="log_l1" if task == "depth" else "l1")
+    if a.dav2_weights:
+        settings["decoder_initialization_sha256"] = sha256_file(a.dav2_weights)
     best = float("inf")
     start = 0
     if a.resume:

@@ -45,6 +45,11 @@ class FourLevelDepthHead(nn.Module):
         return F.softplus(logits[:, 0]) + 1e-6
 
 
-def build_dense_head(feature, in_channels, width):
+def build_dense_head(feature, in_channels, width, decoder=None):
+    if decoder == "dav2_vkitti_small":
+        from .dav2 import MetricDPTSmall
+        if feature != "stages" or in_channels != 1536:
+            raise ValueError("DAv2 requires four ViT-S feature maps")
+        return MetricDPTSmall()
     cls = FourLevelDepthHead if feature == "stages" else DenseRegressionHead
     return cls(in_channels, width)

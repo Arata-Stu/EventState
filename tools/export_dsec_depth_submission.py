@@ -58,6 +58,9 @@ def main():
     p.add_argument('--device', default='cuda')
     p.add_argument('--teacher-weights', type=Path)
     p.add_argument('--preflight', action='store_true')
+    p.add_argument('--name', default='dsec_alpha1')
+    p.add_argument('--feature', default='concat')
+    p.add_argument('--backbone', type=Path)
     a = p.parse_args()
     import numpy as np
     import yaml
@@ -90,7 +93,7 @@ def main():
     from PIL import Image
     from event_state.data.event_representation import GEPEventFrame
     from event_state.dense.benchmark_inference import DepthPredictor
-    model = DepthPredictor(a.run, 'dsec_alpha1', 'concat', a.device, a.teacher_weights)
+    model = DepthPredictor(a.run, a.name, a.feature, a.device, a.teacher_weights, backbone=a.backbone)
     cfg = model.cfg.dataset
     if cfg.get('event_window_us') is not None or cfg.get('event_window_fraction',1) != 1 or not cfg.rectify_events:
         raise ValueError('Expected original rectified RGB-interval GEP checkpoint')
@@ -116,7 +119,7 @@ def main():
             if content[16:26] != bytes.fromhex('00000280000001e01000'):
                 raise ValueError(f'Wrong PNG encoding or dimensions: {name}')
     dest = a.output/'submission.zip'
-    (a.output/'manifest.json').write_text(json.dumps(dict(model=model.identity, selected='dsec_alpha1/concat, val MAE',
+    (a.output/'manifest.json').write_text(json.dumps(dict(model=model.identity, selected=f'{a.name}/{a.feature}, public val',
         window_ms=a.window_ms, window_mode='rgb_interval' if a.window_ms is None else 'fixed_trailing',
         pretraining_audit=model.pretraining_audit, training_window='rgb_interval',
         inputs='left events only; RGB timestamps; continuous state', sequences=identities, png_saturated_pixels=clipped,

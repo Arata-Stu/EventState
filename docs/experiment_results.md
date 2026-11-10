@@ -1,6 +1,8 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-11-09
+最終更新: 2026-11-10
+
+M3ED Semantic linear probe（seed 0、凍結backbone、linear CE、50 epoch、3 train / 2 val）。公開valはcar_urban_day_rittenhouseとcar_urban_day_ucity_small_loop、InternImage由来11クラス疑似ラベル。各条件5,079,348,727有効画素。ユーザー受領のval mIoUは単GPUのE0 Encoder（z蒸留）/z 36.72%、E1 Encoder＋LSTM（h蒸留）/h 38.70%、E2 Encoder＋LSTM（z+h蒸留）/h 37.29%。E1 Encoder＋LSTM（h蒸留）/hの旧型DDPは38.64%、新型RVT DDPは38.22%。結果は `outputs/stage2_m3ed_semantic_linear_20261109/{E0/z,E1/h,E2/h,E1_old_ddp/h,E1_new_ddp/h}/continuous_groups.json` のall。
 
 DSEC Semantic公式test 3系列、seed 0、E1 Encoder＋LSTM（h蒸留）、凍結h＋linear CE。開発6/2→全8系列で再学習。旧型DDP 59.49%、新型（RVT型）DDP 59.46%（各790,169,600画素）。新型−旧型は−0.03ポイント。出力 `outputs/stage2_dsec_semantic_e1_ddp_compare_20261109/{old_ddp,new_ddp}/test_metrics.json`。新型単GPU 60.48%との差は表示値から旧型−0.99、新型−1.02ポイント。
 

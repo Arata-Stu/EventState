@@ -38,7 +38,7 @@ def main():
                           ("normalization_audit", config["normalization_audit"])):
         if dataset.meta[key] != expected:
             raise ValueError(f"Head/evaluation feature provenance mismatch: {key}")
-    model = build_dense_head(config["feature"], config["in_channels"], config["width"]).to(a.device)
+    model = build_dense_head(config["feature"], config["in_channels"], config["width"], config.get("decoder")).to(a.device)
     model.load_state_dict(payload["model"], strict=True)
     model.eval()
     report = dict(protocol=dataset.protocol, role=dataset.meta["role"], task=config["task"],

@@ -7,15 +7,15 @@ from omegaconf import OmegaConf
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
 from event_state.models.tokens import tokens_to_map
 from .protocol import digest, load_protocol, sha256_file, audit_pretraining
-from .head import DenseRegressionHead
+from .head import build_dense_head
 
 
 class DepthPredictor:
-    def __init__(self, run, name, feature, device, teacher_weights=None):
+    def __init__(self, run, name, feature, device, teacher_weights=None, *, backbone=None):
         ds = name.split('_')[0]
         protocol = load_protocol(ds + '_f3')
         root = Path(run)
-        backbone = root/'pretrain'/name/'checkpoints/step_00100000.pt'
+        backbone = backbone or root/'pretrain'/name/'checkpoints/step_00100000.pt'
         head = root/'heads'/name/feature/'best.pt'
         report = json.loads((head.parent/'continuous.json').read_text())
         self.identity = {'head_sha256': sha256_file(head), 'backbone_sha256': sha256_file(backbone),
@@ -39,7 +39,7 @@ class DepthPredictor:
         self.model = build_model(cfg, device=device)
         load_checkpoint(backbone, model=self.model, device=device, restore_rng=False)
         self.model.eval()
-        self.head = DenseRegressionHead(c['in_channels'], c['width']).to(device).eval()
+        self.head = build_dense_head(feature, c['in_channels'], c['width'], c.get('decoder')).to(device).eval()
         self.head.load_state_dict(hp['model'], strict=True)
         self.feature, self.device, self.state = feature, device, None
         self.mean, self.std = [torch.tensor(list(v), device=device).view(3,1,1) for v in
@@ -50,8 +50,13 @@ class DepthPredictor:
         height, width = gep.shape[-2:]
         if height % 16 or width % 16:
             raise ValueError('Unaligned EventState patch grid')
-        out = self.model(((gep.to(self.device)-self.mean)/self.std)[None,None], state=self.state)
-        self.state = out['state']
+        inputs = ((gep.to(self.device)-self.mean)/self.std)[None,None]
+        if self.feature == 'stages':
+            stages, self.state = self.model.forward_depth_stages(inputs, self.state)
+            out = {'stages': torch.cat(stages, dim=-1)} if predict else {}
+        else:
+            out = self.model(inputs, state=self.state)
+            self.state = out['state']
         if predict:
             maps = [tokens_to_map(out[k][0,0], (height//16,width//16)) for k in
                     (('z','h') if self.feature == 'concat' else (self.feature,))]

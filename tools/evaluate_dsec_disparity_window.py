@@ -16,6 +16,9 @@ def main():
     p.add_argument('--window-ms', type=parse_window_ms, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--device', default='cuda')
+    p.add_argument('--name', default='dsec_alpha1')
+    p.add_argument('--feature', default='concat')
+    p.add_argument('--backbone', type=Path)
     a = p.parse_args()
     import numpy as np
     from event_state.data.event_representation import GEPEventFrame
@@ -29,7 +32,7 @@ def main():
             {r['sequence'] for r in index['records']} != set(names)):
         raise ValueError('Expected labeled dsec_f3 validation depth index with native disparity targets')
     if a.output.exists(): raise FileExistsError(a.output)
-    model = DepthPredictor(a.run, 'dsec_alpha1', 'concat', a.device)
+    model = DepthPredictor(a.run, a.name, a.feature, a.device, backbone=a.backbone)
     cfg = model.cfg.dataset
     if cfg.get('event_window_us') is not None or cfg.get('event_window_fraction',1) != 1 or not cfg.rectify_events:
         raise ValueError('Requires original rectified RGB-interval checkpoint')

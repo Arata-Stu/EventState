@@ -1,6 +1,12 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-09
+最終更新: 2026-11-10
+
+Depthは tools/run_common_depth.py で単GPU基本3条件＋旧新DDPのE1、DSEC→M3EDの順にVKITTI初期化で実行可能。DSECはpublic valで条件選択して提出ZIP生成、M3EDはprepared GT、公開車載昼間val2系列の評価。実重み・実GPU実行はサーバーで確認する。
+
+M3ED Semanticは追加targetsを指定して5条件すべて完了（2026-11-10）。最高はE1 Encoder＋LSTM（h蒸留）・単GPUでval mIoU 38.70%。DSEC・M3EDのSemantic基本比較が揃った。次はDepth用DAv2互換headと初期重みの読み込み確認。
+
+初回の経緯：M3ED Semantic 5条件は最初の3本がRittenhouseのSemantic targets確認で停止。特徴抽出・head学習前。既存ラベルを確認し、必要ならaten-22でsemanticsだけ別rootへ生成し、sig-gpu5で --extra-target-root を指定する。aten-22のrawは /mnt/ssd-4tb/dataset/m3ed。外付けSSDは未接続のため、outputs配下への出力を試みると解決先 /media/aten-22/AT_2TB のmkdirでPermissionError。既存リンクを保持し、project直下の別名 outputs_local にmetadataと生成targetsを配置して後からscpする手順へ訂正。
 
 DSEC Semantic公式test 3系列、seed 0、E1 Encoder＋LSTM（h蒸留）、凍結h＋linear CE。開発6/2→全8系列で再学習。旧型DDP 59.49%、新型（RVT型）DDP 59.46%（各790,169,600画素）。新型−旧型は−0.03ポイント。出力 `outputs/stage2_dsec_semantic_e1_ddp_compare_20261109/{old_ddp,new_ddp}/test_metrics.json`。新型単GPU 60.48%との差は表示値から旧型−0.99、新型−1.02ポイント。
 
