@@ -13,13 +13,15 @@ class DepthRunTest(unittest.TestCase):
     def test_all_models_and_public_val_selection(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            args = SimpleNamespace(output=root, scratch=root, data=root, m3ed_targets=root,
+            args = SimpleNamespace(output=root, scratch=root, data=root, m3ed_targets=root, m3ed_val_targets=root/'val_gt',
                                    weights=root/'weights', baselines_only=False, local_only=False)
             trained, submitted = [], []
             def fake(tool, *cmd):
                 def option(key):
                     return cmd[cmd.index(key)+1]
                 if tool == 'prepare_dense_targets.py':
+                    if option('--protocol') == 'm3ed_f3':
+                        self.assertEqual(option('--target-root'), root/'val_gt' if option('--role') == 'val' else root)
                     f = option('--output')
                     f.parent.mkdir(exist_ok=True)
                     f.write_text('{"records": []}')

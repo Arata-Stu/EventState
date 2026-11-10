@@ -97,8 +97,10 @@ def pipeline(a):
         run('export_dsec_depth_submission.py', *export_args, '--preflight')
     indexes = {}
     for ds in ('dsec','m3ed'):
-        target = data/'DSEC/train_disparity' if ds == 'dsec' else a.m3ed_targets
         for role in ('train','val'):
+            target = data/'DSEC/train_disparity'
+            if ds == 'm3ed':
+                target = a.m3ed_val_targets if role == 'val' else a.m3ed_targets
             path = out/'targets'/f'{ds}_{role}.json'
             if not path.exists():
                 run('prepare_dense_targets.py', '--protocol', ds+'_f3', '--role', role,
@@ -160,10 +162,12 @@ def main():
     p.add_argument('--weights', type=Path, default=Path('weights/depth_anything_v2/depth_anything_v2_metric_vkitti_vits.pth'))
     p.add_argument('--output', type=Path, default=Path('outputs/stage2_common_depth_vkitti_20261110'))
     p.add_argument('--scratch', type=Path)
-    p.add_argument('--m3ed-targets', type=Path)
+    p.add_argument('--m3ed-targets', type=Path, help='Override the default M3ED target root for both splits')
+    p.add_argument('--m3ed-val-targets', type=Path, help='Separate prepared depth targets for validation')
     p.add_argument('--local-only', action='store_true', help='Evaluate both public validation sets without preparing a hidden-test ZIP')
     p.add_argument('--baselines-only', action='store_true')
     a = p.parse_args()
+    a.m3ed_val_targets = a.m3ed_val_targets or a.m3ed_targets or a.data/'m3ed_cache/f3_val_addition_20261027_183108/targets'
     a.m3ed_targets = a.m3ed_targets or a.data/'m3ed_cache/m3ed_downstream'
     a.scratch = a.scratch or a.data/'downstream_scratch'
     a.output.mkdir(parents=True, exist_ok=True)
