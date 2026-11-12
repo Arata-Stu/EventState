@@ -1955,3 +1955,122 @@ seed0/F3公開valはrunner既定であり保存configは未受領。concatは提
 - Mac関連stdlib91件（並列18件を含む）・構文34ファイル・CLI/差分確認通過。
   模擬workerで最大3同時・GPU環境分離・scratch予約/待機・停止時の子孫終了を検証した。
 - サーバーでの切替・3GPU使用・所要時間・新しい精度値は未受領。§70/71の受領済み進捗だけを実行証拠として扱う。
+
+## 73. 3GPU版Common Depthのサーバーpreflight成功（2026-11-11受領）
+
+- ユーザーが`/home/iASL/Arata_repo/EventState`、既存envで、`nvidia-smi`→`git pull --ff-only`→
+  `python tools/run_common_depth.py --gpus 0,1,2 --preflight`→同引数の本実行を`&&`で連結したコマンドと出力を提示。
+  pullは`Already up to date.`。commit hash自体は今回の貼付には含まれない。
+- 2026-11-11 01:12:45のnvidia-smiでTesla V100-PCIE-32GB×3（GPU0/1/2、各32768MiB）、
+  各GPU使用率0%・使用メモリ5MiB、process欄はXorgのみ。これは本実行前の観測で、並列学習の稼働証拠ではない。
+- scratchは`/home/iASL/Arata_repo/dataset/downstream_scratch`、空き1082.1GiB。
+  各条件の一時予約量はDSEC残4条件99.6GiB、M3ED5条件119.2GiB、DSEC E0 Encoder（z蒸留）0.0GiB。
+  preflightは`Initially feasible parallel conditions: 3/3`と`Preflight completed`を表示して正常終了。
+- DSEC E0 Encoder（z蒸留）は`reuse completed reports`。現runnerの判定ではbest.pt・_SUCCESSと正常な
+  continuous.json・disparity_val.jsonが揃い、不足する学習/採点がないことを確認できた。
+  視差valの数値自体は今回未受領。§71のDepth全体スコアから新しい数値は追加しない。
+- 残りはDSECのE1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、
+  E1 Encoder＋LSTM（h蒸留）・旧型DDP／新型DDPの4条件と、M3ED全5条件。
+  train/val特徴抽出→head学習→Depth採点（DSECはさらに視差val）の計画が表示された。
+  seed0・splitは既存runの既定（DSEC37train/4val、M3ED3train/2val）、
+  出力rootは`outputs/stage2_common_depth_vkitti_20261110`。保存configそのものは今回未受領。
+- 末尾はpreflight完了までで、workerの`starting`・3GPU実稼働・epoch進捗・全体Completedは未受領。
+  コマンドはそのまま本実行へ進む構成で、開始表示前にはcheckpoint hash照合とCPU decoder検証がある。
+  この段階で二重起動はせず、次の起動表示または本実行中のnvidia-smiで確認する。
+
+## 74. 3GPU並列の実進捗と速度懸念（2026-11-12受領）
+
+- ユーザーから§73後の親ログと「3台同時にすることで学習が極端に遅くなる可能性」を受領。
+  原文はMacの`docs/evaluation_records/20261112_common_depth_parallel_progress.log`へ保存（Git非管理）。
+  実行場所・引数は§73と同じ。出力rootは`outputs/stage2_common_depth_vkitti_20261110`、
+  workerログは同rootの`parallel_di1h5xdu/{条件名}.log`。
+  seed0は起動時のコード既定、splitはDSEC37train/4val、M3ED3train/2valを維持。保存configは今回未受領。
+- DSEC E0 Encoder（z蒸留）はGPU0のworkerで完了済み結果を再利用してcompleted。
+  GPU1=DSEC E1 Encoder＋LSTM（h蒸留）、GPU2=DSEC E2 Encoder＋LSTM（z+h蒸留）、
+  GPU0=DSEC E1 Encoder＋LSTM（h蒸留）・旧型DDPがそれぞれtrain/val特徴抽出→head学習→Depth採点へ進行した。
+  head学習child正常終了後のphaseであり、3条件がhead学習を通過した実行証拠となる。
+- 旧型DDP条件は視差val採点を経てcompleted。その後GPU0でDSEC E1 Encoder＋LSTM（h蒸留）・新型DDPの
+  train特徴抽出を開始。末尾時点ではGPU1のE1は視差val、GPU2のE2はDepth採点。
+  M3EDの起動・DSEC提出ZIP・全体Completed・各条件スコアは今回未受領。
+- 親ログのcompleted重複はphase更新とworker終了の2表示。二重学習の証拠ではない。
+  親はphase変更のみを表示し、epochは個別workerログへ出すため、親出力の頻度を学習速度として扱わない。
+- 添付には開始前の2026-11-11 01:12:45 nvidia-smiと、時刻のないphase列しかなく、
+  各条件の所要時間・1epoch時間・3並列による低速化倍率は算出できない。
+  GPU間の勾配通信を伴うDepth DDPではなく、共有CPU/RAM/ストレージの競合が低速化の候補。
+  コードではframe毎に特徴torch.load・GT読込/検査、同期DataLoader（num_workers既定0）、
+  epoch末に全valを1frameずつ採点する。runner自身によるCPU thread上限の指定はない（実環境の設定は未確認）。
+- PyTorch公式もprocess間のCPU thread過剰割当による効率悪化を説明している：
+  https://docs.pytorch.org/docs/stable/notes/multiprocessing.html#cpu-in-multiprocessing 。
+  今回その競合が実際に発生したことは未確認。容量1082.1GiBという§73の確認はI/O帯域の測定ではない。
+  停止せず稼働中GPU利用率・free・vmstatの後続サンプル（CPU/I/O待ち・swap）で切り分ける方針。
+  サーバーへの接続・計測・設定変更・再学習は実施していない。
+
+## 75. 稼働中の資源観測受領と、ログによる時間比較を優先（2026-11-12）
+
+- §74の続きとしてユーザーが`nvidia-smi dmon -s pucm -d 2 -c 10`、`free -h`、`vmstat 2 10`の出力を提示。
+  採取時刻・実processとの対応は今回の出力に含まれず、§74末尾と同じphaseが続いているとは断定しない。
+  runは既存common Depth、出力`outputs/stage2_common_depth_vkitti_20261110`、既定seed0、
+  DSEC37train/4val・M3ED3train/2val。今回新たなepoch・スコア・完了条件は受領していない。
+- dmonのGPU0/1/2のSM利用率は各10サンプル平均11.0%/8.9%/2.1%、範囲7–17%/7–14%/0–10%。
+  framebuffer使用量は623/537/719MiB。これはVRAM容量の使用率や、1epoch当たりの速度そのものではない。
+- RAMはtotal188GiB、used6.5GiB、free101GiB、buff/cache81GiB、available179GiB、swap容量0B。
+  vmstatの初回（累積値）を除く9行はr49–73、us86–98%、id1–12%、wa0–1%、si/so0、b0。
+  この採取範囲ではCPU使用率が高く、メモリ逼迫・swap・高いI/O待ちの兆候はない。
+  当該3jobのCPU負荷か、thread競合か、他jobかはprocess情報がないため未確認。
+- ユーザーは利用率より先に、logから学習速度を比較するよう指示。
+  確認した旧E0のepochログはepoch番号とlossだけ、並列親ログはphaseだけで時刻なし。
+  `train_dense_probe.py`が書くtrain.jsonlもepoch/loss/validationだけで、epoch所要時間を保存していない。
+  したがって既存ログ本文から秒/epochや3並列の低速化倍率は直接算出できない。
+- 補助案：サーバー上の既存headのconfig.json更新時刻（epoch loop直前）から_SUCCESS更新時刻（loop終了後）までを、
+  train.jsonlの完了epoch数で割れば学習＋epoch毎val＋保存の概算平均時間が得られる。
+  モデル初期化・特徴抽出・standalone採点は含まない。copy/touchや途中再開があればこの差分は無効になり得る。
+  旧E0直列とE1/E2/旧型DDP並列の初期比較に使えるが、条件差もあるため3並列の因果比較とは区別する。
+  実ファイル時刻と計算結果は未受領。コードの学習設定・実サーバーのprocessは変更していない。
+
+## 76. 直列E0と並列3条件のhead学習時間を受領（2026-11-12）
+
+- §75のmtime計算コマンドをユーザーがサーバーで実行し、以下の出力を提示。
+  config.json→_SUCCESSの更新時刻差とtrain.jsonlの完了epochを使った、50epochのhead学習時間の概算。
+  各epochのデータ読込・train・val・checkpoint保存を含み、モデル初期化・特徴抽出・後続Depth/視差採点を含まない。
+  file copy/touch・途中再開があった場合は停止期間等が混入し得るが、その操作の報告はない。
+- 対象はDSEC共通Stage 1＋凍結4段特徴、VKITTI初期化DPT、Stage 2 split37train/4val、50epoch。
+  head seed0は既存runner既定。保存config本体は今回未受領。
+  run rootは`outputs/stage2_common_depth_vkitti_20261110`、各headは`heads/dsec_{条件ID}/stages`。
+  数値記録は`docs/evaluation_records/20261112_common_depth_head_timings.json`。
+
+| 条件 | 実行方式 | 合計(分) | 平均(分/epoch) | E0比の時間 |
+|---|---|---:|---:|---:|
+| E0 Encoder（z蒸留） | 旧直列runner | 681.1 | 13.62 | 1.00倍 |
+| E1 Encoder＋LSTM（h蒸留） | 3条件並列 | 1797.5 | 35.95 | 2.64倍 |
+| E2 Encoder＋LSTM（z+h蒸留） | 3条件並列 | 1818.8 | 36.38 | 2.67倍 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 3条件並列 | 1782.2 | 35.64 | 2.62倍 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 並列run | 未完了または未作成 | — | — |
+
+- 倍率は丸め前のepoch秒数を受領していないため、表示された合計分数から算出した。
+  各並列headは旧E0の約2.62–2.67倍の時間で、約11.4時間→約29.7–30.3時間。
+- 同じDPT head・同じ4段feature形状・同じsplit/epoch/batchのfrozen-feature学習であり、
+  Stage 1 LSTMの有無だけでhead計算量がこの倍率に増える構成ではない。
+  ただし重み/特徴の条件は異なり、同一条件の1job対3jobの対照実験ではない。
+  3GPU化のみに原因を確定せず、§75のCPU観測と合わせて共有CPU資源の競合を第一候補として扱う。
+- 3条件の実開始時刻・特徴抽出/後続評価を含むrun全体の所要時間は未受領。
+  『3条件全体で何%短縮した』という実測結論は出さない。新型DDPやM3EDの学習完了・新スコアも未受領。
+  学習停止・設定変更・完了済みheadの再学習は実施していない。
+- 続いてユーザーが高CPU負荷を踏まえ2GPU並列の方がよいか質問。運用変更ではなく比較候補として整理した。
+  現在の3並列平均35.99分/epochを同程度のDSEC仕事量の基準とすると、2並列平均が
+  `(2/3)×35.99≒24.0分/epoch`未満で定常的な合計epoch処理量は上回る。
+  2GPUの実測結果ではなく、M3EDや特徴抽出・後続採点・run全体へそのまま適用する数値でもない。
+  GPU数だけでなくprocess毎CPU thread数が調整対象。PyTorch公式のprocess間thread過剰割当の説明を再確認：
+  https://docs.pytorch.org/docs/2.15/notes/multiprocessing.html#cpu-in-multiprocessing 。
+  現runを強制中断せず、進捗の区切りで同cache/batchの短い2対3並列比較を行う案で、切替・実験は未実施。
+
+## 77. Common Depthを一旦2並列にする方針（2026-11-12）
+
+- ユーザーが「一旦2並列にしてみよう」と明示決定。3GPU要求から、一旦GPU0/1の2条件並列へ変更する方針。
+  既存CLIの`--gpus 0,1`で対応でき、ソース変更・依存更新は不要。
+  CPU thread数・batch/loss/seed/epoch/splitは現状維持し、今回は並列数だけを変更する。
+- 元terminalで3GPU runnerをCtrl+Cで停止し、promptと子処理終了を確認後、
+  `python tools/run_common_depth.py --gpus 0,1 --preflight`→同引数の本実行を行うサーバー手順を提示。
+  出力は既存`outputs/stage2_common_depth_vkitti_20261110`、headは同rootの`heads/{dataset}_{条件ID}/stages`を維持する。
+  seed0は既存runner既定、splitはDSEC37train/4val・M3ED3train/2val、headは50epochを維持する。
+- 完了head/正常な採点結果を再利用。不足評価のみ実行し、途中headは保全してepoch1から再学習する。
+  詳細は`docs/common_depth_parallel.md`。サーバーでの停止・切替・2GPU実稼働・速度改善や新しい精度値は未受領。

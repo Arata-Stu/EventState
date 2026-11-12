@@ -37,6 +37,31 @@ preflightはGPU上でのモデルロードやVRAM容量を検証するもので�
 
 ## 並列実行と保存先
 
+### 2GPU並列への切替（2026-11-12）
+
+ユーザーがCPU負荷と実測時間を踏まえ、まず2並列を試すと決定。
+現行コードのまま`--gpus 0,1`で実行できるため、コード更新は不要。
+今回はCPU thread数等を変更せず、並列数だけを変える。
+
+元の3GPU実行ターミナルでCtrl+Cを1回押し、promptへ戻り子処理が終了してから実行する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+nvidia-smi
+
+python tools/run_common_depth.py --gpus 0,1 --preflight &&
+python -u tools/run_common_depth.py --gpus 0,1
+```
+
+同じ`outputs/stage2_common_depth_vkitti_20261110`を使うため、完了head・採点結果を再利用する。
+学習途中のheadは保全して最初から学習する。中断cacheは残る場合があるが、scratch全体の削除はしない。
+起動表示のGPUは0/1のみとなる。切替や速度改善の実確認はサーバー出力を受領後に行う。
+同じDSECのhead処理なら現在の3並列約36分/epochに対し、2並列で約24分/epoch未満なら合計処理量が上回る目安。
+M3EDや特徴抽出・後続採点へこの数値をそのまま適用しない。
+
+### 共通動作
+
 - DSEC/M3EDそれぞれ5条件：E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、
   E1 Encoder＋LSTM（h蒸留）・旧型DDP、E1 Encoder＋LSTM（h蒸留）・新型DDP。
 - GPUごとに1条件を割り当て、終了したGPUに次の条件を割り当てる。

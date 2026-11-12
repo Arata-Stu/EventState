@@ -1,0 +1,21 @@
+{
+  "received_date": "2026-11-12",
+  "source": "user_supplied_read_only_server_command_output",
+  "run_root": "outputs/stage2_common_depth_vkitti_20261110",
+  "dataset": "dsec",
+  "split": {"train_sequences": 37, "validation_sequences": 4},
+  "nominal_epochs": 50,
+  "seed": 0,
+  "seed_provenance": "existing_runner_default_not_saved_config_verified",
+  "method": "mtime(_SUCCESS) minus mtime(config.json), with train.jsonl epoch continuity checked",
+  "includes": ["training_data_loading", "head_training", "per_epoch_validation", "checkpoint_saving"],
+  "excludes": ["model_initialization", "feature_extraction", "standalone_depth_evaluation", "disparity_evaluation"],
+  "controlled_same_condition_concurrency_comparison": false,
+  "conditions": [
+    {"id": "E0", "label": "E0 Encoder（z蒸留）", "execution": "serial_runner", "total_minutes": 681.1, "mean_minutes_per_epoch": 13.62, "time_ratio_to_E0": 1.0},
+    {"id": "E1", "label": "E1 Encoder＋LSTM（h蒸留）", "execution": "three_condition_parallel", "total_minutes": 1797.5, "mean_minutes_per_epoch": 35.95, "time_ratio_to_E0": 2.6391},
+    {"id": "E2", "label": "E2 Encoder＋LSTM（z+h蒸留）", "execution": "three_condition_parallel", "total_minutes": 1818.8, "mean_minutes_per_epoch": 36.38, "time_ratio_to_E0": 2.6704},
+    {"id": "E1_old_ddp", "label": "E1 Encoder＋LSTM（h蒸留）・旧型DDP", "execution": "three_condition_parallel", "total_minutes": 1782.2, "mean_minutes_per_epoch": 35.64, "time_ratio_to_E0": 2.6166},
+    {"id": "E1_new_ddp", "label": "E1 Encoder＋LSTM（h蒸留）・新型DDP", "execution": "parallel_run", "status": "incomplete_or_not_created", "total_minutes": null, "mean_minutes_per_epoch": null, "time_ratio_to_E0": null}
+  ]
+}

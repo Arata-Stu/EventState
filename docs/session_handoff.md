@@ -1,16 +1,55 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-11
+最終更新: 2026-11-12
+
+2026-11-12ユーザーが「一旦2並列にしてみよう」と明示決定。次はcommon Depthを`--gpus 0,1`で実行する。
+コード変更不要。CPU thread数・batch/loss/seed/epoch/splitは変更せず、並列数だけ3→2にする。
+元terminalでCtrl+C→prompt/子処理終了確認→同run rootで2GPU preflight→本実行の手順を提示。
+完了済みhead・正常な採点結果は再利用。不足評価だけ実行し、途中headは保全してepoch1から再学習する。
+詳細docs/common_depth_parallel.md「2GPU並列への切替」。サーバー停止・2並列起動・速度改善はまだ未受領（台帳§77）。
+
+2026-11-12head所要時間の実測概算を受領（台帳§76）。config.json→_SUCCESSのmtime差より、
+DSEC E0 Encoder（z蒸留）の直列実行は681.1分/13.62分epoch、並列E1 Encoder＋LSTM（h蒸留）は1797.5分/35.95分epoch、
+並列E2 Encoder＋LSTM（z+h蒸留）は1818.8分/36.38分epoch、E1 Encoder＋LSTM（h蒸留）・旧型DDPは1782.2分/35.64分epoch。
+並列3条件は旧E0比で約2.62–2.67倍の時間。各epochのtrain＋val＋checkpoint保存を含む概算で、特徴抽出/後続採点は含まない。
+新型DDPは未完了または未作成。既存headを再学習せず時間差を確認できた。
+同一条件での1対3並列の比較ではなく、開始ずれも未受領なので、3GPU化の因果やrun全体の短縮率は未確定。
+共有CPU資源の競合を疑う根拠が強まったが、process別の帰属・thread過多・速度改善は未確認。設定変更・中断は行っていない。
+ユーザーはCPU負荷から2GPU並列も検討。まだ2GPUへ切替えたわけではない。
+同程度のDSEC head処理なら、現在の3並列平均35.99分epochに対し2並列が約24分epoch未満なら合計処理量が上回る目安。
+CPU thread上限の調整も候補で、2本に減らすだけで改善するかは未確認。途中headを失わない区切りで短い同条件比較を検討する。
+
+2026-11-12診断の優先順をユーザーが指定：「まず利用率ではなくlogから学習の速度」。
+貼付済み親ログ・旧E0のepochログ・現train.jsonlの保存コードにはepoch所要時間/時刻がなく、
+ログ本文だけから秒/epochや低速化倍率は復元できない。まず保存headのconfig.json→_SUCCESS更新時刻と
+train.jsonlの完了epoch数で、学習＋epoch毎val＋保存の概算時間を比較する（copy/touch/途中再開の影響に注意）。
+GPU/CPU観測は台帳§75へ記録し、利用率から速度や3並列の因果を断定しない。設定変更・停止・再学習は未実施。
+
+2026-11-12並列実行の進捗を受領（台帳§74）。親ログ`parallel_di1h5xdu`でGPU1のDSEC E1 Encoder＋LSTM（h蒸留）、
+GPU2のDSEC E2 Encoder＋LSTM（z+h蒸留）、GPU0のDSEC E1 Encoder＋LSTM（h蒸留）・旧型DDPが
+特徴抽出→head学習→採点へ進行。旧型DDPは条件全体がcompletedとなり、GPU0で新型DDPのtrain特徴抽出へ移行。
+末尾はGPU1=E1視差val、GPU2=E2 Depth採点、GPU0=新型DDP特徴抽出。3条件の学習を通過した実行証拠を得た。
+各epoch・スコア・時刻付き処理時間・全体完了は未受領。開始前nvidia-smiを稼働中GPU利用率として扱わない。
+ユーザーが3GPU同時実行による極端な低速化を懸念。CPU/RAM/ストレージ競合は候補だが、親ログだけで倍率は判定不可。
+現runnerはCPU thread上限の明示指定なし、headは同期DataLoaderでframe別ファイルを読む。
+次は停止せず稼働中nvidia-smi・free・vmstat等でCPU/I/O/swap待ちを確認する。設定変更・学習中断は行っていない。
+
+2026-11-11 01:12:45サーバー続報：3GPU版のread-only preflight成功を受領（台帳§73）。
+Tesla V100-PCIE-32GB×3はその時点で各util0%・5MiB、Xorgのみで学習プロセスなし。
+scratch空き1082.1GiB、初期並列可能数3/3。DSEC E0 Encoder（z蒸留）は`reuse completed reports`で、
+head・Depth採点・視差val採点を再利用予定。残りDSEC4条件とM3ED5条件は学習/評価予定。
+ユーザーの`&&`連結コマンドはpreflight成功後に本実行へ進む構成。末尾は`Preflight completed`であり、
+workerのstarting表示・3GPU実稼働・新しいスコアはまだ未受領。本実行の開始表示前にはcheckpoint照合とCPU decoder検証がある。
 
 2026-11-11ユーザーが3GPU利用を明示希望。common Depthへ`--gpus 0,1,2`を追加し、
 1条件1GPU・最大3条件の独立workerで実行できるよう対応。切替手順はdocs/common_depth_parallel.md。
 既存のbatch/loss/seed/epoch/split/best選択を維持し、完了head・採点結果を再利用する。
 scratch予約を合算し、容量不足ならGPUを待機させる。親がrun lock・最終集計・DSEC提出ZIPを一元管理する。
 `--preflight`は既存入力と計画のread-only確認で、GPUでのモデルロード/実行成功は未確認。
-3465ccd版の起動中runは直列1GPU。元ターミナルCtrl+C→子処理終了確認→pull→preflight→同run rootで並列再開する。
+旧3465ccd版は直列1GPU。元ターミナルCtrl+C→子処理終了確認→pull→preflight→同run rootで並列再開する手順を案内。
 途中headは保全して最初から学習し直すため、切替時点の条件に注意。完了済みheadは再学習不要。
 Mac関連stdlib91件（並列18件を含む）・構文34ファイル・CLI/差分確認通過。GPU実行はサーバー未検証。
-物理GPU利用率・他job・実空き容量・サーバーでの切替完了は未受領。
+切替前のGPU利用率・空き容量とpreflight成功は上記続報で確認。サーバーでの並列起動完了は未受領。
 既存runner動作中に同run rootへworkerを追加しない。旧run_dense_f3_parallel.pyは今回のcommon/VKITTI構造には使わない。
 
 2026-11-11続報：DSEC E0 Encoder（z蒸留）の公開val採点まで受領。
