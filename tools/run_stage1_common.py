@@ -23,9 +23,21 @@ from event_state.dense.protocol import digest
 from tools.run_dense_pretrain import _hydra_object
 
 
+DEFAULT_PREFLIGHT_TESTS = (
+    'tests/test_ddp_training.py', 'tests/test_stage1_common_stdlib.py',
+    'tests/test_stream_sampling.py', 'tests/test_training_runtime.py',
+    'tests/test_stage1_common_configs.py',
+)
+
+
 def plan(a):
     gpus = a.gpus.split(',')
-    if len(gpus) != 3 or len(set(gpus)) != 3 or not all(x.isdigit() for x in gpus):
+    valid_ids = all(x.isdigit() for x in gpus)
+    distinct_ids = valid_ids and len({int(x) for x in gpus}) == len(gpus)
+    if a.phase == 'baseline':
+        if not 1 <= len(gpus) <= 3 or not distinct_ids:
+            raise ValueError('Specify one to three distinct GPU IDs for baseline')
+    elif len(gpus) != 3 or not distinct_ids:
         raise ValueError('Specify three distinct GPU IDs')
     if a.seed < 0 or a.num_workers < 0:
         raise ValueError('seed/workers must be nonnegative')
@@ -141,9 +153,7 @@ def execute(a, jobs):
     if not a.skip_preflight:
         with (logs / 'preflight.log').open('w') as log:
             subprocess.run([sys.executable, '-m', 'pytest', '-q',
-                            'tests/test_ddp_training.py', 'tests/test_stage1_common_stdlib.py',
-                            'tests/test_stream_sampling.py', 'tests/test_training_runtime.py',
-                            'tests/test_stage1_common_configs.py'],
+                            *getattr(a, 'preflight_tests', DEFAULT_PREFLIGHT_TESTS)],
                            cwd=PROJECT, env=dict(os.environ, CUDA_VISIBLE_DEVICES=''),
                            stdout=log, stderr=subprocess.STDOUT, check=True)
     pending, running = list(jobs), []

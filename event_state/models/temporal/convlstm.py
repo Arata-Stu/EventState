@@ -19,12 +19,16 @@ class ConvLSTM(TemporalBackbone):
         self.gates = nn.Conv2d(input_dim + hidden_dim, 4 * hidden_dim, 3, padding=1)
         self.output_projection = nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, z: Tensor, state: TemporalState = None):
+    def forward(self, z: Tensor, state: TemporalState = None, *,
+                grid_size: tuple[int, int] | None = None):
         validate_token_sequence(z, feature_dim=self.input_dim)
         batch, _, tokens, _ = z.shape
-        height, width = self.grid_size
+        # The convolution weights are independent of spatial resolution. Keep
+        # the checkpoint's training grid unchanged when a downstream task uses
+        # a different, explicitly supplied input geometry.
+        height, width = self.grid_size if grid_size is None else grid_size
         if tokens != height * width:
-            raise ValueError(f"Expected tokens for grid {self.grid_size}, got {tokens}")
+            raise ValueError(f"Expected tokens for grid {(height, width)}, got {tokens}")
         shape = (batch, self.hidden_dim, height, width)
         if state is None:
             h = z.new_zeros(shape)

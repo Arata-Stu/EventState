@@ -7,11 +7,13 @@ from typing import Any
 from torch import Tensor, nn
 
 from .event_encoder import EventEncoder
+from .temporal.convlstm import ConvLSTM
 from .temporal.lstm import PatchwiseLSTM
 from .temporal.stages import FourStageLSTM
 from .temporal.identity import IdentityTemporalBackbone
 from .projectors import TeacherProjection
 from .temporal import TemporalBackbone, TemporalState
+from .tokens import patch_grid
 
 
 class EventStateModel(nn.Module):
@@ -131,11 +133,15 @@ class EventStateModel(nn.Module):
         if isinstance(self.temporal_model, FourStageLSTM):
             _, stages, state = self.temporal_model(backbone, frames, batch, time, state)
             return stages, state
-        if not isinstance(self.temporal_model, (IdentityTemporalBackbone, PatchwiseLSTM)):
-            raise ValueError("Four-level depth requires an encoder-only or supported PatchwiseLSTM checkpoint")
+        if not isinstance(self.temporal_model, (IdentityTemporalBackbone, PatchwiseLSTM, ConvLSTM)):
+            raise ValueError("Four-level depth requires an encoder-only, PatchwiseLSTM or ConvLSTM checkpoint")
         stages = backbone.get_intermediate_layers(frames, n=[2, 5, 8, 11])
         levels = [x.unflatten(0, (batch, time)) for x in stages]
-        levels[-1], state = self.temporal_model(levels[-1], state)
+        if isinstance(self.temporal_model, ConvLSTM):
+            grid = patch_grid(events.shape[-2:], self.event_encoder.patch_size, require_divisible=True)
+            levels[-1], state = self.temporal_model(levels[-1], state, grid_size=grid)
+        else:
+            levels[-1], state = self.temporal_model(levels[-1], state)
         return tuple(levels), state
 
     def forward_sequence(
@@ -163,7 +169,11 @@ class EventStateModel(nn.Module):
         z = flat_z.reshape(
             batch_size, sequence_length, flat_z.shape[1], flat_z.shape[2]
         )
-        h, new_state = self.temporal_model(z, state)
+        if isinstance(self.temporal_model, ConvLSTM):
+            grid = patch_grid((height, width), self.event_encoder.patch_size, require_divisible=True)
+            h, new_state = self.temporal_model(z, state, grid_size=grid)
+        else:
+            h, new_state = self.temporal_model(z, state)
         if not isinstance(h, Tensor) or h.ndim != 4:
             raise ValueError("temporal_model must return h with shape [B, T, N, D]")
         if h.shape[:3] != z.shape[:3]:
