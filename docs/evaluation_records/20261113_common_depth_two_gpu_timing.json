@@ -1,0 +1,44 @@
+{
+  "received_date": "2026-11-13",
+  "dataset": "dsec",
+  "condition_id": "E1_new_ddp",
+  "condition_label": "E1 Encoder＋LSTM（h蒸留）・新型DDP",
+  "parallel_gpus": [
+    0,
+    1
+  ],
+  "run_root": "outputs/stage2_common_depth_vkitti_20261110",
+  "head_path": "heads/dsec_E1_new_ddp/stages",
+  "split": {
+    "train_sequences": 37,
+    "validation_sequences": 4
+  },
+  "seed": 0,
+  "seed_provenance": "existing_runner_default_not_saved_config_verified",
+  "nominal_epochs": 50,
+  "config_mtime": "2026-11-12T10:38:58.536786018+09:00",
+  "success_mtime": "2026-11-12T23:26:19.944225332+09:00",
+  "elapsed_seconds": 46041.407439314,
+  "total_minutes": 767.3567906552333,
+  "mean_minutes_per_epoch": 15.347135813104666,
+  "includes": [
+    "training_data_loading",
+    "head_training",
+    "per_epoch_validation",
+    "checkpoint_saving"
+  ],
+  "excludes": [
+    "model_initialization",
+    "feature_extraction",
+    "standalone_depth_evaluation",
+    "disparity_evaluation"
+  ],
+  "comparison": {
+    "reference": "previous_three_parallel_DSEC_E1_E2_E1_old_ddp_mean",
+    "reference_minutes_per_epoch": 35.99,
+    "time_reduction_percent": 57.357221969700845,
+    "old_time_divided_by_new_time": 2.345062977110604,
+    "controlled_same_condition_comparison": false,
+    "whole_run_throughput_measured": false
+  }
+}

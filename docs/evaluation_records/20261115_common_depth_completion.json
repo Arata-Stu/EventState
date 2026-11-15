@@ -1,0 +1,99 @@
+{
+  "received_date": "2026-11-15",
+  "source": "user_supplied_parent_log",
+  "run_root": "outputs/stage2_common_depth_vkitti_20261110",
+  "parallel_gpus": [
+    0,
+    1
+  ],
+  "conditions": {
+    "dsec_E0": {
+      "condition_label": "E0 Encoder（z蒸留）",
+      "gpu": 0,
+      "phase": "completed"
+    },
+    "dsec_E1": {
+      "condition_label": "E1 Encoder＋LSTM（h蒸留）",
+      "gpu": 1,
+      "phase": "completed"
+    },
+    "dsec_E2": {
+      "condition_label": "E2 Encoder＋LSTM（z+h蒸留）",
+      "gpu": 0,
+      "phase": "completed"
+    },
+    "dsec_E1_old_ddp": {
+      "condition_label": "E1 Encoder＋LSTM（h蒸留）・旧型DDP",
+      "gpu": 1,
+      "phase": "completed"
+    },
+    "dsec_E1_new_ddp": {
+      "condition_label": "E1 Encoder＋LSTM（h蒸留）・新型DDP",
+      "gpu": 1,
+      "phase": "completed"
+    },
+    "m3ed_E0": {
+      "condition_label": "E0 Encoder（z蒸留）",
+      "gpu": 0,
+      "phase": "completed"
+    },
+    "m3ed_E1": {
+      "condition_label": "E1 Encoder＋LSTM（h蒸留）",
+      "gpu": 1,
+      "phase": "completed"
+    },
+    "m3ed_E2": {
+      "condition_label": "E2 Encoder＋LSTM（z+h蒸留）",
+      "gpu": 0,
+      "phase": "completed"
+    },
+    "m3ed_E1_old_ddp": {
+      "condition_label": "E1 Encoder＋LSTM（h蒸留）・旧型DDP",
+      "gpu": 1,
+      "phase": "completed"
+    },
+    "m3ed_E1_new_ddp": {
+      "condition_label": "E1 Encoder＋LSTM（h蒸留）・新型DDP",
+      "gpu": 0,
+      "phase": "completed"
+    }
+  },
+  "completed_condition_count": 10,
+  "summary_prepared": true,
+  "summary_path": "outputs/stage2_common_depth_vkitti_20261110/summary.json",
+  "summary_numeric_contents_received": false,
+  "exported_sequences": {
+    "interlaken_00_a": 57,
+    "interlaken_00_b": 80,
+    "interlaken_01_a": 113,
+    "thun_01_a": 9,
+    "thun_01_b": 53,
+    "zurich_city_12_a": 38,
+    "zurich_city_13_a": 18,
+    "zurich_city_13_b": 15,
+    "zurich_city_14_a": 21,
+    "zurich_city_14_b": 28,
+    "zurich_city_14_c": 59,
+    "zurich_city_15_a": 61
+  },
+  "exported_image_count": 552,
+  "submission_zip_prepared": true,
+  "submission_zip_path": "outputs/stage2_common_depth_vkitti_20261110/submission/submission.zip",
+  "official_checker_status": "not_reported",
+  "official_upload_status": "not_reported",
+  "official_test_scores_received": false,
+  "activity_quintile_evaluation_status": "not_reported",
+  "seed": 0,
+  "seed_provenance": "runner_default_not_saved_config_received",
+  "nominal_head_epochs": 50,
+  "splits": {
+    "dsec": {
+      "train_sequences": 37,
+      "validation_sequences": 4
+    },
+    "m3ed": {
+      "train_sequences": 3,
+      "validation_sequences": 2
+    }
+  }
+}

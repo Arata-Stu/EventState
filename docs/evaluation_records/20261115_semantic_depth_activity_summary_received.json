@@ -1,0 +1,56 @@
+{
+  "received_date": "2026-11-15",
+  "source": "user_pasted_final_activity_summary",
+  "server_index": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/summary.json",
+  "source_text_complete_json": false,
+  "analysis_normalization": {
+    "appended_closing_braces": 1,
+    "server_file_json_validity_verified": false
+  },
+  "condition_labels": {
+    "E0": "E0 Encoder（z蒸留）",
+    "E1": "E1 Encoder＋LSTM（h蒸留）",
+    "E2": "E2 Encoder＋LSTM（z+h蒸留）",
+    "E1_old_ddp": "E1 Encoder＋LSTM（h蒸留）・旧型DDP",
+    "E1_new_ddp": "E1 Encoder＋LSTM（h蒸留）・新型DDP"
+  },
+  "received_counts": {
+    "manifests": 2,
+    "semantic": 10,
+    "depth": 10
+  },
+  "completion_evidence": "Final index is written after all Semantic and Depth jobs and report-file checks.",
+  "group_metrics_received": false,
+  "individual_reports_independently_verified": false,
+  "summary_fields": {
+    "manifests": {
+      "dsec": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/manifests/dsec.json",
+      "m3ed": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/manifests/m3ed.json"
+    },
+    "semantic": {
+      "dsec_E0": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/dsec_E0.json",
+      "dsec_E1": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/dsec_E1.json",
+      "dsec_E2": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/dsec_E2.json",
+      "dsec_E1_old_ddp": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/dsec_E1_old_ddp.json",
+      "dsec_E1_new_ddp": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/dsec_E1_new_ddp.json",
+      "m3ed_E0": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/m3ed_E0.json",
+      "m3ed_E1": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/m3ed_E1.json",
+      "m3ed_E2": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/m3ed_E2.json",
+      "m3ed_E1_old_ddp": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/m3ed_E1_old_ddp.json",
+      "m3ed_E1_new_ddp": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/m3ed_E1_new_ddp.json"
+    },
+    "depth": {
+      "dsec_E0": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/dsec_E0/stages/activity_continuous.json",
+      "dsec_E1": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/dsec_E1/stages/activity_continuous.json",
+      "dsec_E2": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/dsec_E2/stages/activity_continuous.json",
+      "dsec_E1_old_ddp": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/dsec_E1_old_ddp/stages/activity_continuous.json",
+      "dsec_E1_new_ddp": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/dsec_E1_new_ddp/stages/activity_continuous.json",
+      "m3ed_E0": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/m3ed_E0/stages/activity_continuous.json",
+      "m3ed_E1": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/m3ed_E1/stages/activity_continuous.json",
+      "m3ed_E2": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/m3ed_E2/stages/activity_continuous.json",
+      "m3ed_E1_old_ddp": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/m3ed_E1_old_ddp/stages/activity_continuous.json",
+      "m3ed_E1_new_ddp": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/m3ed_E1_new_ddp/stages/activity_continuous.json"
+    },
+    "depth_summary": "/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/activity_summary.json"
+  }
+}

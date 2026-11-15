@@ -1,0 +1,479 @@
+{
+  "received_date": "2026-11-15",
+  "source_sha256": "aac4adec51bd3abd530e6d1c51da7a38d54cb48632d98e5700015c6796008ced",
+  "raw_data_rehash_performed": false,
+  "comparisons": {
+    "semantic_dsec": {
+      "matched_hashes": {
+        "manifest_sha256": "7cee510fd055857579790862f313d1352b9001e476c706da7c15b23bcfe76456",
+        "samples_sha256": "3b5b10fa1fea27a231e6ed649d62f63a9796e8b568f92c3129e1d99c0fe2a325",
+        "activity_assignments_sha256": "cbcc13e43f6093174b3fdf2475e3db5b4ab8dc06964be3317e5904d6fe15a3fb",
+        "samples_targets_sha256": "c9d3b073fbe3cd8fc03572c59e98d99ca7be691c90f5c2650816677013d4191e",
+        "validity_support_sha256": "c9b2d796f2e2d2457b7f8a75ff5cdc55a25256fe79236033a657bfe238cfe2f3"
+      },
+      "all_conditions_support_equal": true,
+      "all_group_status_ok": true,
+      "train_eval_sequence_overlap": [],
+      "support": {
+        "all": {
+          "evaluated_frame_fraction": 1.0,
+          "event_rate_hz_max": 38030602.44819585,
+          "event_rate_hz_min": 1403450.8957133717,
+          "frames": 2806,
+          "sequence_frames": {
+            "zurich_city_13_a": 378,
+            "zurich_city_14_c": 1190,
+            "zurich_city_15_a": 1238
+          },
+          "sequences": 3,
+          "status": "ok",
+          "valid_frames": 2806,
+          "valid_pixels": 790169600
+        },
+        "p00_20": {
+          "evaluated_frame_fraction": 0.29116179615110477,
+          "event_rate_hz_max": 5929850.179025063,
+          "event_rate_hz_min": 1403450.8957133717,
+          "frames": 817,
+          "sequence_frames": {
+            "zurich_city_13_a": 90,
+            "zurich_city_14_c": 640,
+            "zurich_city_15_a": 87
+          },
+          "sequences": 3,
+          "status": "ok",
+          "valid_frames": 817,
+          "valid_pixels": 230067200
+        },
+        "p20_40": {
+          "evaluated_frame_fraction": 0.2933000712758375,
+          "event_rate_hz_max": 9053381.067621352,
+          "event_rate_hz_min": 5933836.03016181,
+          "frames": 823,
+          "sequence_frames": {
+            "zurich_city_13_a": 228,
+            "zurich_city_14_c": 329,
+            "zurich_city_15_a": 266
+          },
+          "sequences": 3,
+          "status": "ok",
+          "valid_frames": 823,
+          "valid_pixels": 231756800
+        },
+        "p40_60": {
+          "evaluated_frame_fraction": 0.2209550962223806,
+          "event_rate_hz_max": 12460450.79098418,
+          "event_rate_hz_min": 9062058.758824823,
+          "frames": 620,
+          "sequence_frames": {
+            "zurich_city_13_a": 52,
+            "zurich_city_14_c": 148,
+            "zurich_city_15_a": 420
+          },
+          "sequences": 3,
+          "status": "ok",
+          "valid_frames": 620,
+          "valid_pixels": 174592000
+        },
+        "p60_80": {
+          "evaluated_frame_fraction": 0.16678545972915182,
+          "event_rate_hz_max": 18991818.52733492,
+          "event_rate_hz_min": 12462902.193052664,
+          "frames": 468,
+          "sequence_frames": {
+            "zurich_city_13_a": 8,
+            "zurich_city_14_c": 48,
+            "zurich_city_15_a": 412
+          },
+          "sequences": 3,
+          "status": "ok",
+          "valid_frames": 468,
+          "valid_pixels": 131788800
+        },
+        "p80_100": {
+          "evaluated_frame_fraction": 0.027797576621525304,
+          "event_rate_hz_max": 38030602.44819585,
+          "event_rate_hz_min": 19106651.46788257,
+          "frames": 78,
+          "sequence_frames": {
+            "zurich_city_14_c": 25,
+            "zurich_city_15_a": 53
+          },
+          "sequences": 2,
+          "status": "ok",
+          "valid_frames": 78,
+          "valid_pixels": 21964800
+        }
+      },
+      "baseline_depth_metrics_exact_match": null,
+      "max_depth_aggregation_reconstruction_residual": null
+    },
+    "semantic_m3ed": {
+      "matched_hashes": {
+        "manifest_sha256": "a891fd384731471af0b53ecd3b9fd0e3a6f6b8981f8d6e47e7cd0dfa12cbbda8",
+        "samples_sha256": "f0f7922d368bb99dcac726d1b59259f23dc70c6ed2a4138f4230f0569d5a84b4",
+        "activity_assignments_sha256": "1515bf2a9666c27e391d2467cbd6beda2fddc1be093ae12ff9485ba437309612",
+        "samples_targets_sha256": "20ced6449d2bacfb9d85bce7e36d709735fe6ec7d1262f45d9a1da4145813e5d",
+        "validity_support_sha256": "d1fe6fdafa99cc7e25dd201715f88e0acec48c340a5121d13eb453210a2a3668"
+      },
+      "all_conditions_support_equal": true,
+      "all_group_status_ok": true,
+      "train_eval_sequence_overlap": [],
+      "support": {
+        "all": {
+          "status": "ok",
+          "frames": 26617,
+          "valid_frames": 26617,
+          "evaluated_frame_fraction": 1.0,
+          "valid_pixels": 5079348727,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 9751,
+            "car_urban_day_ucity_small_loop": 16866
+          },
+          "event_rate_hz_min": 600.0,
+          "event_rate_hz_max": 16225900.0
+        },
+        "p00_20": {
+          "status": "ok",
+          "frames": 12882,
+          "valid_frames": 12882,
+          "evaluated_frame_fraction": 0.48397640605627984,
+          "valid_pixels": 2458284942,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 3513,
+            "car_urban_day_ucity_small_loop": 9369
+          },
+          "event_rate_hz_min": 600.0,
+          "event_rate_hz_max": 1548875.0
+        },
+        "p20_40": {
+          "status": "ok",
+          "frames": 2516,
+          "valid_frames": 2516,
+          "evaluated_frame_fraction": 0.09452605477702221,
+          "valid_pixels": 480130796,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 859,
+            "car_urban_day_ucity_small_loop": 1657
+          },
+          "event_rate_hz_min": 1550625.0,
+          "event_rate_hz_max": 3296850.0
+        },
+        "p40_60": {
+          "status": "ok",
+          "frames": 3022,
+          "valid_frames": 3022,
+          "evaluated_frame_fraction": 0.11353646165984145,
+          "valid_pixels": 576691282,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 1313,
+            "car_urban_day_ucity_small_loop": 1709
+          },
+          "event_rate_hz_min": 3298075.0,
+          "event_rate_hz_max": 5082925.0
+        },
+        "p60_80": {
+          "status": "ok",
+          "frames": 4602,
+          "valid_frames": 4602,
+          "evaluated_frame_fraction": 0.17289702070105573,
+          "valid_pixels": 878204262,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 2256,
+            "car_urban_day_ucity_small_loop": 2346
+          },
+          "event_rate_hz_min": 5084125.0,
+          "event_rate_hz_max": 8070000.0
+        },
+        "p80_100": {
+          "status": "ok",
+          "frames": 3595,
+          "valid_frames": 3595,
+          "evaluated_frame_fraction": 0.1350640568058008,
+          "valid_pixels": 686037445,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 1810,
+            "car_urban_day_ucity_small_loop": 1785
+          },
+          "event_rate_hz_min": 8072450.0,
+          "event_rate_hz_max": 16225900.0
+        }
+      },
+      "baseline_depth_metrics_exact_match": null,
+      "max_depth_aggregation_reconstruction_residual": null
+    },
+    "depth_dsec": {
+      "matched_hashes": {
+        "manifest_sha256": "7cee510fd055857579790862f313d1352b9001e476c706da7c15b23bcfe76456",
+        "samples_sha256": "d0b5aeb2c595222f66ffb139fea5c884c8a15345b47b0c8b3f3e7e326a113494",
+        "activity_assignments_sha256": "7d5f3f47a35e92a6cadd119b95623fbd8a66d80639beece16cdbef6d4521bd2a",
+        "samples_targets_sha256": "6ee63dfa7d73ac458fabad64db323413c6c96743c2a814310850e1e55cc6b8e4",
+        "validity_support_sha256": "b623f319dca49c0db9b37342f9548307e68ea9a0b890bce1845f55f05c4e8e6f",
+        "validity_sha256": "5bcc80ce12175f2556257419baf13fac56086a78a67a3911470b9c313b23888c"
+      },
+      "all_conditions_support_equal": true,
+      "all_group_status_ok": true,
+      "train_eval_sequence_overlap": [],
+      "support": {
+        "all": {
+          "status": "ok",
+          "frames": 2975,
+          "valid_frames": 2975,
+          "evaluated_frame_fraction": 1.0,
+          "valid_pixels": 158944430,
+          "sequences": 4,
+          "sequence_frames": {
+            "interlaken_00_g": 667,
+            "zurich_city_02_e": 922,
+            "zurich_city_09_e": 408,
+            "zurich_city_11_c": 978
+          },
+          "event_rate_hz_min": 1432245.9347560853,
+          "event_rate_hz_max": 41963889.38875892
+        },
+        "p00_20": {
+          "status": "ok",
+          "frames": 585,
+          "valid_frames": 585,
+          "evaluated_frame_fraction": 0.19663865546218487,
+          "valid_pixels": 34451180,
+          "sequences": 4,
+          "sequence_frames": {
+            "interlaken_00_g": 248,
+            "zurich_city_02_e": 19,
+            "zurich_city_09_e": 88,
+            "zurich_city_11_c": 230
+          },
+          "event_rate_hz_min": 1432245.9347560853,
+          "event_rate_hz_max": 5930195.811748705
+        },
+        "p20_40": {
+          "status": "ok",
+          "frames": 745,
+          "valid_frames": 745,
+          "evaluated_frame_fraction": 0.2504201680672269,
+          "valid_pixels": 44827461,
+          "sequences": 4,
+          "sequence_frames": {
+            "interlaken_00_g": 170,
+            "zurich_city_02_e": 90,
+            "zurich_city_09_e": 134,
+            "zurich_city_11_c": 351
+          },
+          "event_rate_hz_min": 5933636.01816109,
+          "event_rate_hz_max": 9045821.832873315
+        },
+        "p40_60": {
+          "status": "ok",
+          "frames": 716,
+          "valid_frames": 716,
+          "evaluated_frame_fraction": 0.24067226890756302,
+          "valid_pixels": 38985274,
+          "sequences": 4,
+          "sequence_frames": {
+            "interlaken_00_g": 146,
+            "zurich_city_02_e": 132,
+            "zurich_city_09_e": 139,
+            "zurich_city_11_c": 299
+          },
+          "event_rate_hz_min": 9066283.977038622,
+          "event_rate_hz_max": 12444346.660799649
+        },
+        "p60_80": {
+          "status": "ok",
+          "frames": 374,
+          "valid_frames": 374,
+          "evaluated_frame_fraction": 0.12571428571428572,
+          "valid_pixels": 18127007,
+          "sequences": 4,
+          "sequence_frames": {
+            "interlaken_00_g": 78,
+            "zurich_city_02_e": 155,
+            "zurich_city_09_e": 43,
+            "zurich_city_11_c": 98
+          },
+          "event_rate_hz_min": 12474018.96075843,
+          "event_rate_hz_max": 19013854.96336043
+        },
+        "p80_100": {
+          "status": "ok",
+          "frames": 555,
+          "valid_frames": 555,
+          "evaluated_frame_fraction": 0.1865546218487395,
+          "valid_pixels": 22553508,
+          "sequences": 3,
+          "sequence_frames": {
+            "interlaken_00_g": 25,
+            "zurich_city_02_e": 526,
+            "zurich_city_09_e": 4
+          },
+          "event_rate_hz_min": 19048642.918575116,
+          "event_rate_hz_max": 41963889.38875892
+        }
+      },
+      "baseline_depth_metrics_exact_match": true,
+      "max_depth_aggregation_reconstruction_residual": 8.881784197001252e-15
+    },
+    "depth_m3ed": {
+      "matched_hashes": {
+        "manifest_sha256": "a891fd384731471af0b53ecd3b9fd0e3a6f6b8981f8d6e47e7cd0dfa12cbbda8",
+        "samples_sha256": "af846c83ce42ba698409ff6b346b3308a042ab9cc16f56c6cfdf7f844eef8b11",
+        "activity_assignments_sha256": "0fd7f065cca6a58799def4ec84c325d90e8d83b04e5683e5018061c5e74b7d00",
+        "samples_targets_sha256": "2f3b1c98fb3e8699ec96ed75d57579257d6255707de250627cc66efa648c2fc0",
+        "validity_support_sha256": "32694391eda23eeb4f4e84a6e1f608af8f3142b50597400672682d265c6bb0ff",
+        "validity_sha256": "bdbfeb373be3bd80fe22366a842b038bd6ae454f8201f1617d1fa2eb7407fb01"
+      },
+      "all_conditions_support_equal": true,
+      "all_group_status_ok": true,
+      "train_eval_sequence_overlap": [],
+      "support": {
+        "all": {
+          "status": "ok",
+          "frames": 26611,
+          "valid_frames": 26611,
+          "evaluated_frame_fraction": 1.0,
+          "valid_pixels": 276482385,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 9746,
+            "car_urban_day_ucity_small_loop": 16865
+          },
+          "event_rate_hz_min": 600.0,
+          "event_rate_hz_max": 16225900.0
+        },
+        "p00_20": {
+          "status": "ok",
+          "frames": 12876,
+          "valid_frames": 12876,
+          "evaluated_frame_fraction": 0.4838600578708053,
+          "valid_pixels": 79045847,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 3508,
+            "car_urban_day_ucity_small_loop": 9368
+          },
+          "event_rate_hz_min": 600.0,
+          "event_rate_hz_max": 1548875.0
+        },
+        "p20_40": {
+          "status": "ok",
+          "frames": 2516,
+          "valid_frames": 2516,
+          "evaluated_frame_fraction": 0.09454736762992748,
+          "valid_pixels": 35913467,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 859,
+            "car_urban_day_ucity_small_loop": 1657
+          },
+          "event_rate_hz_min": 1550625.0,
+          "event_rate_hz_max": 3296850.0
+        },
+        "p40_60": {
+          "status": "ok",
+          "frames": 3022,
+          "valid_frames": 3022,
+          "evaluated_frame_fraction": 0.11356206080192402,
+          "valid_pixels": 44050560,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 1313,
+            "car_urban_day_ucity_small_loop": 1709
+          },
+          "event_rate_hz_min": 3298075.0,
+          "event_rate_hz_max": 5082925.0
+        },
+        "p60_80": {
+          "status": "ok",
+          "frames": 4602,
+          "valid_frames": 4602,
+          "evaluated_frame_fraction": 0.17293600390815828,
+          "valid_pixels": 65838344,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 2256,
+            "car_urban_day_ucity_small_loop": 2346
+          },
+          "event_rate_hz_min": 5084125.0,
+          "event_rate_hz_max": 8070000.0
+        },
+        "p80_100": {
+          "status": "ok",
+          "frames": 3595,
+          "valid_frames": 3595,
+          "evaluated_frame_fraction": 0.1350945097891849,
+          "valid_pixels": 51634167,
+          "sequences": 2,
+          "sequence_frames": {
+            "car_urban_day_rittenhouse": 1810,
+            "car_urban_day_ucity_small_loop": 1785
+          },
+          "event_rate_hz_min": 8072450.0,
+          "event_rate_hz_max": 16225900.0
+        }
+      },
+      "baseline_depth_metrics_exact_match": true,
+      "max_depth_aggregation_reconstruction_residual": 4.707345624410664e-14
+    }
+  },
+  "mae_contributions_m3ed": {
+    "E1": {
+      "pooled": {
+        "improvement_by_group": {
+          "p00_20": -0.12992733622926386,
+          "p20_40": 0.060224649860716684,
+          "p40_60": 0.0522726016475935,
+          "p60_80": 0.04635840634885043,
+          "p80_100": 0.03316159922891615
+        },
+        "low_activity_contribution": -0.12992733622926386,
+        "other_groups_contribution": 0.19201725708607675,
+        "total_improvement": 0.06208992085681331
+      },
+      "frame_mean_f3": {
+        "improvement_by_group": {
+          "p00_20": -0.32775443517515784,
+          "p20_40": 0.02909832767402215,
+          "p40_60": 0.03171021735030077,
+          "p60_80": 0.02684178950151431,
+          "p80_100": 0.01797147472183785
+        },
+        "low_activity_contribution": -0.32775443517515784,
+        "other_groups_contribution": 0.10562180924767509,
+        "total_improvement": -0.22213262592742966
+      }
+    },
+    "E1_new_ddp": {
+      "pooled": {
+        "improvement_by_group": {
+          "p00_20": -0.022475455191524923,
+          "p20_40": 0.062383429908605,
+          "p40_60": 0.05741994659643568,
+          "p60_80": 0.04783338490254596,
+          "p80_100": 0.038468714477102824
+        },
+        "low_activity_contribution": -0.022475455191524923,
+        "other_groups_contribution": 0.20610547588468947,
+        "total_improvement": 0.18363002069316448
+      },
+      "frame_mean_f3": {
+        "improvement_by_group": {
+          "p00_20": -0.1622285477876154,
+          "p20_40": 0.03468359620239491,
+          "p40_60": 0.036820007680111226,
+          "p60_80": 0.028790062704174967,
+          "p80_100": 0.020470959255423624
+        },
+        "low_activity_contribution": -0.1622285477876154,
+        "other_groups_contribution": 0.12076462584210473,
+        "total_improvement": -0.04146392194547355
+      }
+    }
+  }
+}

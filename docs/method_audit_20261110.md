@@ -286,6 +286,32 @@ YOLOX-style構造・損失はYOLOX設計、splitとframe/box filteringはDSEC-De
 - ConvLSTM、4段LSTM、LSTM配置変更は次の比較候補。実装の存在を学習完了と混同しない。
 - 今回追加したF³式frame平均もサーバーでの数値/GPU実行前。ローカル73件は軽量テストであり新しい精度結果ではない。
 
+## SemanticとDepthの速度差（2026-11-14コード監査）
+
+ユーザーの速度差に関する質問を受け、実行中設定は変更せず現行コードを比較した。
+今回のSemanticはlinear probe、DepthはVKITTI初期化DPTで、headと実行設定に大きな差がある。
+
+| 項目 | Semantic | Depth |
+|---|---|---|
+| head | 単段384ch→11クラス1×1 Conv＋補間 | 4段1536ch→多段DPT融合・高解像度3×3 Conv |
+| 定義上の学習可能parameter | 4,235 | 2,728,513（約644倍） |
+| precision / train batch | AMP FP16 / 8 | FP32（AMPなし） / 4 |
+| train読み込み | worker4・pin・persistent | worker0・同期 |
+| val推論 | batch8・worker4・AMP | 1frameずつ・CPU指標/hash |
+| M3ED val頻度 | 5epoch毎、50epochで10回 | 毎epoch、50epochで50回 |
+
+パラメータ数はソースのConv式から算出し、Torch実行なし。DPTの最上段skip用73,856 paramsは定義されるが実forward未使用。
+パラメータ比は所要時間の倍率ではなく、高解像度で空間Convを実行することも大きな計算量差になる。
+head入力tensorは4倍でも、Semantic cacheがz/h両方を保存する場合があるため物理読込量の一律4倍とは説明しない。
+DSEC Semantic開発のvalは毎epoch。検証頻度5倍という差はM3EDに限定する。
+これらの速度寄与率は未計測で、今の学習構造/精度/検証頻度は変更していない。詳細は台帳§81。
+
+根拠：[Semantic head](/Users/at/project/research/EventState/event_state/segmentation/head.py:43)、
+[Depth head](/Users/at/project/research/EventState/event_state/dense/dav2.py:31)、
+[M3ED Semantic trainer](/Users/at/project/research/EventState/tools/train_m3ed_semantic.py:130)、
+[Depth trainer](/Users/at/project/research/EventState/tools/train_dense_probe.py:69)、
+[Depth validation](/Users/at/project/research/EventState/event_state/dense/runtime.py:45)。
+
 ## ユーザー確認項目
 
 - [ ] Stage 1をGEP完全再現ではなく、画像教師整合を参考にしたEventState独自再帰蒸留として記述する。

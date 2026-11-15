@@ -3,9 +3,67 @@
 2026-11-10実装。現在のtask優先順位はSemantic segmentation・Depth、その次に可能ならFlow。
 Detectionは低優先度。既存の学習済みheadを使い、活動分位別の追加評価を行う。
 
-## Depth完了後にSemantic・Depthをまとめて実行
+## 完了後の数値回収（GPU不要）
 
-今回の変更をサーバーへ反映し、現在のDepth学習が完了してからsig-gpu5で実行する。
+2026-11-15続報：以下の回収結果20件とmanifest2件を受領・保存し、台帳§85へ全体/群別の比較表を追記した。
+同task/dataset内5条件のsample/活動割当/GT関連hashが一致し、全120群のsupportも整合。
+Semanticは両datasetとも低活動群でE1のE0比改善が最大だが、M3ED Depth最低活動群はE0が最良。
+M3ED Depthはpooled全体MAEの最良が新型DDP、F³式frame平均全体MAEの最良がE0へ反転する。
+今後の比較でも両集計を残す。数値本体は`docs/evaluation_records/20261115_semantic_depth_activity_metrics.json`。
+以下のコマンドは保存結果を再回収する場合の手順で、評価を再実行する必要はない。
+
+2026-11-15、`outputs/semantic_depth_activity_20261110/summary.json`のSemantic10件・Depth10件の最終参照一覧を受領（台帳§84）。
+一括評価の最終集計まで到達済み。次は保存済みJSONから群別の数値を回収する。`clear`で端末表示を消しても結果ファイルは残る。
+以下は既存JSONを読み、共有manifestを重複除去して、全体＋実際の活動群の全指標・件数・hashをJSONLへ保存/表示するだけ。
+DepthのF³式frame平均も保持し、巨大なframe単位配列は取り出さない。再学習・再評価・新しいコードのpullは不要。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+python - <<'PY' | tee outputs/semantic_depth_activity_20261110/metrics_for_review.jsonl
+import json
+from pathlib import Path
+
+summary = json.loads(Path("outputs/semantic_depth_activity_20261110/summary.json").read_text())
+seen = set()
+def emit(value):
+    print(json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+
+emit({"type": "index", "counts": {task: len(summary[task]) for task in ("semantic", "depth")}})
+for task in ("semantic", "depth"):
+    for condition, filename in summary[task].items():
+        activity = json.loads(Path(filename).read_text())["activity_evaluation"]
+        manifest = activity.pop("activity_manifest")
+        sha = manifest["manifest_sha256"]
+        if sha not in seen:
+            emit({"type": "manifest", "identity": manifest})
+            seen.add(sha)
+        emit({"type": "result", "task": task, "condition": condition,
+              "report": filename, "manifest_sha256": sha, **activity})
+PY
+```
+
+出力は`outputs/semantic_depth_activity_20261110/metrics_for_review.jsonl`にも保存される。
+SemanticのmIoUとDepthのδはJSON本来の0–1表記。通常SqRel（誤差²/GT）とF³式frame平均SqRel（誤差²/GT²）は別欄を維持する。
+分位境界が同値なら統合されるので、実際の群をそのまま回収する。評価splitの各群が20%ずつとは限らない。
+
+## 先に全体スコアを回収
+
+2026-11-15、common Depthの全10条件・最終summaryとDSEC提出用ZIPの生成完了をユーザーログで確認。
+まずsig-gpu5で既存の全体スコアと提出条件を確認する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+cat outputs/stage2_common_depth_vkitti_20261110/summary.json
+cat outputs/stage2_common_depth_vkitti_20261110/submission/manifest.json
+```
+
+DSECの`mae_px`は公開val視差MAEで、公式hidden testスコアではない。
+ZIPは生成済みだが公式checker・実提出・公式採点は未確認。旧F³用shellのdsec-checkは出力配置が異なるため流用しない。
+
+## Semantic・Depthの活動5分位をまとめて評価
+
+全体スコアを保存した後、sig-gpu5で以下を実行する。既存の一括CLIで対応でき、head再学習は不要。
 既定はDSEC/M3ED × Semantic/Depth × 基本3条件・E1旧新DDPの計20評価。
 DSEC Semanticは既存final headによる公式test3系列、M3ED Semanticと両datasetのDepthは公開valを使う。
 
@@ -33,8 +91,10 @@ cacheを手動削除した場合は事前確認で止まるため、対応する
 出力は`outputs/semantic_depth_activity_20261110/`の`manifests/`、`semantic/`と`summary.json`。
 Depthの詳細JSON/CSVと`activity_summary.json`は元のDepth run配下に保存する。
 同じコマンドを再実行すると、入力が一致する完了済み評価を再利用する。
+一括summaryは詳細reportへの参照一覧で、数値比較には各JSON/CSVとDepthのactivity_summary.jsonを使う。
+この一括評価には速度別集計は含まれない。活動5分位と自車速度の分析は別に扱う。
 この一括入口のstdlibテスト7件を含め、Macの関連stdlibテスト63件が通過。
-実データ/GPU実行はサーバー未検証。
+実データ/GPU実行の最終index・群別数値・hashは2026-11-15に受領・比較済み（台帳§84/85）。
 
 ## 共通の区分
 

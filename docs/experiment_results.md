@@ -2074,3 +2074,464 @@ seed0/F3公開valはrunner既定であり保存configは未受領。concatは提
   seed0は既存runner既定、splitはDSEC37train/4val・M3ED3train/2val、headは50epochを維持する。
 - 完了head/正常な採点結果を再利用。不足評価のみ実行し、途中headは保全してepoch1から再学習する。
   詳細は`docs/common_depth_parallel.md`。サーバーでの停止・切替・2GPU実稼働・速度改善や新しい精度値は未受領。
+
+## 78. 2GPU実行でDSEC全5条件とM3ED E0の完了を確認（2026-11-13受領）
+
+- ユーザーが2GPU用コマンドと、その後の親ログを提示。原文はMacの
+  `docs/evaluation_records/20261113_common_depth_two_gpu_progress.log`へ保存（Git非管理）。
+  実行場所は`/home/iASL/Arata_repo/EventState`、既存env、
+  `python tools/run_common_depth.py --gpus 0,1 --preflight`→同引数の本実行。
+  出力rootは`outputs/stage2_common_depth_vkitti_20261110`、workerログは`parallel_0_ylh1lm/{条件名}.log`。
+  commit hash・保存config本体は未受領。head seed0・50epochは既存runner既定、
+  splitはDSEC37train/4val・M3ED3train/2公開valを維持する。
+- 切替前のnvidia-smiは2026-11-12 09:59:18で、V100 32GB×3は各0%・5MiB、Xorgのみ。
+  scratch空き1023.1GiB、preflightは`GPU(s) 0, 1`、`Initially feasible parallel conditions: 2/2`で成功。
+  このsnapshotを学習中のGPU利用率としては扱わない。
+- preflightでDSEC E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、
+  E1 Encoder＋LSTM（h蒸留）・旧型DDPは`reuse completed reports`。
+  E2 Encoder＋LSTM（z+h蒸留）は不足する視差valだけ実行し、completedへ到達した。
+  E1 Encoder＋LSTM（h蒸留）・新型DDPはGPU1でtrain/val特徴抽出→head学習→Depth採点→視差val→completed。
+  これによりDSEC全5条件のhead/公開val Depth/視差採点が完了したことを親ログで確認した。
+- M3ED E0 Encoder（z蒸留）はGPU0でtrain/val特徴抽出→head学習→Depth採点→completed。
+  末尾時点ではGPU0のM3ED E2 Encoder＋LSTM（z+h蒸留）、GPU1のM3ED E1 Encoder＋LSTM（h蒸留）が
+  それぞれhead学習へ進行。M3ED E1 Encoder＋LSTM（h蒸留）・旧型DDP／新型DDPはまだ起動表示なし。
+- 条件単位では6/10完了。重複completed表示はphase更新と親のworker回収の2通知で、二重実行ではない。
+  各スコア・best epoch・保存config・完了headの実ファイル時刻は今回未受領。
+  時刻付きepoch情報がなく、2並列が3並列より速くなったかはまだ数値で比較できない。
+  DSEC新型DDP headのconfig.json/_SUCCESS時刻を既存の方法で読むと、2GPU時の概算学習＋val＋保存時間が得られる。
+  M3EDのmin/epochはDSECの既存時間と直接比較しない。
+- 最終`Completed: .../summary.json`やDSEC test ZIP生成は未受領。
+  現行並列runnerは全workerが完了してから親がsummary保存・選択条件のtest ZIP生成を行うため、
+  DSEC5条件完了だけで提出ZIP完了とは判断しない。活動5分位の追加評価も今回未実行。
+
+## 79. 2並列時のDSEC新型DDP headは平均15.35分/epoch（2026-11-13受領）
+
+- ユーザーからsig-gpu5での`stat -c '%y %n'`出力を受領。
+  対象は`/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/dsec_E1_new_ddp/stages`。
+  DSEC E1 Encoder＋LSTM（h蒸留）・新型DDP、2GPU並列run（GPU0/1）で学習した完了head。
+  head seed0・50epochは既存runner既定、splitはDSEC37train/4val。保存config本体やbest epochは今回未受領。
+- config.json更新時刻：`2026-11-12 10:38:58.536786018 +0900`。
+  _SUCCESS更新時刻：`2026-11-12 23:26:19.944225332 +0900`。
+  差は46,041.407439314秒＝767.356790655分＝**12時間47分21.407秒**。
+  50epoch換算で**15.347135813分/epoch（約15分21秒）**。
+  数値記録は`docs/evaluation_records/20261113_common_depth_two_gpu_timing.json`。
+- この時間は特徴抽出・モデル初期化・standalone Depth/視差採点を含まず、head学習・各epochのval・重み保存を含む。
+  file copy/touchや途中再開による停止期間混入の報告はない。
+  §76の3並列DSEC E1/E2/旧型DDP平均35.99分/epochに対して、今回の平均時間は約57.36%短く、時間比は約2.345倍。
+  直列E0の13.62分/epochに対しては約12.68%長い。
+- 比較条件と同時実行相手は異なる。今回のDSEC新型DDPと並行してM3ED E0の処理も進行したため、
+  同一モデル・同一負荷の1/2/3GPU対照実験としては扱わない。
+  実測した1条件のhead時間が短いことを根拠に、当面2並列を維持する運用判断が妥当と整理した。
+  run全体の短縮率や実測合計samples/sec、CPU競合の具体的原因は確定しない。
+  M3EDの新しい進捗・スコアや、最終summary/提出ZIPの完了は今回未受領。
+
+## 80. 2GPU Depthが9/10条件完了へ進行（2026-11-14受領）
+
+- ユーザーから§78の続きとなる親ログを受領。原文はMacの
+  `docs/evaluation_records/20261114_common_depth_two_gpu_progress.log`へ保存（Git非管理）。
+  コマンドは既存envで`python tools/run_common_depth.py --gpus 0,1 --preflight`→同引数の本実行。
+  runは`outputs/stage2_common_depth_vkitti_20261110`、workerログは`parallel_0_ylh1lm/{条件名}.log`。
+  head seed0/50epochはrunner既定、splitはDSEC37train/4val・M3ED3train/2val。保存config本体は今回未受領。
+- DSEC全5条件とM3ED E0 Encoder（z蒸留）の完了は§78から維持。
+  新たにM3ED E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、
+  E1 Encoder＋LSTM（h蒸留）・旧型DDPがhead学習→Depth採点→completedへ到達した。
+  completedの重複を除いた完了条件数は9/10。
+- 末尾ではGPU0のM3ED E1 Encoder＋LSTM（h蒸留）・新型DDPがtrain/val特徴抽出を終えてhead学習段階。
+  GPU1の旧型DDP条件は完了。新型DDPのepoch数・時刻・スコア・残時間はこの親ログからは分からない。
+  全体Completed・最終summary・DSEC test ZIPは未受領。親は全worker終了後に最終集計と提出ZIP生成へ進む。
+
+## 81. SemanticとDepthの速度差をコード監査（2026-11-14）
+
+- ユーザーが「Semanticの時よりかなり遅い。headのsizeか」と質問。
+  実行中の学習は変更せず、現在のcommon runner・head・dataset・検証コードを読み取り比較した。
+  監査JSONは`docs/evaluation_records/20261114_semantic_depth_head_audit.json`（対象ソースSHA付き）。
+  MacでTorch・GPU・重い依存テストは実行せず、パラメータ数はConv/ConvTransposeの式からstdlibで算出した。
+- Semanticの今回のz/h linear headは384→11の1×1 Conv＋補間で**4,235 parameters**。
+  DepthのVKITTI MetricDPTSmallは4段1536ch→多段再構成/融合＋出力Convで**2,728,513 parameters（約644倍）**。
+  内訳はprojects277,200＋resize1,401,360＋scratch414,720＋fusion607,488＋output27,745。
+  定義上の学習可能parameter数で、最上段skipなし分岐のResidualUnit 73,856 paramsは実forwardで未使用。
+  パラメータ比を実時間の倍率とは扱わない。Depthは高解像度上で3×3 Convを実行する点も計算量差になる。
+- head以外の確定差：Semanticは既定AMP FP16、batch8、worker4・pinned/persistent読み込み。
+  DepthはFP32/AMPなし、batch4、DataLoader worker未指定＝0で同期読み込み。
+  これらは現common runnerがtrainer既定を使う構成を照合したもの。実サーバー保存config本体は未受領。
+- M3ED Semanticは5epoch毎＋最終epochの検証（50epochで10回）、Depthは毎epoch（50回）。
+  Semantic valはbatch8＋worker4＋AMP、Depth valはDataLoaderを使わず1frameずつ推論→CPU指標/hash計算。
+  DSEC Semantic開発は毎epochvalなので、検証回数5倍という説明はM3EDに限定する。
+  既測15.35分/epochはtrainだけでなく、毎epochのvalと保存を含む。
+- Depth sampleは特徴torch.load＋GT読込/検査。DSECではPNG SHA確認と視差→Depth変換を毎sample行う。
+  M3EDのframe毎HDF5 open/read/closeやframe別torch.loadはSemanticにもあるため、Depth独自の原因とは扱わない。
+  Depth入力feature tensorは1536chでSemantic384chの4倍だが、Semantic保存payloadにz/h両方が入る場合があり、
+  物理ディスク読込量が一律4倍とは説明しない。CPU thread競合の寄与率も未測定。
+- DSEC headのデータsplitはSemantic6/2選択→全8refitとDepth37/4で異なる。系列数比をframe数や時間の倍率にしない。
+  M3EDは双方train3/val2・352×640なので、Depthだけdatasetが多いという一般化もしない。有効frame数は別途照合が必要。
+  両taskともcheckpointごとに特徴抽出し、backboneへのbackpropはしない。
+- 一次資料：現repoの`event_state/segmentation/head.py`、`event_state/dense/dav2.py`、
+  `tools/train_{dsec,m3ed}_semantic.py`、`tools/train_dense_probe.py`、`event_state/dense/runtime.py`。
+  DPT構造はDepth Anything V2公式metric headも確認：
+  https://github.com/DepthAnything/Depth-Anything-V2/blob/main/metric_depth/depth_anything_v2/dpt.py 。
+  AMP・worker/pin memoryと性能の関係はPyTorch公式：
+  https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html 。
+- 結論はhead構造と精度/データ供給/検証の複合差。どれが何分を占めるかはtrain/val/data待ちの個別計測がないため未確定。
+  今回は構造・loss・精度・worker・検証頻度を変更しておらず、既存結果を別recipeとして扱わない。
+
+## 82. common Depth全10条件・提出ZIP・最終summaryの完了受領（2026-11-15）
+
+- ユーザーが続報ログと「次は何をするべき」を提示。
+  原文はMacの`docs/evaluation_records/20261115_common_depth_completed.log`へ保存（Git非管理）、
+  完了記録は`docs/evaluation_records/20261115_common_depth_completion.json`。
+  実行は`/home/iASL/Arata_repo/EventState`の既存envでcommon Depth `--gpus 0,1`。
+  出力rootは`outputs/stage2_common_depth_vkitti_20261110`、workerログは`parallel_0_ylh1lm`。
+  head seed0/50epochはrunner既定、splitはDSEC37train/4val、M3ED3train/2公開val。保存config本体は未受領。
+- 最後のM3ED E1 Encoder＋LSTM（h蒸留）・新型DDPがhead学習→Depth採点→completedに到達。
+  DSEC/M3EDのE0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、
+  E1 Encoder＋LSTM（h蒸留）・旧型DDP／新型DDPの計10条件がすべてcompleted。
+- DSEC公式test exportは12系列：interlaken_00_a=57、00_b=80、01_a=113、thun_01_a=9、01_b=53、
+  zurich_city_12_a=38、13_a=18、13_b=15、14_a=21、14_b=28、14_c=59、15_a=61、合計552枚。
+  `Prepared outputs/stage2_common_depth_vkitti_20261110/submission/submission.zip; run official checker before upload.`と、
+  最後の`Completed: outputs/stage2_common_depth_vkitti_20261110/summary.json`まで受領した。
+  exporterの内蔵ZIP検査を通過した生成完了の証拠であり、公式checker・提出・公式test採点の完了ではない。
+- `summary.json`は各条件の公開val pooled Depth指標と、DSECの公開val視差MAEを格納する。
+  提出条件は公開val4系列の平均視差MAE最小から選ぶ。今回の貼付にはsummaryの数値、選択条件、ZIP SHA自体は含まれない。
+  次に同runの`summary.json`と`submission/manifest.json`を回収し、既存Semantic結果と合わせた全体比較を行う。
+- 次の追加評価は既存`tools/run_semantic_depth_activity.py`で、DSEC/M3ED×Semantic/Depth×5条件の計20評価。
+  まず`--depth-run outputs/stage2_common_depth_vkitti_20261110 --preflight`で全入力/完了headを確認し、
+  同じ設定で`--output outputs/semantic_depth_activity_20261110`へ実行する手順を提示。
+  DSEC train35／M3ED train3由来の共通活動5分位を共有し、head再学習なし。
+  Depthはval特徴を一時再抽出する。既存CLIはGPU0で直列実行し、速度別集計はこのCLIには含まれない。
+- その後は全体/5分位の比較表と図を整理→最終段Patchwise LSTM対3×3 ConvLSTM→LSTM配置比較の順。
+  FlowはSemantic/Depthの後に可能なら行い、Detectionは低優先度を維持する。
+  追加評価・公式checker・提出・新しい構造比較の実行は今回未確認。
+
+## 83. common Depth全10条件の公開val指標と提出選択を受領（2026-11-15）
+
+- ユーザーが同runの`summary.json`と`submission/manifest.json`をcatした出力を提示。
+  原文はMacの`docs/evaluation_records/20261115_common_depth_metrics.log`へ保存（Git非管理）。
+  summary全量は`docs/evaluation_records/20261115_common_depth_summary.json`へ保存。
+  manifest受領部分は`docs/evaluation_records/20261115_common_depth_submission_received.json`へ来歴付きで保存した。
+  貼付manifestは終端の`}`が1個欠けているため、解析用にだけ補完し、その事実をJSONへ記録。
+  サーバー上の元manifestの破損や完全なJSON妥当性を確認したものではない。
+- 実行rootは`/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110`。
+  各headは`heads/{dataset}_{条件ID}/stages/best.pt`、採点は同dirの`continuous.json`、DSEC視差は`disparity_val.json`。
+  head seed0・50epochは既存runner既定で、保存config本体・best epochは今回未受領。
+  Stage 2 splitはDSEC37train/4公開val、M3ED3train/2公開val。0.1<GT≤80mの有効画素pool集計。
+  SqRelは通常の誤差²/GT、delta1は割合を以下では%表示。F³式frame等重み平均ではない。
+
+### DSEC公開val（全5条件とも2,975frame・158,944,430有効画素）
+
+| 条件 | MAE(m)↓ | RMSE(m)↓ | AbsRel↓ | SqRel↓ | δ1(%)↑ | 公開val視差MAE(px)↓ |
+|---|---:|---:|---:|---:|---:|---:|
+| E0 Encoder（z蒸留） | 2.546841 | 4.210218 | 0.109634 | 0.648048 | 87.0482 | 1.978426 |
+| E1 Encoder＋LSTM（h蒸留） | **2.445824** | 4.088795 | **0.104564** | **0.607859** | **88.1452** | **1.870813** |
+| E2 Encoder＋LSTM（z+h蒸留） | 2.496705 | **4.087715** | 0.110115 | 0.629261 | 87.2208 | 1.977571 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 2.532146 | 4.149790 | 0.109152 | 0.623369 | 87.0192 | 2.032522 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 2.524865 | 4.160571 | 0.108802 | 0.626324 | 87.0063 | 2.036675 |
+
+- E1単GPU対E0：MAE−0.101017m（−3.966%）、RMSE−0.121423m（−2.884%）、AbsRel−4.624%、
+  δ1+1.096934ポイント、視差MAE−0.107613px（−5.439%）。
+  RMSEはE2がE1より約0.001081m良く、δ3もE2が最良。E1が全指標で一律最良とは扱わない。
+- 新型DDP対旧型DDP：MAEは約0.288%改善するが、RMSEは約0.260%、視差MAEは約0.204%悪化。
+  DSECでDDP重みが単GPU E1を上回るという結果ではない。
+
+### M3ED公開val（全5条件とも26,611frame・276,482,385有効画素）
+
+| 条件 | MAE(m)↓ | RMSE(m)↓ | AbsRel↓ | SqRel↓ | δ1(%)↑ |
+|---|---:|---:|---:|---:|---:|
+| E0 Encoder（z蒸留） | 3.740172 | 6.742528 | 0.213130 | 2.141741 | 71.8627 |
+| E1 Encoder＋LSTM（h蒸留） | 3.678082 | 6.766504 | 0.215305 | 2.323548 | 72.5719 |
+| E2 Encoder＋LSTM（z+h蒸留） | 3.852991 | 6.700262 | 0.232460 | 2.200021 | 70.8616 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 3.702383 | 6.751806 | 0.221358 | 2.358472 | 72.3905 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | **3.556542** | **6.495352** | **0.211038** | **2.125645** | **73.1361** |
+
+- 基本3条件ではE1単GPUがMAE最良。E0比MAE−0.062090m（−1.660%）、δ1+0.709167ポイント。
+  ただしRMSE+0.356%、AbsRel+1.020%、SqRel+8.489%で、全指標が改善したわけではない。
+- 新型DDP対E0：MAE−0.183630m（−4.910%）。対E1単GPU：MAE−0.121540m（−3.304%）。
+  対旧型DDP：MAE−0.145841m（−3.939%）、RMSE−0.256454m（−3.798%）、AbsRel−4.662%で全8指標が改善。
+  全5条件中、δ2最良はE1単GPU、δ3最良はE0で、新型DDPも全指標一律の最良ではない。
+
+### 提出manifest受領部分と解釈
+
+- 選択は`dsec_E1/stages, public val`で、summaryの公開val視差MAE最小条件と整合。
+  12系列552枚、`png_saturated_pixels=0`、RGB interval・左イベントのみの連続状態推論と記載。
+  記載ZIP SHA256は`047a4246baf3f25e280fca0fba4aaa2f57cb0a62ef801ff670bdfbef3116cf05`。
+  ZIP本体をこちらで再hashしたものではなく、公式checker/提出/公式testスコアも今回未受領。
+- manifest上のEventState pretrain train35とstatistics35は一致し、記載holdout16との交差は空。
+  これは宣言されたEventState入力・統計の整合で、RGB foundation model上流データの検証ではない。
+- 同dataset内で全5条件のframe/画素件数は一致する。ただしsummaryの件数だけで、時刻集合/mask hashまで同一と独立検証したとは扱わない。
+  基本3条件では両datasetともE1単GPUがMAE最良で既受領Semanticの傾向と一致。
+  全5条件のM3EDではSemanticはE1単GPU、Depthは新型DDPが最良で、DDP順位はtask依存。
+  単一seedの全体平均から統計的有意差や低活動時の記憶保持の機序を主張しない。
+- 続けてユーザーが`clear`で端末logを消したと報告。端末表示の消去は保存JSON/CSVを消さない。
+  活動5分位評価のCompleted行は必須とせず、`outputs/semantic_depth_activity_20261110/summary.json`の
+  Semantic10件/Depth10件の結果参照と各reportから完了を確認する。Depth側activity_summary単独は途中でも存在し得る。
+  ログ消去を理由とした再学習/再評価は行わない。活動5分位/速度別の結果は今回まだ未受領。
+
+## 84. Semantic・Depth活動5分位の最終indexを受領（2026-11-15）
+
+- ユーザーがサーバーの`outputs/semantic_depth_activity_20261110/summary.json`をcatした結果を提示。
+  受領内容は`docs/evaluation_records/20261115_semantic_depth_activity_summary_received.json`へ来歴付きで保存。
+  貼付は最後の閉じ括弧が1個欠けているため解析用に補完し、その操作を記録した。サーバー上の元JSON破損とは判断しない。
+- `manifests`にDSEC/M3ED各1件、`semantic`10件・`depth`10件の全結果参照を確認。
+  各datasetの条件はE0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、
+  E1 Encoder＋LSTM（h蒸留）・旧型DDP／新型DDP。
+  Semantic結果は`/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/{dataset}_{condition}.json`、
+  Depth結果は`/home/iASL/Arata_repo/EventState/outputs/stage2_common_depth_vkitti_20261110/heads/{dataset}_{condition}/stages/activity_continuous.json`。
+  Depthの参照indexは同Depth rootの`activity_summary.json`、manifestは活動rootの`manifests/{dataset}.json`。
+- `tools/run_semantic_depth_activity.py`はSemantic全条件とDepth子処理終了後、Depth10件のJSON/CSVを確認してから最終summaryを保存する。
+  この最終indexの受領により一括評価が最後の集計まで到達した証拠を得た。Completed行の再取得は不要。
+  各reportの実数値やhashをこちらで独立に確認したという意味ではない。
+- 既存headの追加評価で再学習はない。Depth head seed0/50epochはrunner既定（保存config本体は未受領）。
+  SemanticはDSEC公式test3系列／M3ED公開val2系列（疑似ラベル）、DepthはDSEC公開val4系列／M3ED公開val2系列。
+  共通活動manifestはDSEC train35／M3ED train3で境界を固定する設計。境界の実数値、群別supportと指標は今回のindexには含まれない。
+- 次は保存済み20 JSONの`activity_evaluation`だけをstdlibで回収する。frame単位配列は送らず、manifest identity、
+  活動群の全指標・F³式frame平均・frame/有効画素/系列別件数・比較用hashを残す。
+  回収コマンドは`docs/semantic_depth_activity.md`。GPU・再推論・head再学習・git pullは不要。
+  数値を受領後に全体＋活動群の比較表を作る。速度別評価、公式checker・提出・公式testスコアは依然未確認。
+
+## 85. Semantic・Depth共通活動5分位の全20結果と集計順位の反転（2026-11-15）
+
+- ユーザーが保存結果の回収JSONL（23行：index1・manifest2・result20）を提示。全行を補完なしで解析できた。
+  原文は`docs/evaluation_records/20261115_semantic_depth_activity_metrics_received.log`（Git非管理）、
+  受領数値全量は`docs/evaluation_records/20261115_semantic_depth_activity_metrics.json`、
+  件数/hash/再集計監査とMAE改善の加重分解は`docs/evaluation_records/20261115_semantic_depth_activity_audit.json`。
+- サーバー出力はSemantic `outputs/semantic_depth_activity_20261110/semantic/{dataset}_{condition}.json`、
+  Depth `outputs/stage2_common_depth_vkitti_20261110/heads/{dataset}_{condition}/stages/activity_continuous.json`。
+  サーバーrepoは`/home/iASL/Arata_repo/EventState`、回収ファイルは活動rootの`metrics_for_review.jsonl`。
+  Stage 1/2とも既存重みを使用し、追加学習なし。seed0は既存runner/既受領記録に基づく単一seedで、今回の回収には保存config本体は含まれない。
+- SemanticはDSEC公式test3系列／M3ED公開val2系列・InternImage疑似ラベル。
+  DepthはDSEC公開val4系列／M3ED公開val2系列、既存0.1<GT≤80mのGT maskを維持する。
+  DSECの両taskは評価系列が別。M3EDは同じ2系列でもSemantic26,617対Depth26,611frameで完全同一サンプルではない。
+  群別件数の差はQ1の6frame（Rittenhouse5・ucity small1）。今回の集計だけで欠落時刻や原因までは断定しない。
+- 各task×dataset内5条件のmanifest/sample/活動割当/target/support hashesがすべて一致し、Depthのvalidity hashも一致。
+  全120群はstatus=ok、全frameに有効GTあり、群別件数と画素数の和がallと一致。train/eval系列の交差なし。
+  Semanticの全11classは全群にGT supportがあり、条件間class supportも一致。Depth10件のall pooled値は§83のsummaryと辞書全体で完全一致。
+  受領manifest identityからprotocol SHAを再計算して一致。元frame・GT・mask・manifest recordsは未受領なので、
+  それらのhashを元データから再計算したという意味ではない。Macではstdlib解析のみでGPU/推論/学習なし。
+
+### 活動境界と評価support
+
+Q1〜Q5は各datasetのtrain固定境界。評価データを見て5等分し直していない。同値統合は今回発生していない。単位は百万events/s。
+
+| dataset | train系列 | fit frame | 20% | 40% | 60% | 80% |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| DSEC | 35 | 44,488 | 5.933583 | 9.054970 | 12.461568 | 19.043645 |
+| M3ED | 3 | 16,430 | 1.549875 | 3.296850 | 5.084100 | 8.072375 |
+
+各セルはframe数（評価集合に占める割合）。
+
+| task/dataset | 全体 | Q1 | Q2 | Q3 | Q4 | Q5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| semantic / DSEC | 2,806 | 817（29.12%） | 823（29.33%） | 620（22.10%） | 468（16.68%） | 78（2.78%） |
+| semantic / M3ED | 26,617 | 12,882（48.40%） | 2,516（9.45%） | 3,022（11.35%） | 4,602（17.29%） | 3,595（13.51%） |
+| depth / DSEC | 2,975 | 585（19.66%） | 745（25.04%） | 716（24.07%） | 374（12.57%） | 555（18.66%） |
+| depth / M3ED | 26,611 | 12,876（48.39%） | 2,516（9.45%） | 3,022（11.36%） | 4,602（17.29%） | 3,595（13.51%） |
+
+DSEC Semantic Q5は78frame・2系列に限られる。DSEC Semantic Q1の78.34%はzurich_city_14_c、
+DSEC Depth Q5の94.77%はzurich_city_02_e、M3ED Q1の約72.7%はucity_small_loop。
+群間で系列・クラス構成も変わり、連続frame数は独立標本数と同義ではない。活動量だけの因果や自車速度の効果とは解釈しない。
+
+### DSEC Semantic：mIoU（%）↑
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 59.725305 | 55.250081 | 61.080080 | 62.613512 | 56.742226 | 51.438943 |
+| E1 Encoder＋LSTM（h蒸留） | **60.482540** | **56.253054** | **61.818061** | **63.319907** | **57.325604** | **51.467778** |
+| E2 Encoder＋LSTM（z+h蒸留） | 60.118845 | 55.928628 | 61.484406 | 62.869799 | 56.800383 | 51.032756 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 59.487608 | 55.159913 | 60.925114 | 62.411075 | 56.040738 | 49.610328 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 59.457420 | 55.020103 | 60.903705 | 62.411243 | 56.061283 | 49.710646 |
+
+### M3ED Semantic：mIoU（%）↑
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 36.719973 | 25.401320 | 46.964972 | 50.491637 | 49.463110 | **47.505198** |
+| E1 Encoder＋LSTM（h蒸留） | **38.700944** | **29.109403** | **49.157411** | **51.422810** | **49.702573** | 47.394163 |
+| E2 Encoder＋LSTM（z+h蒸留） | 37.287861 | 27.357291 | 47.605919 | 50.156853 | 48.702600 | 46.540089 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 38.642950 | 29.012532 | 48.295903 | 50.561118 | 48.886796 | 46.591588 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 38.223967 | 28.387750 | 48.171655 | 50.523695 | 48.939665 | 46.664967 |
+
+SemanticのE1単GPU−E0差はQ1→Q5へ単調に小さくなる。
+DSECは+1.002973/+0.737981/+0.706395/+0.583379/+0.028835ポイント、
+M3EDは+3.708084/+2.192439/+0.931172/+0.239463/−0.111034ポイント。
+E1はDSEC全5群、M3ED Q1〜Q4で最良。M3ED Q5はE0が最良。
+M3ED Q1のE1−E0クラスIoU差はsidewalk+21.069594、car+8.175554、road+5.364846ポイントだがpersonは−3.463261ポイント。
+全クラス一律改善やLSTM記憶保持の因果・統計的有意差は主張しない。
+
+### DSEC Depth：pooled MAE(m)↓
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 2.546841 | 2.264666 | 2.362939 | 2.493841 | 2.785279 | 3.243370 |
+| E1 Encoder＋LSTM（h蒸留） | **2.445824** | **2.196312** | **2.263113** | **2.413834** | **2.687870** | **3.050876** |
+| E2 Encoder＋LSTM（z+h蒸留） | 2.496705 | 2.238175 | 2.299176 | 2.440582 | 2.748050 | 3.179222 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 2.532146 | 2.263236 | 2.336647 | 2.466089 | 2.784357 | 3.242964 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 2.524865 | 2.278528 | 2.299123 | 2.472890 | 2.790556 | 3.226135 |
+
+### DSEC Depth：pooled RMSE(m)↓
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 4.210218 | 3.824101 | 3.960365 | 4.140490 | 4.556433 | 5.008919 |
+| E1 Encoder＋LSTM（h蒸留） | 4.088795 | **3.718329** | 3.852522 | 4.061566 | 4.475931 | **4.752299** |
+| E2 Encoder＋LSTM（z+h蒸留） | **4.087715** | 3.740791 | **3.820018** | **4.015838** | **4.453973** | 4.853646 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 4.149790 | 3.752638 | 3.879594 | 4.068053 | 4.521415 | 4.989800 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 4.160571 | 3.813603 | 3.839692 | 4.085028 | 4.575691 | 4.980059 |
+
+### DSEC Depth：pooled AbsRel↓
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 0.109634 | 0.097680 | 0.106144 | 0.110391 | 0.123607 | 0.122287 |
+| E1 Encoder＋LSTM（h蒸留） | **0.104564** | **0.093921** | **0.100289** | **0.105375** | **0.118755** | **0.116509** |
+| E2 Encoder＋LSTM（z+h蒸留） | 0.110115 | 0.098602 | 0.105501 | 0.110283 | 0.125861 | 0.123928 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 0.109152 | 0.098868 | 0.104597 | 0.108506 | 0.123624 | 0.123398 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 0.108802 | 0.099436 | 0.103503 | 0.109279 | 0.122771 | 0.121590 |
+
+### M3ED Depth：pooled MAE(m)↓
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 3.740172 | **4.664813** | 4.075265 | 3.480129 | 3.220871 | 2.975593 |
+| E1 Encoder＋LSTM（h蒸留） | 3.678082 | 5.119266 | 3.611621 | 3.152041 | 3.026193 | 2.798025 |
+| E2 Encoder＋LSTM（z+h蒸留） | 3.852991 | 4.898726 | 3.969756 | 3.502147 | 3.340657 | 3.123466 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 3.702383 | 4.921661 | 3.694406 | 3.276757 | 3.170233 | 2.883016 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | **3.556542** | 4.743427 | **3.595002** | **3.119734** | **3.019999** | **2.769607** |
+
+### M3ED Depth：pooled RMSE(m)↓
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 6.742528 | **8.448784** | 7.096091 | 6.201009 | 5.653743 | 5.056398 |
+| E1 Encoder＋LSTM（h蒸留） | 6.766504 | 9.369068 | 6.319855 | **5.528171** | **5.228821** | 4.697998 |
+| E2 Encoder＋LSTM（z+h蒸留） | 6.700262 | 8.833922 | 6.557009 | 5.778123 | 5.413370 | 5.016767 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 6.751806 | 9.016786 | 6.464775 | 5.773649 | 5.498312 | 4.856045 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | **6.495352** | 8.662647 | **6.318094** | 5.533385 | 5.252828 | **4.686344** |
+
+### M3ED Depth：pooled AbsRel↓
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 0.213130 | **0.281748** | 0.208543 | 0.185795 | 0.182802 | 0.173263 |
+| E1 Encoder＋LSTM（h蒸留） | 0.215305 | 0.310777 | **0.190132** | **0.176767** | **0.177699** | **0.167485** |
+| E2 Encoder＋LSTM（z+h蒸留） | 0.232460 | 0.295880 | 0.219222 | 0.207775 | 0.208032 | 0.196787 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 0.221358 | 0.307334 | 0.198480 | 0.186708 | 0.189008 | 0.176461 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | **0.211038** | 0.290643 | 0.191826 | 0.177828 | 0.181377 | 0.168687 |
+
+DSEC E1は全活動群でpooled/F³双方のMAE・AbsRelが最良。ただしpooled全体RMSEはE2が僅差で最良（§83）。
+DSEC E1のE0比MAE改善率はQ1=3.018%、Q2=4.225%、Q3=3.208%、Q4=3.497%、Q5=5.935%で、最低活動の改善が最大とはいえない。
+M3ED Depth Q1はpooled/F³双方のMAE/RMSE/AbsRel/SqRelでE0が最良。
+pooled Q1 MAEはE1がE0比9.742%、E2が5.014%、旧DDPが5.506%、新DDPが1.685%悪化。
+一方、Q2〜Q5のpooled MAEは新型DDPが全5条件で最良。Semanticの低活動優位をDepth全体へ一般化しない。
+
+### DSEC Depth：F³式frame等重み平均（全体）
+
+| 条件 | MAE(m)↓ | RMSE(m)↓ | AbsRel↓ | SqRel(GT²分母)↓ |
+| --- | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 2.715488 | 4.283770 | 0.113018 | 0.031966 |
+| E1 Encoder＋LSTM（h蒸留） | **2.590480** | **4.145879** | **0.107302** | **0.028912** |
+| E2 Encoder＋LSTM（z+h蒸留） | 2.656626 | 4.170042 | 0.112997 | 0.031677 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 2.709484 | 4.240697 | 0.112730 | 0.029779 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 2.701728 | 4.245921 | 0.112032 | 0.029798 |
+
+DSEC F³式frame平均MAE(m)の群別値：
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 2.715488 | 2.339618 | 2.530136 | 2.648230 | 2.946140 | 3.291818 |
+| E1 Encoder＋LSTM（h蒸留） | **2.590480** | **2.233590** | **2.407605** | **2.551977** | **2.848041** | **3.088253** |
+| E2 Encoder＋LSTM（z+h蒸留） | 2.656626 | 2.294999 | 2.459055 | 2.595424 | 2.898390 | 3.219046 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 2.709484 | 2.356145 | 2.498382 | 2.635207 | 2.951958 | 3.297722 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 2.701728 | 2.345745 | 2.472958 | 2.642716 | 2.961654 | 3.285015 |
+
+### M3ED Depth：F³式frame等重み平均（全体）
+
+| 条件 | MAE(m)↓ | RMSE(m)↓ | AbsRel↓ | SqRel(GT²分母)↓ |
+| --- | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | **3.898916** | **6.812721** | **0.234412** | **0.217624** |
+| E1 Encoder＋LSTM（h蒸留） | 4.121049 | 7.184567 | 0.251039 | 0.272129 |
+| E2 Encoder＋LSTM（z+h蒸留） | 4.149105 | 7.069455 | 0.254838 | 0.228214 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 4.069386 | 7.086026 | 0.254449 | 0.278897 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 3.940380 | 6.888638 | 0.242313 | 0.251483 |
+
+M3ED F³式frame平均MAE(m)の群別値：
+
+| 条件 | 全体 | Q1（最低） | Q2 | Q3 | Q4 | Q5（最高） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | **3.898916** | **4.659016** | 3.682172 | 3.311575 | 3.090488 | 2.856807 |
+| E1 Encoder＋LSTM（h蒸留） | 4.121049 | 5.336390 | 3.374407 | 3.032343 | 2.935276 | 2.723778 |
+| E2 Encoder＋LSTM（z+h蒸留） | 4.149105 | 5.072307 | 3.686922 | 3.355481 | 3.227893 | 3.012380 |
+| E1 Encoder＋LSTM（h蒸留）・旧型DDP | 4.069386 | 5.123863 | 3.432943 | 3.141219 | 3.061055 | 2.809054 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | 3.940380 | 4.994296 | **3.315334** | **2.987347** | **2.924010** | **2.705276** |
+
+### 集計方法によるM3ED Depth順位の反転
+
+pooled全体MAEは新型DDP3.556542mが最良だが、F³式frame平均MAEはE0の3.898916mが最良。
+F³式frame平均ではE0が全10指標で最良。新DDPのframe MAEは3.940380m（E0比+1.063%）、E1は4.121049m（+5.697%）。
+MAEは画素内の式が同じなので、この順位反転はSqRelの分母の違いではなく、画素とframeの重みの違いで生じる。
+Q1は12,876/26,611frame=48.386%だが、有効画素は79,045,847/276,482,385=28.590%。
+Q1は平均6,139 validpixels/frame、Q2〜Q5は約14,274〜14,577。低活動群への重みが集計法で変わる。
+
+以下はMAE改善（E0−比較条件、正が改善）を群の重みで厳密に加重分解した値。群内の集計差も含めて計算する。
+
+| 比較条件 | 集計 | Q1寄与(m) | Q2〜Q5寄与(m) | 全体改善(m) |
+| --- | ---: | ---: | ---: | ---: |
+| E1 Encoder＋LSTM（h蒸留） | pooled | -0.129927 | +0.192017 | +0.062090 |
+| E1 Encoder＋LSTM（h蒸留） | frame_mean_f3 | -0.327754 | +0.105622 | -0.222133 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | pooled | -0.022475 | +0.206105 | +0.183630 |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | frame_mean_f3 | -0.162229 | +0.120765 | -0.041464 |
+
+全pooled指標とF³式frame平均は群の適切な重みからallへ再構成して数値一致を確認した。
+RMSE/RMSElogのpooled再構成は二乗→画素重み平均→平方根。mIoUは混同行列由来で、群別mIoUの単純平均をallとしない。
+通常SqRelは誤差²/GT、F³式SqRelは誤差²/GT²で別量。両欄を混同して数値比較しない。
+F³欄は公式式とframe等重み平均の互換であり、F³の入力窓/解像度/crop/サンプル選択まで同条件という意味ではない。
+全群の通常SqRel/RMSElog/δ1〜3、F³式d1〜3/log10/silog、クラス別IoUとsupportは受領数値JSONに全量保存している。
+
+### 次の比較
+
+現時点では「Semanticでは低活動ほどE1のE0比改善が大きい」「Depthはdataset・集計方法で結論が変わる」と報告する。
+境界を結果に合わせて変更せず、このmanifestと両集計を今後の構造比較でも維持する。
+次は既定の最終段Patchwise LSTM対1層3×3 ConvLSTMの比較条件を固定し、その後にLSTM配置比較。
+低活動の失敗機序を調べる場合は系列別/クラス別・時系列可視化と同一headのcontinuous対resetを追加候補とするが、今回新規評価は起動していない。
+公式checker/提出/公式test Depthスコア、速度別評価、追加seedは未確認。Semantic/Depth優先、Flowはその後、Detectionは低優先。
+
+## 86. 最終段Patchwise LSTM対ConvLSTMの比較設定と起動準備（2026-11-15、未実行）
+
+- ユーザーがSemantic・Depthで条件を揃えた構造比較とサーバー用コマンドを希望し、「まずは事前学習から」と確認。
+  E1 Encoder＋LSTM（h蒸留）の単GPU recipeを保ち、最終段1層Patchwise LSTM対3×3 ConvLSTMとする。
+  input/hidden/outputは各384、h全token cosine＋正規化MSE（各1）、z loss/活動mask/augmentation/event dropoutは無効。
+  これは設定・実装の記録で、新しい実験結果の受領ではない。
+- Stage 1はDSEC common train35・448×640・Random4+Stream4 joined・clip8、
+  M3ED common train3・352×640・Random2+Stream2 joined・clip16。AdamW LR1e-4、encoder倍率0.1、
+  WD0.05、warmup999/cosine/min ratio0.01、FP16、seed0、99,999成功更新、予定6,399,936frame/run。
+  Stream stateはclipを跨いで保持し境界detach、Randomはzero。最終step固定でStage 1 valは使わない。
+  ConvLSTM根拠は[Shi et al.](https://arxiv.org/abs/1506.04214)の畳み込み状態遷移。
+  本実装の3×3・384幅・単一層・peepholeなしと蒸留/予算はEventState比較設定で、原論文の完全再現とは扱わない。
+- 既存Patchwise側は`outputs/stage1_joined_baseline_full_20261107/{dataset}_E1_w1/checkpoints/step_00099999.pt`を再利用。
+  新規学習はConvLSTMのDSEC/M3ED計2本。旧新DDPは今回の主比較に混ぜず、既存重み・head・cacheは保持する。
+  新入口`tools/run_temporal_comparison.py`は既存common plannerのE1/w1 recipeを流用し、model種類・run名・出力先だけ変える。
+  `--execute`なしはread-only計画、既定`--gpus 0,1`で独立1GPU jobを2本。
+  `--architectures patchwise,convlstm`なら両方式を新規4runにできるが、通常の2run手順には不要。
+- 統計は上記既存full rootの`dsec_common.json`/`m3ed_common.json`を再利用し、protocol/train系列を検査。
+  新しいsmoke rootは`outputs/stage1_temporal_smoke_20261115`、full rootは`outputs/stage1_temporal_full_20261115`。
+  サーバーrepoは`/home/iASL/Arata_repo/EventState`。
+  smoke各99更新を成功後、同じDINO初期値からfull各99,999更新へ進む。smoke checkpointから継続しない。
+  最終重みはfull rootの`{dataset}_E1_convlstm_w1/checkpoints/step_00099999.pt`を予定する。
+  実コマンドとStage 2固定条件は`docs/temporal_comparison.md`。
+- Semantic/Depthは各dataset・各方式で同じStage 1最終checkpointを共有し、task内で既存head・loss・split・予算を固定する。
+  DSEC Semanticは開発6/2→8train refit/公式test3、M3ED Semanticは3train/公開val2疑似ラベル。
+  DepthはDSEC37train/公開val4、M3ED3train/公開val2。Depth head選択は従来pooled MAEのまま固定し、
+  評価ではpooledとF³式frame平均を併記。既存活動rootの`manifests/{dsec,m3ed}.json`を共有し、境界を変更しない。
+- Depth抽出でConvLSTMを拒否していた型制限と、DSEC学習28×40/Depth30×40のgrid差へ対応。
+  ViT block3/6/9のz＋最終hの4段readoutを維持し、学習gridを可変stateへ書き換えず実入力gridを渡す。
+  異なるgridのcarry stateは暗黙resetせずエラー。矩形grid/末段置換/逐次stateのサーバー用テストを追加。
+  既存`run_common_depth.py`/`run_semantic_depth_activity.py`は旧5条件固定であり、新比較用下流runnerは今回未追加。
+- 時間モデル＋output projectionはPatchwise1,330,560 params、Conv10,766,208 params（約8.09倍）。
+  同じhidden幅・学習recipeでの比較で、等parameter/等FLOPsの比較ではない。計算量・実測時間・VRAMも記録する。
+  FP16 overflowによる実frame数/提示順の差はtraining_summaryで確認する。同seedでもprojector初期テンソルの完全一致までは主張しない。
+- Macは新stdlib12件＋既存3件が通過し、構文/CLI/差分確認済み。Torch/Hydra/GPU/実データは未実行。
+  新wrapperのserver preflightに既存共通テストとConvLSTM/Depth/新比較Hydraテストを含める。
+  サーバー同期・smoke/fullの実行成功、新しいスコアはまだ未確認。学習はMacで起動していない。
+- 比較コード・テスト・新手順書の8ファイルだけをローカルcommit `d4bb398`へ記録。
+  以前からの未コミット台帳・結果受領JSON等はこのcommitへ含めていない。
+  `origin/main`へのpushは自動承認レビューが宛先/今回payloadの明示承認不足として拒否した。
+  具体的なcommitと送信先を示して確認したところ、ユーザーが「pushは自分で行う」と選択したため、以後こちらからpushしない。
+  ユーザーのpush・サーバーpullはまだ未確認。

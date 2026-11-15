@@ -1,0 +1,188 @@
+{
+  "received_date": "2026-11-15",
+  "source": "user_pasted_submission_manifest",
+  "source_text_complete_json": false,
+  "analysis_normalization": {
+    "appended_closing_braces": 1,
+    "server_file_json_validity_verified": false
+  },
+  "manifest_fields": {
+    "model": {
+      "head_sha256": "d59dbaead1ed7904bdb3b3f557ea499bd3df7356bd9efc85e9c3d384cc4f843b",
+      "backbone_sha256": "507c16074a35ef98b2acf2a8f9f502b08fbc4d93e61b88724702f634af25d989",
+      "feature": "stages",
+      "task": "depth",
+      "role": "val",
+      "state_policy": "continuous",
+      "protocol_sha256": "31a39133a893c92688dc1603aa324e3a5efad88ab6ede91ffef98d4f0f28f429"
+    },
+    "selected": "dsec_E1/stages, public val",
+    "window_ms": null,
+    "window_mode": "rgb_interval",
+    "pretraining_audit": {
+      "protocol_sha256": "31a39133a893c92688dc1603aa324e3a5efad88ab6ede91ffef98d4f0f28f429",
+      "pretrain_train": [
+        "interlaken_00_c",
+        "interlaken_00_d",
+        "interlaken_00_e",
+        "interlaken_00_f",
+        "thun_00_a",
+        "zurich_city_00_a",
+        "zurich_city_00_b",
+        "zurich_city_01_a",
+        "zurich_city_01_b",
+        "zurich_city_01_c",
+        "zurich_city_01_d",
+        "zurich_city_01_e",
+        "zurich_city_01_f",
+        "zurich_city_02_a",
+        "zurich_city_02_b",
+        "zurich_city_02_c",
+        "zurich_city_02_d",
+        "zurich_city_03_a",
+        "zurich_city_04_a",
+        "zurich_city_04_b",
+        "zurich_city_04_c",
+        "zurich_city_04_d",
+        "zurich_city_04_e",
+        "zurich_city_04_f",
+        "zurich_city_05_a",
+        "zurich_city_05_b",
+        "zurich_city_06_a",
+        "zurich_city_09_a",
+        "zurich_city_09_b",
+        "zurich_city_09_c",
+        "zurich_city_09_d",
+        "zurich_city_10_a",
+        "zurich_city_10_b",
+        "zurich_city_11_a",
+        "zurich_city_11_b"
+      ],
+      "pretrain_validation_used": [],
+      "statistics_sequences": [
+        "interlaken_00_c",
+        "interlaken_00_d",
+        "interlaken_00_e",
+        "interlaken_00_f",
+        "thun_00_a",
+        "zurich_city_00_a",
+        "zurich_city_00_b",
+        "zurich_city_01_a",
+        "zurich_city_01_b",
+        "zurich_city_01_c",
+        "zurich_city_01_d",
+        "zurich_city_01_e",
+        "zurich_city_01_f",
+        "zurich_city_02_a",
+        "zurich_city_02_b",
+        "zurich_city_02_c",
+        "zurich_city_02_d",
+        "zurich_city_03_a",
+        "zurich_city_04_a",
+        "zurich_city_04_b",
+        "zurich_city_04_c",
+        "zurich_city_04_d",
+        "zurich_city_04_e",
+        "zurich_city_04_f",
+        "zurich_city_05_a",
+        "zurich_city_05_b",
+        "zurich_city_06_a",
+        "zurich_city_09_a",
+        "zurich_city_09_b",
+        "zurich_city_09_c",
+        "zurich_city_09_d",
+        "zurich_city_10_a",
+        "zurich_city_10_b",
+        "zurich_city_11_a",
+        "zurich_city_11_b"
+      ],
+      "holdout": [
+        "interlaken_00_a",
+        "interlaken_00_b",
+        "interlaken_00_g",
+        "interlaken_01_a",
+        "thun_01_a",
+        "thun_01_b",
+        "zurich_city_02_e",
+        "zurich_city_09_e",
+        "zurich_city_11_c",
+        "zurich_city_12_a",
+        "zurich_city_13_a",
+        "zurich_city_13_b",
+        "zurich_city_14_a",
+        "zurich_city_14_b",
+        "zurich_city_14_c",
+        "zurich_city_15_a"
+      ],
+      "status": "declared_inputs_disjoint",
+      "scope": "EventState stages and declared statistics; upstream RGB foundation data unknown"
+    },
+    "training_window": "rgb_interval",
+    "inputs": "left events only; RGB timestamps; continuous state",
+    "sequences": {
+      "interlaken_00_a": {
+        "csv_sha256": "078779548b2fef46ca9ce662f15fb564a1b0fc166de2270cc1fa9b3a9376f8e1",
+        "q_sha256": "dba82b9ae6f38e8cc75cda5fc045dd790ae395a3c07ddc0ea0692119b92b5d58",
+        "frames": 57
+      },
+      "interlaken_00_b": {
+        "csv_sha256": "6275bdae2649d9b4539e4d6a4668e0d7373f0b4642b845ade1eaa71381330b11",
+        "q_sha256": "dba82b9ae6f38e8cc75cda5fc045dd790ae395a3c07ddc0ea0692119b92b5d58",
+        "frames": 80
+      },
+      "interlaken_01_a": {
+        "csv_sha256": "76cac76b4b39be988fbe2da158e7f915edb91e1d89f5ae89bd1387c9bfc9e0bc",
+        "q_sha256": "dba82b9ae6f38e8cc75cda5fc045dd790ae395a3c07ddc0ea0692119b92b5d58",
+        "frames": 113
+      },
+      "thun_01_a": {
+        "csv_sha256": "7e175fb2d3c2cf509efd0390aca15dbd2debd3bf120a0535e064cad0f8b5cc3b",
+        "q_sha256": "dba82b9ae6f38e8cc75cda5fc045dd790ae395a3c07ddc0ea0692119b92b5d58",
+        "frames": 9
+      },
+      "thun_01_b": {
+        "csv_sha256": "ed2c08c31d9c104aa57e3ceb12a00eb0c8df84677ddc718ad4b8dfa94fc1b4c1",
+        "q_sha256": "dba82b9ae6f38e8cc75cda5fc045dd790ae395a3c07ddc0ea0692119b92b5d58",
+        "frames": 53
+      },
+      "zurich_city_12_a": {
+        "csv_sha256": "40179a44a5aaf6aae2ba8173d5d9d69378b647730b0859dcf83c8b60d0c604b5",
+        "q_sha256": "827cac810ebd5fbd46d2c4812328175118d29dfe23378230ab72c3d10d08f673",
+        "frames": 38
+      },
+      "zurich_city_13_a": {
+        "csv_sha256": "775368f00901e68fb4469dffbe84fa582a6d2a03f5731e663101c6a00834b05c",
+        "q_sha256": "4c827d3276f6a149cc81213be23482231a56dee70ea5b62dc5ff022c4f25f1e7",
+        "frames": 18
+      },
+      "zurich_city_13_b": {
+        "csv_sha256": "c1ee300aa9cb22d08925fa4937d29ae2bf73176d27b98e57fd80c5ec4308ba43",
+        "q_sha256": "4c827d3276f6a149cc81213be23482231a56dee70ea5b62dc5ff022c4f25f1e7",
+        "frames": 15
+      },
+      "zurich_city_14_a": {
+        "csv_sha256": "c89be803d7438f44ee977242986e73d2ce175c15408de7935dc6ae1e76be6b80",
+        "q_sha256": "827cac810ebd5fbd46d2c4812328175118d29dfe23378230ab72c3d10d08f673",
+        "frames": 21
+      },
+      "zurich_city_14_b": {
+        "csv_sha256": "3531eb7cc09902ca92a27c6fd950be6d393bbb9e106217b282056047d38ca3e3",
+        "q_sha256": "827cac810ebd5fbd46d2c4812328175118d29dfe23378230ab72c3d10d08f673",
+        "frames": 28
+      },
+      "zurich_city_14_c": {
+        "csv_sha256": "a6204e2e267bb64c5e5d02c4b9a77c4ab4e861780aaf0d554c6f48ef1666d892",
+        "q_sha256": "827cac810ebd5fbd46d2c4812328175118d29dfe23378230ab72c3d10d08f673",
+        "frames": 59
+      },
+      "zurich_city_15_a": {
+        "csv_sha256": "a3b18d74cadea321a1c55805b78d4327fb7455061d177d4227c3e962208c11c9",
+        "q_sha256": "b92a493a448adb2e6663cab2839aa8289468017d5d94334ec98cc8700d895f42",
+        "frames": 61
+      }
+    },
+    "png_saturated_pixels": 0,
+    "encoding": "inverse calibrated event Q, clip to PNG representable range then uint16(d*256)",
+    "sha256": "047a4246baf3f25e280fca0fba4aaa2f57cb0a62ef801ff670bdfbef3116cf05"
+  }
+}

@@ -1,6 +1,94 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-12
+最終更新: 2026-11-15
+
+2026-11-15 ユーザーがPatchwise LSTM対ConvLSTM比較へ進むことを明示（計画・実装、台帳§86）。
+主比較はE1 Encoder＋LSTM（h蒸留）、最終段1層・幅384、h全token蒸留・同じ単GPU recipe。
+既存単GPU Patchwise E1のDSEC/M3ED重みを再利用し、まずConvLSTMだけDSEC/M3ED各1本を新規事前学習する。
+新入口tools/run_temporal_comparison.py、手順docs/temporal_comparison.md。既定GPU0/1で各1job、smoke99→full99,999成功更新。
+統計root outputs/stage1_joined_baseline_full_20261107、本番root outputs/stage1_temporal_full_20261115。
+ConvLSTM本番最終重みは同root/{dataset}_E1_convlstm_w1/checkpoints/step_00099999.ptを予定。
+各dataset・各方式でStage 1最終重みを一つに固定してSemantic/Depthへ共用。旧新DDP、E2、活動maskは今回追加しない。
+DepthでConvLSTMを許可し、DSEC学習/Semantic448×640とDepth480×640のgrid差を実入力から処理するよう対応。
+下流は各task内で従来のsplit/head/loss/予算/選択規則を揃え、共通活動manifestとDepth両集計を維持する。
+ConvLSTM時間モデルは約8.09倍のparameter数なので、精度と計算量/速度を併記する（等parameter比較ではない）。
+新stdlib12件＋既存3件通過。Torch/Hydra/実データ/VRAMはMac未検証で、server preflight＋GPU smokeで確認する。
+新規Stage 1のサーバー起動/完了はまだ未確認。既存common Depth/活動一括CLIは旧5条件固定なので新比較へそのまま流用しない。
+比較コード/テスト/手順書8ファイルはローカルcommit d4bb398。ユーザーが「pushは自分で行う」と明示したので、以後pushしない。
+pushは自動承認レビューで宛先/今回payloadの承認不足として拒否され、ユーザーが自身で行う選択となった。リモート反映は未確認。
+ユーザーのpush後、サーバーでgit pull --ff-onlyしてdocs/temporal_comparison.mdのsmoke→fullを実行する。
+
+2026-11-15 活動5分位の実数値20件・manifest2件を全量受領し、比較と監査完了（台帳§85）。
+数値JSONはdocs/evaluation_records/20261115_semantic_depth_activity_metrics.json、監査は同日のactivity_audit.json。
+同task/dataset内5条件のsample/活動割当/target/support hashが一致、Depthのvalidity hashも一致。
+全120群status=ok、frame/画素数の群和とallが一致。Depth全体pooled値は§83と完全一致。
+Semanticは両datasetでE1 Encoder＋LSTM（h蒸留）・単GPUのE0比改善が最低活動Q1で最大：
+DSEC+1.002973ポイント、M3ED+3.708084ポイント。DSECは全5群、M3EDはQ1〜Q4でE1最良。
+DSEC DepthはE1が全5群でpooled/F³双方のMAE・AbsRel最良。ただし低活動の改善率が最大ではない。
+M3ED Depth Q1はpooled/F³ともE0 Encoder（z蒸留）が最良（MAE/RMSE/AbsRel/SqRel）。
+M3ED全体pooled MAEは新型DDP3.556542mが最良だが、frame等重みMAEはE0の3.898916mが最良（新型DDP3.940380m）。
+F³式frame平均ではM3ED E0が全10指標最良。Q1はframe48.386%・有効画素28.590%で、重み差により順位が反転。
+MAEの加重分解と全指標の群→all再構成を確認。通常SqRelとF³式SqRelの式差だけの問題ではない。
+DSEC Semantic Q5は78frameのみ。系列/クラス構成も群間で変わり、低活動優位やLSTM記憶機序を全taskへ一般化しない。
+次はこのmanifest・両Depth集計を保った最終段Patchwise LSTM対1層3×3 ConvLSTMの比較条件を固定し、その後に配置比較。
+新しい学習/評価は未起動。追加seed・速度別評価・公式checker/提出/公式test Depthスコアは未確認。
+
+2026-11-15 Semantic/Depth活動5分位の最終summaryを受領（台帳§84）。
+outputs/semantic_depth_activity_20261110/summary.jsonにSemantic10件・Depth10件とDSEC/M3ED manifest2件の参照を確認。
+このindexは全20評価と結果JSON/CSV確認後に保存する実装なので、一括評価の最終集計まで到達したと判断。
+この時点では群別数値・境界・件数・hash本体は未受領だったが、続報§85で回収・比較済み。
+端末clearに伴う再学習/再評価は不要。
+回収用stdlibコマンドはdocs/semantic_depth_activity.md「完了後の数値回収」。GPU・新しい推論・git pullは不要。
+今回の貼付は最後の閉じ括弧のみ欠けるため受領記録で解析用に補完。サーバー元JSONの破損とは判断しない。
+活動評価は速度別評価ではない。公式checker/提出/公式testスコアは引き続き未確認。
+
+2026-11-15 全10条件のDepth summary数値と提出manifest受領部分を確認（台帳§83）。
+DSECのMAE/AbsRel/公開val視差MAEはE1 Encoder＋LSTM（h蒸留）・単GPUが最良（MAE2.445824m、E0比−3.97%）。
+M3ED全5条件のMAE/RMSE/AbsRelはE1 Encoder＋LSTM（h蒸留）・新型DDPが最良（MAE3.556542m、E0比−4.91%）。
+基本3条件に限ると両datasetでE1単GPUがMAE最良で、既受領Semanticの傾向と一致。ただしM3ED E1単GPUはRMSE/AbsRel/SqRelがE0より悪化。
+DSEC RMSEはE2がE1より約0.00108m良い。単一seed・公開val pooledの結果で、全指標/活動群/有意差の結論へ広げない。
+提出選択はdsec_E1/stagesで公開val視差MAE最小1.870813pxと整合。manifest記載では12系列552枚・飽和0。
+貼付manifestは末尾の閉じ括弧が欠け、解析用に1文字補完した受領部分として保存。サーバー元JSON破損とは判断しない。
+ユーザーはclearで端末ログを消したと報告。clearは保存JSON/CSVを消さないため、Completed行を再取得するための再学習/再評価はしない。
+この時点では活動5分位の完了・数値は未受領だったが、続報§84で最終indexを受領。次は群別数値のみ回収する。
+公式checker/提出/公式testスコアは未確認。
+
+2026-11-15 common Depth全10条件の学習/公開val評価と最終処理の完了を受領（台帳§82）。
+全worker completed後、DSEC公式test12系列・552枚export、`Prepared .../submission/submission.zip`、
+`Completed: outputs/stage2_common_depth_vkitti_20261110/summary.json`まで確認。
+公式checker・実提出・公式testスコアは未確認。summaryの数値とsubmission/manifest.jsonの選択条件/SHAはまだ未受領。
+次は①summary.json/提出manifestを回収してDepth全体比較、②tools/run_semantic_depth_activity.pyのpreflight→
+Semantic/Depth共通活動5分位の計20評価、③比較表/図を整理して最終段Patchwise LSTM対3×3 ConvLSTMの比較条件を固める。
+その後に配置比較。Semantic/Depth優先、可能ならFlow、Detection低優先は維持。
+活動評価は既存head再学習なし、Depthはval特徴を一時再抽出するため時間/scratchが必要。既存一括CLIはGPU0で直列実行。
+手順docs/semantic_depth_activity.md。速度別評価はこの一括CLIには未実装で、活動率を自車速度へ読み替えない。
+旧run_f3_depth_benchmarks.sh dsec-checkは今回common rootと配置が違うため、そのまま使わない。
+
+2026-11-14続報：2GPU親ログで9/10条件がcompleted（台帳§80）。DSEC5条件に加え、
+M3ED E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）、E1旧型DDPが完了。
+残りはGPU0のM3ED E1 Encoder＋LSTM（h蒸留）・新型DDPのhead学習。全体summary/提出ZIPはまだ未確認。
+ユーザーがSemanticよりDepthの学習が遅い理由、特にheadサイズを質問。コード監査結果は台帳§81とmethod_audit追記。
+Semantic linearは4,235 params、Depth MetricDPTSmallは2,728,513 params（定義上約644倍）。
+Depthは4段特徴・高解像度3×3 Convに加え、FP32/batch4/worker0/毎epoch・batch1検証。
+SemanticはAMP FP16/batch8/worker4、M3ED検証は5epoch毎・batch8。両者backboneは凍結。
+各要因の実時間寄与率は未計測。head入力テンソルは4倍だが、cache payload読込量が4倍とは断定しない。
+既存学習の設定・head構造は変更せず、2GPU実行継続。Macはソース確認とstdlib計算のみでTorch実行なし。
+
+2026-11-13 2並列時のDSEC E1 Encoder＋LSTM（h蒸留）・新型DDPのhead所要時間を受領（台帳§79）。
+config mtime2026-11-12 10:38:58.536786018+0900→_SUCCESS 23:26:19.944225332+0900、
+差12時間47分21.407秒、50epoch換算15.35分epoch（train＋各epoch val＋保存を含む）。
+以前の3並列3条件平均35.99分epochに対し約57%短い。条件・同時実行相手が異なるため厳密な同条件比較ではないが、当面2並列維持が妥当。
+M3EDの現進捗・所要時間やrun全体の改善率、新スコアは今回未受領。CPU thread等の追加設定は変更していない。
+
+2026-11-13 2GPU版の実進捗を受領（台帳§78）。`--gpus 0,1`のpreflight2/2成功後、
+`parallel_0_ylh1lm`でGPU0/1のworker起動と学習・採点進行を確認。切替直前のnvidia-smiは2026-11-12 09:59:18。
+DSEC全5条件の公開val Depth/視差採点がcompleted。E0/E1/旧型DDPは既存結果を再利用し、E2は不足視差valだけ完了。
+新型DDPは2GPU runで特徴抽出→head学習→Depth/視差val→completed。
+M3ED E0 Encoder（z蒸留）も採点までcompleted。末尾はGPU0=M3ED E2 Encoder＋LSTM（z+h蒸留）のhead学習、
+GPU1=M3ED E1 Encoder＋LSTM（h蒸留）のhead学習。M3EDのE1旧/新DDPはまだ起動表示なし。
+計6/10条件が完了したが、最終summary・DSEC test ZIP・全体Completedは未確認。新スコア・epoch時間も未受領。
+2GPUによる速度改善はphaseログから断定しない。新型DDP headの完了時刻が揃ったため、既存mtime法でDSECの概算時間を比較可能。
+
 
 2026-11-12ユーザーが「一旦2並列にしてみよう」と明示決定。次はcommon Depthを`--gpus 0,1`で実行する。
 コード変更不要。CPU thread数・batch/loss/seed/epoch/splitは変更せず、並列数だけ3→2にする。
