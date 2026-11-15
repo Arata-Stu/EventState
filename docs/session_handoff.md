@@ -1,6 +1,42 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-15
+最終更新: 2026-11-16
+
+2026-11-16 ユーザーがSemantic/Depthの連続シーン比較動画を希望（台帳§89）。
+低活動frameの抜き出し連結ではなく連続数秒を保持。基準はまず既存5分位の画面全体event rateと明示回答。
+新select_activity_scenes.pyはtrain p20以下/p80超の時間占有率80%以上の連続10秒を低/高各1本選び、全入力frameを保持する。
+新render_activity_comparison.pyは系列先頭から状態を更新し、選択区間だけRGB/events/GT/E0/E1/E2を描画。
+GT欠損はunavailable、過去GTを流用しない。native timestampをVFRで保持し、Depth色0–80m/semantic paletteを固定。
+最初はM3ED公開valの同一scene JSONを両taskへ共用。DSECはSemantic test3/Depth val4が違うためtask別選択。
+手順docs/activity_comparison_videos.md。既存head/backboneを使う再推論で、新規学習・全量特徴cache再生成はない。
+Mac stdlib23件/実FFmpeg合成PTS検査は通過。Torch/HDF5/Pillow/NumPy runtime test・実データ/GPU動画はサーバー未実行。
+実際の選択時刻/動画本体はまだ未生成。GPU0/1の学習を止めず、空き確認できたGPU2で一モデルずつ実行するコマンドを用意。
+比較動画コード/テスト/手順書13ファイルはローカルcommit 3bc29b1。pushはユーザーが行う方針を維持し、こちらからpushしていない。
+
+2026-11-16 DSEC disparity公式提出の要否を質問され、公式配布/benchmark規則を再確認。
+4公開valによる内部比較・活動5分位分析は提出なしで進められるが、公式test/leaderboard比較には公式評価が必要。
+valで構造比較後、最終候補固定→checker→提出を提案。提出の恒久省略を決めたわけではなく、今回uploadはしていない。
+現ZIPはE1 Encoder＋LSTM（h蒸留）・単GPU、val視差MAE1.870813pxで選択した12test系列552PNG。
+公式checker/提出/公式採点は引き続き未確認。詳しくはdocs/downstream_protocol_summary.mdの11/16追記。
+
+2026-11-16 ユーザー希望で先の20評価を再考察（台帳§88、追加実験/新スコアなし）。
+20件は2dataset×2task×5条件であり20独立seedではない。主結論は「E1は低活動Semanticに有効だがDepthへの利益はtask/dataset/集計依存」。
+E0→E1ではmemory追加に加え蒸留先/readoutがz→hへ変わるため、記憶保持だけの因果的効果としない。
+E2の現行等重みz loss追加は両datasetのmIoU/pooled MAEでE1を上回らず、勾配競合は未測定の仮説。
+DDPはglobal batch3倍/更新数1/3/提示順も変わる学習方式比較で、並列化単独の効果としない。
+M3ED Depthのpooled/frame平均順位逆転は既確認の重み差として扱い、両集計を維持する。
+次のConvLSTM比較ではSemantic Q1の優位維持とM3ED Depth Q1/frame平均の悪化軽減、容量/計算量を確認する。
+continuous対reset・低活動移行の可視化・追加seedは記憶機序/再現性検証の候補で、今回起動していない。
+ConvLSTMの最新サーバー実行状況は引き続き直下の11/15受領ログの範囲。full開始/完了を新たに確認したものではない。
+
+2026-11-15 サーバー続報：ユーザーのpush後、pullでaf95e6e→039e1adへfast-forwardし、ConvLSTM smoke2本を起動（台帳§87）。
+E1 Encoder＋LSTM（h蒸留）・ConvLSTM、seed0、DSEC train35/clip8/batch8をGPU0、M3ED train3/clip16/batch4をGPU1へ配置。
+--skip-preflightなしでworker起動まで進んだためserver preflight通過と判断（個別テストlog/件数は未受領）。
+M3EDのcompleteを受領し、99成功更新と非空step_00000099.ptの親確認まで完了。DSECは起動済みだが完了はまだ未確認。
+貼付末尾はsmokeのDSEC完了待ちで、full99,999更新は未確認。両smoke成功後、ユーザーの&&連結コマンドでfullへ自動移行する。
+個別stepログはsmoke root/logs/{dataset}_E1_convlstm_w1.log。エラー表示なし、このまま継続する。
+開始前nvidia-smiは各GPU5MiB/util0%、稼働中利用率ではない。seed/recipe変更・再実行・追加停止は不要。
+受領記録docs/evaluation_records/20261115_temporal_smoke_progress.json、原文同日のtemporal_smoke_progress.log（Git非管理）。
 
 2026-11-15 ユーザーがPatchwise LSTM対ConvLSTM比較へ進むことを明示（計画・実装、台帳§86）。
 主比較はE1 Encoder＋LSTM（h蒸留）、最終段1層・幅384、h全token蒸留・同じ単GPU recipe。

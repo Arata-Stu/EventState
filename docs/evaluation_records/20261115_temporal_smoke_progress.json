@@ -1,0 +1,46 @@
+{
+  "received_date": "2026-11-15",
+  "source": "user_pasted_server_temporal_comparison_log",
+  "source_sha256": "12b2530dcae55d6393e1a356fbff147de5ec9af2f065c3718f65ff5549d67d6e",
+  "server_repo": "/home/iASL/Arata_repo/EventState",
+  "server_revision_before": "af95e6e",
+  "server_revision_after": "039e1ad",
+  "pull_fast_forward_succeeded": true,
+  "stage": "smoke",
+  "condition": "E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+  "seed": 0,
+  "world_size_per_condition": 1,
+  "optimizer_steps_planned": 99,
+  "smoke_root": "outputs/stage1_temporal_smoke_20261115",
+  "full_root": "outputs/stage1_temporal_full_20261115",
+  "statistics_root": "outputs/stage1_joined_baseline_full_20261107",
+  "server_preflight_passed_inferred_from_worker_launch": true,
+  "server_preflight_details_received": false,
+  "datasets": {
+    "dsec": {
+      "split": "common train35",
+      "gpu": "0",
+      "clips_per_update": 8,
+      "clip_frames": 8,
+      "input_height": 448,
+      "input_width": 640,
+      "planned_frames": 6336,
+      "status_at_pasted_log_end": "launched_completion_unconfirmed"
+    },
+    "m3ed": {
+      "split": "common train3",
+      "gpu": "1",
+      "clips_per_update": 4,
+      "clip_frames": 16,
+      "input_height": 352,
+      "input_width": 640,
+      "planned_frames": 6336,
+      "status_at_pasted_log_end": "smoke_completed",
+      "completion_evidence": "parent complete after child exit0 and nonempty checkpoints/step_00000099.pt check"
+    }
+  },
+  "full_training_started_confirmed": false,
+  "next_automatic_action": "full 99999 updates per dataset only after both smoke jobs succeed",
+  "runtime_gpu_utilization_received": false,
+  "new_downstream_scores_received": false
+}

@@ -2535,3 +2535,140 @@ F³欄は公式式とframe等重み平均の互換であり、F³の入力窓/�
   `origin/main`へのpushは自動承認レビューが宛先/今回payloadの明示承認不足として拒否した。
   具体的なcommitと送信先を示して確認したところ、ユーザーが「pushは自分で行う」と選択したため、以後こちらからpushしない。
   ユーザーのpush・サーバーpullはまだ未確認。
+
+## 87. ConvLSTM事前学習の同期・smoke起動とM3ED完了を受領（2026-11-15）
+
+- ユーザーが提示済みsmoke→fullコマンドのサーバーログを提示して「これでok?」と確認。
+  原文は`docs/evaluation_records/20261115_temporal_smoke_progress.log`（Git非管理）、
+  状態/条件記録は`docs/evaluation_records/20261115_temporal_smoke_progress.json`へ保存した。
+- サーバー`/home/iASL/Arata_repo/EventState`で`git pull --ff-only`がaf95e6e→039e1adへfast-forward成功。
+  ユーザーによる同期と比較コードのサーバー反映を確認。こちらから追加pushはしていない。
+  nvidia-smiの表示時刻は2026-11-15 20:12:45で、起動前の3GPUは各5MiB/util0%、Xorgのみ。
+  この観測を稼働中GPU利用率として扱わない。
+- E1 Encoder＋LSTM（h蒸留）・ConvLSTM、seed0・FP16・単GPU/条件、smoke各99成功更新。
+  DSEC common train35、448×640、joined Random4+Stream4、clip8、予定6,336frameをGPU0へ、
+  M3ED common train3、352×640、joined Random2+Stream2、clip16、予定6,336frameをGPU1へ起動。
+  統計rootは`outputs/stage1_joined_baseline_full_20261107`、新smoke rootは`outputs/stage1_temporal_smoke_20261115`。
+  貼付commandに`--skip-preflight`はなく、既存executeはpreflight成功後にworkerを起動するため、server preflight通過と判断。
+  個別テスト結果/通過件数は今回未受領。
+- `[stage1] complete: m3ed_E1_convlstm_w1`まで受領。これは子処理exit0と
+  `m3ed_E1_convlstm_w1/checkpoints/step_00000099.pt`の非空存在確認後の表示で、M3ED smokeの成功証拠。
+  学習loss・実入力frame数/overflow回数・所要時間・VRAM量は今回未受領。
+  DSECは起動表示があるがcompleteがまだなく、smoke完了は未確認。失敗/Traceback/OOM表示はない。
+- 貼付末尾はsmoke段階。両datasetのsmoke成功後、親終了と`&&`により
+  `outputs/stage1_temporal_full_20261115`の各99,999更新へ自動で進む構成。
+  full開始/完了・新しいSemantic/Depthスコアはまだ未確認。
+  このまま継続し、必要なら別terminalでsmoke rootの`logs/dsec_E1_convlstm_w1.log`をtailして更新を確認する。
+  同じ起動コマンドの追加実行・中断・recipe変更は行わない。
+
+## 88. Semantic・Depth全20評価の研究上の考察（2026-11-16、再解析）
+
+- 対象は§85の2dataset×2task×5条件＝20評価。新しい学習/推論/スコア受領ではない。
+  正本`docs/evaluation_records/20261115_semantic_depth_activity_metrics.json`から数値差を再計算した。
+  各条件はseed0の単一試行であり、20件を独立20seedの再現性検証とは扱わない。
+
+### Semantic：低活動群でのE1の優位は仮説と整合する
+
+E1 Encoder＋LSTM（h蒸留）のE0 Encoder（z蒸留）比mIoU差は、
+DSEC全体+0.757235ポイント/Q1+1.002973ポイント、M3ED全体+1.980971ポイント/Q1+3.708084ポイント。
+両datasetともQ1→Q5へ改善幅が単調に縮むため、イベント観測が少ない条件で時間表現が役立つという仮説と整合する。
+ただしE0→E1では時間モデルの追加、蒸留先z→h、下流readout z→hが同時に変わる。
+従って「過去stateの保持だけが改善を生んだ」とは断定できない。
+M3EDはInternImage疑似ラベルへの一致を測っており、人手GTで同じ改善が出るとは未確認。
+またM3ED Q1のクラス差はsidewalk+21.069594、car+8.175554、road+5.364846ポイントに対しperson−3.463261ポイントで、一律のクラス改善ではない。
+
+### Depth：低活動への利益はdataset依存
+
+DSEC E1は全群でMAE/AbsRelが良いが、E0比MAE改善率はQ1の3.018%よりQ5の5.935%が大きい。
+M3ED E1はQ2〜Q5でMAEが改善する一方、Q1は4.664813→5.119266m（9.742%悪化）。
+Semanticの低活動優位を、そのままDepthへ一般化することはできない。
+
+E0のDepth MAE自体もDSECではQ1 2.264666→Q5 3.243370mと上昇し、
+M3EDではQ1 4.664813→Q5 2.975593mと低下する。活動量と難易度の対応はdataset依存である。
+M3ED公開valではQ1に約48.4%のframeが入り、境界fit用train poolの約20%に比べ低活動域が多い。
+これは参照poolと評価poolの活動率分布の差であり、Hybrid samplerでの実提示割合を直接測ったものではない。
+距離分布、系列/物体構成、有効GT点密度の影響を分けるには追加分析が必要。
+
+時間表現がSemanticの分類境界を安定化する一方で、Depthの局所的な距離精度を十分に保たない可能性はある。
+Patchwise LSTMは固定patch位置に状態を保持するため、動きに対して古い特徴が混入する可能性もあるが、
+今回の集計は時間平滑化・状態の位置ずれ・失敗物体の軌跡を測っていない。いずれも原因を断定する説明ではなく仮説とする。
+
+### E2：現行の等重みz蒸留追加が有益という証拠はない
+
+E2 Encoder＋LSTM（z+h蒸留）はE1と同じLSTM/h readoutにz objectiveを追加した条件。
+E2−E1の全体mIoUはDSEC−0.363695ポイント、M3ED−1.413083ポイントで、pooled MAEも両datasetで悪い。
+この学習予算・重み付けでは、z/h両方を同時に合わせることが下流性能を高めるという単純な期待は支持されない。
+ただしDSEC pooled RMSEはE2がE1より約0.001081m良い等、誤差特性の全てが一様に悪化したわけではない。
+「z/hの勾配競合」「encoderの瞬間情報への偏り」は候補であり、追加lossによる全体の勾配規模やclip頻度の変化もあり得る。
+loss別勾配や比率を未計測のため原因を断定せず、z蒸留一般が不要とも結論しない。
+
+### DDP：結果はtask依存で、更新規則も異なる
+
+M3ED SemanticのE1単GPU38.700944%対旧型DDP38.642950%の差は0.057994ポイントに留まる。
+新型DDPはM3ED Depthのpooled指標を改善するが、SemanticやDSECを一貫して改善しない。
+同じ予定frame予算でも、3GPU版はglobal batchが3倍、成功更新数99,999→33,333、Stream担当/提示順も変わる。
+したがって「DDPそのものが悪い/良い」という因果的説明や、GPU台数だけの精度比較にはしない。
+単一seedで小差の優劣を強く主張せず、学習方式による下流特性の違いとして報告する。
+
+### 集計：M3EDの順位反転は重要な結果
+
+| E0比のMAE改善率（正が改善） | pooled | frame等重み平均 |
+|---|---:|---:|
+| E1 Encoder＋LSTM（h蒸留） | +1.660% | −5.697% |
+| E1 Encoder＋LSTM（h蒸留）・新型DDP | +4.910% | −1.063% |
+
+pooledは有効画素の多いframeが重く、frame平均は各frameを等しく扱う。
+M3ED Q1はframe48.386%・有効画素28.590%のため、低活動群での悪化はpooled全体では相対的に小さく現れる。
+MAEでも反転すること、§85の厳密な加重分解と整合することから、SqRelの分母差や計算ミスだけの問題ではない。
+各モデルは同一GT/support hashで比較されているので、Q1内のモデル差を条件間mask差へ帰属することもできない。
+有効画素の精度と、時刻を等重みとした性能は異なる評価対象であり、両方を報告する。
+結果を見て有利な集計だけを選ばず、head選択規則も従来のpooled MAEから変更しない。
+
+### 次の比較で確認すること
+
+ConvLSTM比較では、Semantic Q1の改善を維持しつつ、M3ED Depth Q1とframe平均の悪化を軽減できるかを見る。
+Q2〜Q5だけの改善と最低活動での弱点解消は区別する。ConvLSTMは約8.1倍の時間モデルparameter数を持つため、
+改善を空間的な状態遷移だけへ帰属せず、容量・MAC・実測時間も併記する。
+記憶保持の機序を検証する候補は同じcheckpoint/headのcontinuous対frame reset、低活動へ移る時系列と物体軌跡の可視化。
+追加seedで再現性、系列別/クラス別で構成の偏りを確認する。これらは提案で、今回新しい実験は起動していない。
+20評価の報告にあたっては同task/dataset内のhash一致という強みと、単一seed・群ごとの系列/クラス構成差、
+DSEC Semantic Q5の78frameという制約を併記する。
+
+## 89. 活動別の連続シーン比較動画の設計・実装（2026-11-16、実データ未生成）
+
+- ユーザーがSemantic/Depth比較動画を希望し、低活動frameだけを抜いて繋ぐのではなく、連続した数秒のsceneを抽出したいと指定。
+  活動の基準について「まず既存5分位による画面全体の活動量」と明示回答した。局所ROIや特定物体の活動量とは区別する。
+- 新`tools/select_activity_scenes.py`はサーバーのrecords付き活動manifestを`ActivityIndex.load`で検証し、
+  train p20以下を低活動、p80超を高活動として、既定10秒窓・各群の時間占有率80%以上・低/高各1sceneを選択する。
+  予測/GTスコアは選別に使わず、RGB event intervalとのoverlapで時間重みを計算。
+  区間は元入力timestampからの`[start_us,end_us)`、全native入力時刻を残し、混ざった非Q1/Q5 frameも削らない。
+  異系列/欠落interval/250ms超gapを跨がず、同系列内の選択sceneは非重複。
+  候補不足は明示し、秒数・活動閾値を自動変更しない。この10秒/80%は可視化の既定で、先行研究の確立閾値とは説明しない。
+- 新`tools/render_activity_comparison.py`は既評価のE0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、
+  E2 Encoder＋LSTM（z+h蒸留）を既定として、RGB/GEP/GT/3予測を同期表示する。
+  旧新DDPも明示指定可能。ConvLSTMは対応する下流head完成前には含めない。
+  seed/split/headは§85のままで追加学習なし、backbone/head SHAとsource geometryを監査する。
+  元系列の先頭から全inputでstateを更新し、scene開始でresetしない。prefix/scene間はheadのみ省略する。
+  GPUには一モデルずつ載せ、scene内の予測だけを保存する。完了済みDepth一時cacheの再利用は前提にしない。
+- 旧visualizerはGT付きsampleを固定fpsへ詰める経路があり、そのままでは実時間の連続動画にならない。
+  新実装は全native frameを元PTSでVFR化し、µs time baseとffconcat durationで実時間を保持。
+  末尾frameを指定終了時刻まで表示するためendpointに同画像を一枚再掲する。container長は指定秒数+1µs。
+  高い入力time baseがx264の不必要なlevel6.2選択へ繋がらないよう、nominal fps20/force-cfr=0をcodecへ渡す。
+  元PTSの再標本化ではなく、実FFmpeg/ffprobeで全native PTSが保持されることを確認した。
+- GTはexact timestampだけで、欠損frameも入力/予測を飛ばさずGT unavailable/指標N/Aにする。
+  DSEC Semanticは表示440×640/入力448×640、Depthはfull480×640、M3EDは両taskとも中央352×640。
+  Semantic paletteとDepth表示0–80mは全モデル/時刻で固定。Depth予測の表示clipはframe MAE計算へ適用しない。
+  活動曲線/現在rate/群/占有率/元時刻/実経過秒を表示し、CSV・head/source/GT provenance付きmanifestも保存する。
+  動画のframe mIoU/MAEは診断値であり、既報全体のpool指標として扱わない。
+- 最初の対象はM3ED公開val2系列。同じscene JSONをSemantic/Depthへ共有するが、GT有効時刻の差は欠損として表示する。
+  DSECはSemantic公式test3とDepth公開val4が別系列なのでtask別に選び、rendererでも混同を拒否する。
+  Stage 1/対象headのtrain系列と選択sceneの交差を避ける。全体活動が低いsceneだけで同一物体の記憶保持を証明したとは扱わない。
+- 手順`docs/activity_comparison_videos.md`。予定scene JSONは`outputs/activity_scenes_20261116/m3ed.json`、
+  動画rootは`outputs/activity_videos_20261116/{m3ed_semantic,m3ed_depth}`。
+  実行場所は`/home/iASL/Arata_repo/EventState`、実source/選択時刻/候補の有無はサーバーで確定する。
+  GPU0/1で事前学習中の場合、空き確認できたGPU2を使う手順で、学習停止・自動GPU確保は行わない。
+- Macはstdlib23件（選択11・時刻12）とCLI/構文を検証。合成PNG→FFmpeg→ffprobeでnative PTS/終了時刻/上書き拒否を確認。
+  Torch/Hydra/HDF5/Pillow/NumPyを使うbackendと合成描画/統合テストはサーバー用として追加し、Macでは未実行。
+  実データ/GPU推論・完成動画はまだ未確認。既存出力/cacheは削除せず、fresh rootへのみ保存する。
+- 比較動画のコード・テスト・新手順書13ファイルをローカルcommit `3bc29b1`へ記録。
+  既存の未コミット実験台帳・handoff等はこのcommitへ含めていない。ユーザー自身がpushする方針を維持し、こちらからpushしていない。

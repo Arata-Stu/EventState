@@ -20,6 +20,16 @@ Stage 1の共通pool（DSEC 35 / M3ED 3）はhead用splitではない。
 学習中のbest選択は既存pooled val MAEを維持。詳細[semantic_depth_activity.md](semantic_depth_activity.md)。
 両DSEC benchmarkで全test系列に同じ設定を使い、testを事前学習・調整に使わない。Flowのみ論文の最終ablationとして複数提出可。
 
+2026-11-16、disparity公式提出の位置付けを確認：公開GTの4val系列を使う内部の構造比較・活動5分位評価は、公式serverへの提出なしで進められる。
+公式disparity test GTは非公開なので、公式test値やleaderboard上の先行研究との比較を報告するには公式評価が必要。
+公開valの視差MAEを公式testのMAEとして記載しない。
+[公式規則](https://dsec.ifi.uzh.ch/uzh/disparity-benchmark/)は、test全体で同じparameter setを使い、
+調整済み手法の最終報告にのみtestを使うことを求める。提出結果から構造・parameterを選ぶ調整には使わない。
+現段階ではPatchwise/ConvLSTM・配置をvalで比較し、最終候補を固定後にchecker→提出する流れを提案（提出省略の決定ではない）。
+現時点の生成済みZIPはE1 Encoder＋LSTM（h蒸留）・単GPUをval視差MAE1.870813pxで選択した12test系列552PNG。
+生成済みの証拠と、公式checker/提出/公式採点の成功は別。後三者は未確認。
+候補が変われば、その候補の最終重みから提出物を作る。入力条件は推論で左イベントのみ、RGBは学習時蒸留教師/時刻に使用したことを報告に明記する。
+
 ## 全評価に共通する活動・速度別分析（2026-11-10方針）
 
 ユーザー指定：イベント活動・自車速度による性能差を全ての評価で調べる。
