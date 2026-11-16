@@ -1,0 +1,28 @@
+{
+  "received_date": "2026-11-17",
+  "source": "User reply identifying the current single-GPU workload",
+  "reported_experiment": "temporal_compare_e1_convlstm_h_distill",
+  "reported_log_lines": [
+    "[stage1] GPUs ['0']: dsec_E1_convlstm_w1 E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+    "[stage1] GPUs ['1']: m3ed_E1_convlstm_w1 E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+    "[stage1] complete: m3ed_E1_convlstm_w1 E1 Encoder＋LSTM（h蒸留）・ConvLSTM"
+  ],
+  "user_reports_current_gpu_count": 1,
+  "confirmed_from_reply": {
+    "architecture": "ConvLSTM",
+    "condition_label": "E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+    "m3ed_worker_complete": true
+  },
+  "inference": "DSEC remains active on GPU 0; GPU 1 used by the completed M3ED worker may be available, subject to current nvidia-smi verification.",
+  "not_received": [
+    "stage1 output root and whether this completion belongs to smoke or full",
+    "successful optimizer step count and training_summary.json",
+    "resolved configuration, seed, split, checkpoint hash",
+    "DSEC completion",
+    "current GPU process inventory",
+    "Semantic or Depth Stage 2 results for ConvLSTM"
+  ],
+  "documented_full_run_checkpoint_to_verify": "outputs/stage1_temporal_full_20261115/m3ed_E1_convlstm_w1/checkpoints/step_00099999.pt",
+  "proposed_parallel_work": "After confirming the full final checkpoint, run M3ED ConvLSTM Semantic Stage 2 on an idle GPU using the existing runner, h readout, previous Patchwise E1 target view, and the shared activity manifest. Follow with the matched Depth head. Keep the DSEC Stage 1 recipe unchanged.",
+  "new_training_launched_by_assistant": false
+}

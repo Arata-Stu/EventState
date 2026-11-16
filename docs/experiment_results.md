@@ -2713,3 +2713,54 @@ DSEC Semantic Q5の78frameという制約を併記する。
 - Macでstdlib30件（新規集計7・既存scene11・時刻12）、CLI、AST構文、`git diff --check`が通過。
   可変RGB窓でのcount/rate差、時間重み、sequence/gap切断、改変manifest拒否、既存出力保護を確認。
   NumPy/Pillowを使う更新後の描画/CSV統合テストはサーバー用で、Macでは依存を追加せず未実行。
+
+## 91. M3ED低活動Depth動画を受領し、GT欠損と予測品質を確認（2026-11-16）
+
+- ユーザーが`/Users/at/Downloads/today/depth_low.mp4`を提示し、「穴埋めされていないがどう思うか」と質問。
+  受領記録`docs/evaluation_records/20261116_m3ed_depth_low_video_review.json`へ元動画SHA256・属性・表示数値を保存。
+  元動画3,463,746bytes、H.264/1920×926、container10.000001秒・251frame（末尾再掲frameを含み得る）。
+  大きな動画本体はGitへコピーしていない。
+- 表示はM3ED `car_urban_day_ucity_small_loop`（現行公開val系列）、low、p00_20、Q1時間100.0%・Q5時間0.0%。
+  開始source timestamp412,640,000us。E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）、E2 Encoder＋LSTM（z+h蒸留）の3条件。
+  seed、run root、実checkpoint SHA、元prediction/GT/CSVは動画から確認できないため未確定。
+  従来seed0/current runとの同一性を画像だけで断定しない。
+- FFmpegで0/2/5/8/9.8秒付近の5枚を元解像度で抽出して目視。以下は**動画の丸め表示の転記**であり、
+  元prediction/GTからの再計算、全10秒平均、既報全体指標ではない。
+
+| 条件 | 0秒 frame MAE[m] | 5秒 frame MAE[m] | 9.8秒 frame MAE[m] |
+| --- | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 3.682 | 4.739 | 4.852 |
+| E1 Encoder＋LSTM（h蒸留） | 3.820 | 5.491 | 5.852 |
+| E2 Encoder＋LSTM（z+h蒸留） | 3.707 | 4.014 | 4.713 |
+
+- 右上GTの黒はinvalid。下段3モデルにはdenseな色出力があり、「モデル出力が穴のまま」という意味ではない。
+  青は凡例上の遠距離で、欠損ではない。予測は空間的に滑らかで、RGBに見える車両・建物の輪郭が弱い。
+  RGB構図は5時点でほぼ同じだが、青/緑の遠方領域が変形。確認5時点すべてでE1の表示MAEがE0/E2より大きい。
+  LSTMが形状を安定保持できている証拠とは扱わない一方、このselected sceneだけでモデル全体の順位も決めない。
+- GTのない領域の正誤は現行指標では確認できない。圧縮動画の黒/色から正確なGT coverageや距離値を復元しない。
+  疎なGTはぼやけの原因候補だが、極低活動入力・凍結特徴・head等と切り分けておらず、因果は未確認。
+- 提案は現行の公式GT評価/比較recipeを維持し、元`valid_pixels`と有効点の誤差overlayを先に確認すること。
+  Depth Anything等によるdense擬似教師は教師信号が変わる別実験として検討し、公式val GTは置き換えない。
+  今回は再学習・再推論・GT補完・学習設定変更を起動していない。Macで軽量な動画属性/抽出/目視/JSON検証だけを実施。
+
+## 92. M3ED ConvLSTM worker完了の続報とStage 2先行案（2026-11-17）
+
+- ユーザーが「現在1GPUを使っており、その間に別の作業をしたい」と相談。
+  実行中の種類について`temporal_compare_e1_convlstm_h_distill`と回答し、
+  DSEC GPU0/M3ED GPU1の割当と`[stage1] complete: m3ed_E1_convlstm_w1`を提示。
+  受領記録`docs/evaluation_records/20261117_temporal_m3ed_completion_reported.json`。
+- E1 Encoder＋LSTM（h蒸留）・ConvLSTMのM3ED worker完了は受領できた。
+  一方、出力root・step・seed・split・checkpoint SHA・training_summaryは未提示。
+  既定full計画はseed0/train3/99,999更新だが、今回のログだけでsmoke/fullや本番最終重みを断定しない。
+  DSEC継続はユーザーの1GPU報告と割当に基づく解釈で、DSEC completeや現在のGPU process一覧は未受領。
+- 次の提案はDSEC Stage 1を継続しつつ、M3ED ConvLSTMのSemantic→Depth Stage 2を空きGPUで先行すること。
+  前提は本番`outputs/stage1_temporal_full_20261115/m3ed_E1_convlstm_w1/checkpoints/step_00099999.pt`の確認。
+  別rootで起動していた場合は実パスへ変更する。Stage 1完了markerは全dataset分を待つため、親markerをM3ED単独の必須条件にはしない。
+- Semanticは既存`run_common_m3ed_semantic.py`で任意checkpoint/`--features h`を指定でき、コード追加不要。
+  既存Patchwise E1の`outputs/stage2_m3ed_semantic_linear_20261109/E1/targets` viewと共通M3ED活動manifestを再利用する。
+  train3/val2・352×640・linear384→11・CE・50epoch/batch8/FP16/seed0・同optimizerとcheckpoint選択を維持。
+  新cache予定`/home/iASL/Arata_repo/dataset/downstream_scratch/stage2_m3ed_semantic_convlstm_20261117`、
+  新head予定`outputs/stage2_m3ed_semantic_convlstm_20261117/h/`。実行コマンドは`docs/temporal_comparison.md`に追加。
+- 当初の空きGPU活用候補だった同一head continuous/reset診断やGT coverage可視化は、主比較を支える追加診断として残す。
+  新しいGT補完や学習条件を同時に加えず、まず完了済M3EDの方式比較を得る。
+  過去のCPU/I/O競合を踏まえ、最初はStage1＋Semanticの2ジョブを提案。今回、サーバー実行・新精度値はない。

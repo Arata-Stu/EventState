@@ -1,0 +1,60 @@
+{
+  "received_date": "2026-11-16",
+  "record_type": "user_provided_video_visual_review",
+  "source": {
+    "path": "/Users/at/Downloads/today/depth_low.mp4",
+    "sha256": "9e9be311b0d2c04aef77515c9c12d84c580811ad5a1d51e6194c0ea12a69faf1",
+    "bytes": 3463746,
+    "codec": "h264",
+    "width": 1920,
+    "height": 926,
+    "container_duration_seconds": 10.000001,
+    "container_frames_including_possible_terminal_duplicate": 251
+  },
+  "identity_visible_in_video": {
+    "dataset": "m3ed",
+    "task": "depth",
+    "sequence": "car_urban_day_ucity_small_loop",
+    "scene_kind": "low",
+    "activity_group": "p00_20",
+    "q1_time_percent_displayed": 100.0,
+    "q5_time_percent_displayed": 0.0,
+    "first_source_timestamp_us_displayed": 412640000,
+    "depth_color_scale_m": [0, 80],
+    "conditions": {
+      "E0": "E0 Encoder（z蒸留）",
+      "E1": "E1 Encoder＋LSTM（h蒸留）",
+      "E2": "E2 Encoder＋LSTM（z+h蒸留）"
+    }
+  },
+  "provenance_limits": {
+    "seed": null,
+    "training_run": null,
+    "checkpoint_hashes": null,
+    "original_predictions_and_gt_received": false,
+    "original_frames_csv_received": false,
+    "all_frame_metrics_recomputed": false,
+    "inspection": "Five native-resolution stills extracted with FFmpeg near 0, 2, 5, 8, and 9.8 seconds. Numbers below are transcribed rounded video overlays, not recomputed from source predictions or GT."
+  },
+  "sampled_frames_displayed": [
+    {"video_time_seconds": 0, "source_timestamp_us": 412640000, "event_rate_million_per_second": 0.072, "frame_mae_m": {"E0": 3.682, "E1": 3.820, "E2": 3.707}},
+    {"video_time_seconds": 2, "source_timestamp_us": 414640000, "event_rate_million_per_second": 0.022, "frame_mae_m": {"E0": 4.735, "E1": 5.300, "E2": 3.857}},
+    {"video_time_seconds": 5, "source_timestamp_us": 417640000, "event_rate_million_per_second": 0.020, "frame_mae_m": {"E0": 4.739, "E1": 5.491, "E2": 4.014}},
+    {"video_time_seconds": 8, "source_timestamp_us": 420640000, "event_rate_million_per_second": 0.030, "frame_mae_m": {"E0": 5.143, "E1": 5.679, "E2": 4.685}},
+    {"video_time_seconds": 9.8, "source_timestamp_us": 422440000, "event_rate_million_per_second": 0.025, "frame_mae_m": {"E0": 4.852, "E1": 5.852, "E2": 4.713}}
+  ],
+  "observations": [
+    "GT has sparse colored points over a black invalid-pixel background; all three prediction panels have dense colored outputs.",
+    "Blue pixels denote far-depth predictions, not unfilled holes, under the displayed fixed color scale.",
+    "Predictions are spatially smooth; object boundaries visible in RGB are weak in the depth panels.",
+    "RGB scene composition changes little across the sampled frames while predicted far-depth regions deform.",
+    "E1 displayed frame MAE is higher than E0 and E2 at each of the five inspected times. This is not the mean score of the full clip or dataset."
+  ],
+  "interpretation_limits": [
+    "Correctness in GT-invalid areas cannot be determined from the official sparse-GT metric.",
+    "GT coverage and raw depth values cannot be recovered accurately from the compressed color video.",
+    "The video does not isolate sparse supervision, input activity, feature quality, head behavior, or state retention as the cause of blur or temporal variation.",
+    "Do not infer a dataset-wide model ranking, ego speed, or causal memory benefit from this selected scene."
+  ],
+  "proposed_next_diagnostic": "Keep official-GT scoring and the current model-comparison recipe. Inspect source valid-pixel coverage and GT-supported error overlays before considering dense pseudo-label supervision as a separate training experiment."
+}

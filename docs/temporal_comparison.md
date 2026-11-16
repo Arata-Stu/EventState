@@ -167,6 +167,52 @@ ConvLSTMのDepth抽出はPatchwiseと同じ4段readoutを許可し、実入力H/
 低水準の特徴抽出・head学習・evaluatorは任意checkpointを受け取れるため、
 Stage 1完了後は今回のcheckpointと上の条件を明示して接続する。新比較の下流一括runnerは今回追加していない。
 
+## M3EDだけ先に完了した場合の並行作業（2026-11-17）
+
+ユーザーからM3ED worker complete・現在1GPU使用との報告があった。
+DSECのStage 1終了を待たず、完了したM3EDのSemantic Stage 2を先行できる。
+complete行だけではsmoke/fullを判別できないので、以下は本番99,999更新の最終checkpointがある場合に限る。
+出力rootを変更して学習していた場合は、その実rootへcheckpointを置き換える。
+
+既存runnerで任意ConvLSTM checkpointをロードできるため、追加コードや学習中のGit同期は不要。
+`--target-root`には既存Patchwise E1が使った5系列のラベルviewを指定し、追加Rittenhouse等の参照も揃える。
+`--features h`で主比較に必要なlinear headだけを学習し、共通活動5分位も同時に採点する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+nvidia-smi
+
+# GPU1が空いている場合。空きGPUが別番号ならCUDA_VISIBLE_DEVICESを変更する。
+m3ed_semantic_args=(
+  --checkpoint outputs/stage1_temporal_full_20261115/m3ed_E1_convlstm_w1/checkpoints/step_00099999.pt
+  --features h
+  --statistics outputs/stage1_common_20261105/statistics/m3ed_common.json
+  --prepared-root /home/iASL/Arata_repo/dataset/m3ed_cache/half_dagr
+  --target-root outputs/stage2_m3ed_semantic_linear_20261109/E1/targets
+  --cache /home/iASL/Arata_repo/dataset/downstream_scratch/stage2_m3ed_semantic_convlstm_20261117
+  --output outputs/stage2_m3ed_semantic_convlstm_20261117
+  --activity-manifest outputs/semantic_depth_activity_20261110/manifests/m3ed.json
+  --condition-label 'E1 Encoder＋LSTM（h蒸留）・ConvLSTM'
+)
+
+test -s outputs/stage1_temporal_full_20261115/m3ed_E1_convlstm_w1/checkpoints/step_00099999.pt &&
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 CUDA_VISIBLE_DEVICES=1 \
+  python -u tools/run_common_m3ed_semantic.py "${m3ed_semantic_args[@]}" --preflight &&
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 CUDA_VISIBLE_DEVICES=1 \
+  python -u tools/run_common_m3ed_semantic.py "${m3ed_semantic_args[@]}"
+```
+
+preflightはcheckpoint metadata・split・ラベルの時刻/shape・統計・必要容量を確認し、推論やcache作成を行わない。
+完了後は`outputs/stage2_m3ed_semantic_convlstm_20261117/h/`の`best.pt`、`continuous_groups.json`、
+`activity_groups.json`等を既存Patchwise E1と比較する。既存出力は上書きせず、新規rootだけを使う。
+学習条件は上表のM3ED Semanticと同じで、GT補完や追加lossを同時に導入しない。
+
+次は同じ最終Stage 1 checkpointからM3ED Depthの4段特徴を抽出し、VKITTI初期化DPT headを学習する。
+Depthは既存common runnerが旧5条件固定なので、そのまま`--output`だけ変えて使わない。
+まずDSEC Stage1＋M3ED Semanticの2ジョブでCPU/I/Oの競合を確認する。GPU2まで重いcache抽出を同時起動することは既定にしない。
+今回の提案時点で新しいSemantic/Depthジョブをサーバーへ起動した事実はない。
+
 Macはstdlib planner回帰・AST/CLI確認のみ。PyTorch/Hydra/GPU/実データ/VRAMはサーバーで確認する。
 専用runnerの実行前preflightには共通学習テスト、ConvLSTM矩形gridとDepth4段、
 両dataset/両方式のHydra合成/runtime設定検証を含む。サーバー実行成功・新しいスコアはまだ未受領。

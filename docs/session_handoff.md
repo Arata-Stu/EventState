@@ -1,6 +1,23 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-16
+最終更新: 2026-11-17
+
+2026-11-17 ユーザーが現在の1GPU学習はConvLSTMと回答し、M3ED worker complete行を受領（台帳§92）。
+表示はDSEC GPU0、M3ED GPU1。ユーザーの「現在1GPU」と合わせDSEC残りと解釈するが、現在のGPU空きは未確認。
+出力root/stepがないのでsmoke/fullの識別と本番step_00099999.ptはサーバーで確認する。
+提案の最優先は、完了したM3ED ConvLSTMのSemantic→Depth Stage2をDSEC完了待ちせず空きGPUで先行すること。
+Semanticは既存run_common_m3ed_semantic.pyが任意ConvLSTM checkpointと--features hに対応し、コード追加不要。
+旧Patchwise E1のtargets viewと共通活動manifestを再利用し、新規cache/outputへ保存。手順docs/temporal_comparison.md。
+まずStage1＋下流の2ジョブでCPU/I/O競合を確認し、GT補完等の新条件は主比較と分ける。今回サーバー起動はしていない。
+受領記録docs/evaluation_records/20261117_temporal_m3ed_completion_reported.json。ConvLSTMの下流結果は未受領。
+
+2026-11-16 ユーザーからM3ED低活動Depth比較動画depth_low.mp4を受領し、GT穴埋めなしについて相談（台帳§91）。
+car_urban_day_ucity_small_loop、10秒、表示Q1時間100%。0/2/5/8/9.8秒の5枚を確認。
+GTは疎で黒いinvalid領域がある一方、E0/E1/E2の出力はdense。予測のぼやけと、ほぼ同じRGB構図で遠方領域が変形する点を確認。
+確認5時点の表示frame MAEはE1がE0/E2より大きいが、全区間平均・全体順位・疎GTによる因果とはしない。
+動画本体のみ受領しseed/checkpoint/hash/元GT/frames.csvは未受領。学習やGT補完は変更していない。
+受領記録docs/evaluation_records/20261116_m3ed_depth_low_video_review.json。次の診断候補はGT有効率と有効点の誤差overlay。
+従来の動画未生成記載はこの受領分について更新する。残り動画/選択manifest/活動絶対件数集計の完了は未確認。
 
 2026-11-16 ユーザーが既存活動5分位を絶対イベント数でも確認したいと要望（台帳§90）。
 DSECは多い状態が継続、M3EDは少ない/多い差が大きいという観察。受領rate範囲は後者の極低活動を支持するが、継続時間は未確認。
