@@ -165,7 +165,7 @@ def draw_frame(task, rgb, events, target, valid, predictions, labels, scene, tim
     elapsed = (timestamp-scene['start_us'])/1e6
     rate = activity_record['event_rate_hz']/1e6
     draw.text((8, bottom+3), f"{task} | {scene['sequence']} | {scene['kind']} | t={elapsed:.3f}s | source={timestamp}us", font=small, fill='white')
-    draw.text((8, bottom+25), f"Activity={rate:.3f} million events/s | {activity_record['group']} | Q1 time={scene['low_fraction']:.1%} Q5 time={scene['high_fraction']:.1%}", font=small, fill='white')
+    draw.text((8, bottom+25), f"Events={activity_record['event_count']:,} / {activity_record['window_us']/1000:.3f} ms | Rate={rate:.3f} M events/s | {activity_record['group']} | Q1 time={scene['low_fraction']:.1%} Q5 time={scene['high_fraction']:.1%}", font=small, fill='white')
     if task == 'depth':
         draw.text((8, bottom+47), f'Fixed depth scale: red=0m, blue>={depth_max:g}m; metrics use unclipped prediction', font=small, fill='white')
         ramp = np.repeat(np.linspace(0, depth_max, 240, dtype=np.float32)[None], 12, axis=0)
@@ -373,7 +373,7 @@ def main():
             records = records_by_sequence[scene['sequence']]
             with (destination/'frames.csv').open('w', newline='') as stream:
                 table = csv.writer(stream)
-                table.writerow(['source_timestamp_us', 'video_time_s', 'event_rate_hz', 'activity_group', 'gt_available', 'valid_pixels',
+                table.writerow(['source_timestamp_us', 'video_time_s', 'event_count', 'window_us', 'event_rate_hz', 'activity_group', 'gt_available', 'valid_pixels',
                                 *[c+('_frame_mIoU' if args.task == 'semantic' else '_frame_MAE_m') for c in conditions]])
                 for number, stamp in enumerate(scene['timestamps_us']):
                     with np.load(args.output/'assets'/scene['sequence']/f'{stamp}.npz', allow_pickle=False) as asset:
@@ -387,7 +387,7 @@ def main():
                         frame_file = destination/f'{number:06d}.png'
                         canvas.save(frame_file)
                         images.append(frame_file)
-                        table.writerow([stamp, (stamp-scene['start_us'])/1e6, record['event_rate_hz'], record['group'],
+                        table.writerow([stamp, (stamp-scene['start_us'])/1e6, record['event_count'], record['window_us'], record['event_rate_hz'], record['group'],
                                         available, int(valid.sum()), *metrics])
             concat = destination/'frames.ffconcat'
             write_concat(concat, images, scene['timestamps_us'], scene['end_us'], max_gap_us=max_gap)

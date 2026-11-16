@@ -2672,3 +2672,44 @@ DSEC Semantic Q5の78frameという制約を併記する。
   実データ/GPU推論・完成動画はまだ未確認。既存出力/cacheは削除せず、fresh rootへのみ保存する。
 - 比較動画のコード・テスト・新手順書13ファイルをローカルcommit `3bc29b1`へ記録。
   既存の未コミット実験台帳・handoff等はこのcommitへ含めていない。ユーザー自身がpushする方針を維持し、こちらからpushしていない。
+
+## 90. 活動5分位の絶対イベント量と時間的継続の確認（2026-11-16、既受領値の再整理）
+
+- ユーザーが「20%〜100%に加えてイベント数という単位でも知りたい。DSECは比較的多い状態が続き、
+  M3EDは少ない/多い差が激しい」と指摘。新しい数値ログや実動画の受領ではない。
+  5分位の固定境界を維持し、実RGB区間のevent_count・window_us・event_rate_hzを併記する。
+- 根拠は§85の受領全量`docs/evaluation_records/20261115_semantic_depth_activity_metrics.json`。
+  seed0・既存5条件、SemanticはDSEC test3/M3ED val2、DepthはDSEC val4/M3ED val2のまま。
+  サーバー元出力は`outputs/semantic_depth_activity_20261110/`と
+  `outputs/stage2_common_depth_vkitti_20261110/heads/*/stages/activity_continuous.json`。
+  今回は新規学習・推論・精度再評価を行っていない。
+- train p20/p40/p60/p80はDSECが5.933583/9.054970/12.461568/19.043645、
+  M3EDが1.549875/3.296850/5.084100/8.072375百万events/s。
+  p80/p20はDSEC3.209468倍、M3ED5.208404倍。相対分布幅の比較であり、時間的変化の強さの測定ではない。
+
+受領済みGT評価frameのevent rate範囲（全5条件で同一、百万events/s）：
+
+| dataset/task | 最小 | 最大 |
+| --- | ---: | ---: |
+| DSEC Semantic | 1.403451 | 38.030602 |
+| DSEC Depth | 1.432246 | 41.963889 |
+| M3ED Semantic | 0.000600 | 16.225900 |
+| M3ED Depth | 0.000600 | 16.225900 |
+
+- M3EDには600events/sまで落ちる評価frameが含まれ、DSECの最低約140万events/sと絶対量が異なる。
+  「M3EDの低活動がより深い」はこの範囲で支持されるが、DSEC高活動の継続やM3EDの急変は未検証。
+  極値は収録量・シーン構成にも依存し、速度・センサー性能やLSTM保持機構の因果とはしない。
+- countはDSEC rectified480×640、M3ED DAGR 2×2縮小＋rectification後360×640全体。
+  `event_rate_hz=event_count×1e6/window_us`。実区間長が異なるため、50ms換算値を実測countとして扱わない。
+  DAGRやsensor/cropの差があるためrawイベント数の同条件比較ではない。
+- 受領JSONにmanifest recordsはなく、正確な件数分布・連続秒数はローカルから復元できない。
+  `tools/summarize_activity_counts.py`でサーバーfull manifestを検証・集計する手順を追加。
+  GPU不要、既存群のままtrain/task評価系列のcount/window/rate分布・時間占有率・Q1/Q5連続秒数を保存する。
+  連続時間はsequence・欠落区間・250ms超のgapを跨がず、長い入力区間の除外を報告する。
+  対象はGT supportではなく全prepared入力区間であり、過去の精度評価frame数とは区別する。
+- 予定出力`outputs/activity_counts_20261116/{dsec,m3ed}_{semantic,depth}.json`、
+  サーバー手順`docs/semantic_depth_activity.md`。既存出力は保持し、再学習/全量cache再生成/20件再採点は不要。
+  併せて動画footerと`frames.csv`へ保存countと実区間長を追加。実データ集計と更新後のGPU動画は未実行。
+- Macでstdlib30件（新規集計7・既存scene11・時刻12）、CLI、AST構文、`git diff --check`が通過。
+  可変RGB窓でのcount/rate差、時間重み、sequence/gap切断、改変manifest拒否、既存出力保護を確認。
+  NumPy/Pillowを使う更新後の描画/CSV統合テストはサーバー用で、Macでは依存を追加せず未実行。

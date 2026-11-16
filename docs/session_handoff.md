@@ -2,6 +2,15 @@
 
 最終更新: 2026-11-16
 
+2026-11-16 ユーザーが既存活動5分位を絶対イベント数でも確認したいと要望（台帳§90）。
+DSECは多い状態が継続、M3EDは少ない/多い差が大きいという観察。受領rate範囲は後者の極低活動を支持するが、継続時間は未確認。
+GPU不要のsummarize_activity_counts.pyで既存manifestの実count/window/rate分布・群の時間占有率・連続秒数を集計する。
+train境界は維持し、task評価系列の全入力区間を対象とする（GT有効frameの精度supportとは別）。
+DSEC rectification後480×640とM3ED DAGR/rectify後360×640の処理差を明示し、生センサー数の公平比較とはしない。
+動画/frames.csvにも実countとwindow_usを追加。手順docs/semantic_depth_activity.md、予定出力outputs/activity_counts_20261116/。
+新しい実データcount統計・連続時間・精度結果は未受領。再学習/全20再評価は不要、サーバーでmanifest集計のみ行う。
+Macはstdlib30件（集計7・scene11・時刻12）とCLI/構文/diff確認通過。更新したPillow描画テストはサーバー用で未実行。
+
 2026-11-16 ユーザーがSemantic/Depthの連続シーン比較動画を希望（台帳§89）。
 低活動frameの抜き出し連結ではなく連続数秒を保持。基準はまず既存5分位の画面全体event rateと明示回答。
 新select_activity_scenes.pyはtrain p20以下/p80超の時間占有率80%以上の連続10秒を低/高各1本選び、全入力frameを保持する。
@@ -12,6 +21,8 @@ GT欠損はunavailable、過去GTを流用しない。native timestampをVFRで�
 Mac stdlib23件/実FFmpeg合成PTS検査は通過。Torch/HDF5/Pillow/NumPy runtime test・実データ/GPU動画はサーバー未実行。
 実際の選択時刻/動画本体はまだ未生成。GPU0/1の学習を止めず、空き確認できたGPU2で一モデルずつ実行するコマンドを用意。
 比較動画コード/テスト/手順書13ファイルはローカルcommit 3bc29b1。pushはユーザーが行う方針を維持し、こちらからpushしていない。
+続けてDSECもSemantic/Depth別に低/高各10秒・計4本を生成する実行コマンドを提示。選択/動画の実行結果はまだ未受領。
+候補不足時は停止し、10秒や占有率80%を自動変更しない。GPU2のM3ED動画等が終了した後、DSEC両taskを逐次実行する。
 
 2026-11-16 DSEC disparity公式提出の要否を質問され、公式配布/benchmark規則を再確認。
 4公開valによる内部比較・活動5分位分析は提出なしで進められるが、公式test/leaderboard比較には公式評価が必要。

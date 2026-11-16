@@ -36,7 +36,8 @@ def test_missing_gt_still_draws_predictions_and_native_source_time(tmp_path):
     prediction = np.ones((32, 640), dtype=np.float32)*20
     scene = dict(sequence='fixture', kind='low', start_us=1000000, end_us=1200000,
                  low_fraction=0.8, high_fraction=0.0)
-    rows = [dict(timestamp=t, event_rate_hz=10.0, group='p00_20') for t in (1000000, 1050000, 1100000, 1150000)]
+    rows = [dict(timestamp=t, event_count=1, window_us=100000, event_rate_hz=10.0,
+                 group='p00_20') for t in (1000000, 1050000, 1100000, 1150000)]
     canvas, metrics = draw_frame('depth', source, source, None,
         np.zeros((32, 640), dtype=bool), [prediction], ['E1 Encoder LSTM h'], scene,
         1050000, rows[1], rows, [20, 40, 60, 80], font.path, 80, 100)
@@ -62,7 +63,7 @@ def test_renderer_replays_prefix_and_keeps_all_scene_inputs_with_missing_gt(tmp_
     (prepared/sequence).mkdir(parents=True)
     (prepared/sequence/'metadata.json').write_text('{}')
     stamps = [50000, 100000, 150000, 200000, 250000]
-    records = {t:dict(sequence=sequence, timestamp=t, previous_timestamp=t-50000, window_us=50000,
+    records = {t:dict(sequence=sequence, timestamp=t, previous_timestamp=t-50000, window_us=50000, event_count=1,
                      event_rate_hz=20.0, group='p00_20') for t in stamps}
     identity = {'manifest_sha256': 'fixture', 'source_contract': {'dataset':'m3ed'}, 'cutpoints': [
         {'event_rate_hz': v} for v in (30, 40, 50, 60)]}
@@ -112,5 +113,10 @@ def test_renderer_replays_prefix_and_keeps_all_scene_inputs_with_missing_gt(tmp_
     result=json.loads((output/'manifest.json').read_text())
     assert result['status']=='complete' and result['videos']['fixture_low']['original_frames']==3
     assert len(list((output/'fixture_low').glob('*.png')))==3
-    assert len((output/'fixture_low/frames.csv').read_text().splitlines())==4
+    import csv
+    with (output/'fixture_low/frames.csv').open() as stream:
+        exported = list(csv.DictReader(stream))
+    assert len(exported)==3
+    assert all(int(row['event_count'])==1 and int(row['window_us'])==50000 for row in exported)
+    assert all(float(row['event_rate_hz'])==20.0 for row in exported)
     assert len(list((output/'predictions/E1'/sequence).glob('*.npy')))==3

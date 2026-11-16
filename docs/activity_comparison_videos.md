@@ -31,13 +31,14 @@ GT付きframeだけを固定20fpsへ詰める処理は使わない。MP4はVFR�
 コンテナ長は指定秒数＋1µs。実FFmpeg/ffprobeの小さな合成動画で元PTS全保持を確認済み。
 
 既定の6画面はRGB、GEP events、GT、E0予測、E1予測、E2予測。
-元timestamp、scene内経過秒、活動率（百万events/s）、活動群、活動曲線、群の時間占有率を表示する。
+元timestamp、scene内経過秒、実RGB区間のイベント数と区間長ms、活動率（百万events/s）、活動群、活動曲線、群の時間占有率を表示する。
 条件IDと正式名を併記し、Semantic paletteとDepthの0–80m色範囲をモデル/時刻間で固定する。
 RGBは参照表示のみで、推論入力はイベント。Depthの色clampは表示だけで、CSVのMAEは未clip予測から計算する。
 
 GTはexact timestampに存在する場合だけ表示する。欠損時はGT unavailable、frame指標はN/A。
 前のGTを現在のGTとして保持・補間しない。GTがなくても予測とstate更新は継続する。
 動画中/CSVのframe mIoU・frame MAEは単一frameの診断値で、既報全体指標の集計とは区別する。
+`frames.csv`にも`event_count`と`window_us`を保存する。イベント画像の色や非ゼロ画素から数を推定せず、既存活動manifestの実カウントを使う。
 
 ## 最初はM3EDの同一シーンで両taskを比較
 
@@ -112,7 +113,23 @@ python tools/select_activity_scenes.py \
   --output outputs/activity_scenes_20261116/dsec_depth.json
 ```
 
-rendererには対応するJSONと`--task`を渡す。他の指定はM3ED例と共通。
+両JSONで低/高の各1sceneが選ばれたことを確認し、GPU2が空いている場合に以下を逐次実行する。
+M3ED動画をGPU2で生成中なら、その終了後に実行する。
+
+```bash
+OMP_NUM_THREADS=1 CUDA_VISIBLE_DEVICES=2 python -u tools/render_activity_comparison.py \
+  --scenes outputs/activity_scenes_20261116/dsec_semantic.json \
+  --task semantic --conditions E0,E1,E2 \
+  --output outputs/activity_videos_20261116/dsec_semantic &&
+OMP_NUM_THREADS=1 CUDA_VISIBLE_DEVICES=2 python -u tools/render_activity_comparison.py \
+  --scenes outputs/activity_scenes_20261116/dsec_depth.json \
+  --task depth --conditions E0,E1,E2 \
+  --depth-run outputs/stage2_common_depth_vkitti_20261110 \
+  --output outputs/activity_videos_20261116/dsec_depth
+```
+
+条件を満たせばSemantic/Depth各低活動・高活動の計4本を生成する。
+出力は各task rootの`{scene_id}/comparison.mp4`。候補不足と既存出力の扱いはM3EDと同じ。
 DSEC Semanticは表示440×640/入力448×640、Depthはfull480×640、M3EDは両taskとも中央352×640を維持する。
 
 ## 検証範囲

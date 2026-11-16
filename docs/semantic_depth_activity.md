@@ -261,3 +261,51 @@ CUDA_VISIBLE_DEVICES=0 python tools/evaluate_dense_probe.py \
 
 Macのstdlib・構文確認のみ。実データのmanifest生成・head再推論・GPU採点はサーバー未検証。
 新しい精度結果や学習完了を示す記録ではない。
+
+## 5分位を絶対イベント数でも確認する（2026-11-16）
+
+Q1〜Q5の20%刻みはtrainの**イベント率の順位**であり、イベント数そのものの割合ではない。
+既存境界・評価スコアを維持し、各群の実イベント数・RGB区間長・events/sを併記する。
+`event_rate_hz = event_count × 1,000,000 / window_us`なので、区間長が違えば同じ件数でもrateは違う。
+50ms相当の件数はrate×0.05で換算できるが、実際の区間長を確認せず実測件数として扱わない。
+
+受領済みtrain境界（百万events/s）：
+
+| 境界 | DSEC | M3ED |
+| --- | ---: | ---: |
+| p20 | 5.933583 | 1.549875 |
+| p40 | 9.054970 | 3.296850 |
+| p60 | 12.461568 | 5.084100 |
+| p80 | 19.043645 | 8.072375 |
+
+DSECは480×640のrectification後、M3EDは360×640のDAGR 2×2縮小＋rectification後に数える。
+M3EDの中央352行crop前の値であり、両者を同条件の生センサーイベント数として比較しない。
+画像の着色量・非ゼロ画素数からカウントを推定しない。
+
+以下はサーバーの既存manifestだけを読む。GPU・再学習・head再評価・特徴cache生成は不要。
+ユーザーが今回の変更をpushした後に実行する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+git pull --ff-only
+
+for dataset in dsec m3ed; do
+  for task in semantic depth; do
+    python tools/summarize_activity_counts.py \
+      --activity-manifest "outputs/semantic_depth_activity_20261110/manifests/${dataset}.json" \
+      --dataset "$dataset" --task "$task" \
+      --output "outputs/activity_counts_20261116/${dataset}_${task}.json" || break 2
+  done
+done
+```
+
+既存出力は上書きしない。再取得時は新しい出力先を指定する。
+train・task評価系列別に、全体／既存群／系列の件数・区間長・rateの分布、時間加重rate、群の時間占有率、
+Q1/Q5の連続時間をJSONへ保存する。連続時間は系列境界・欠落区間・250ms超の区間を跨がない。
+長い区間のcountは全体分布には残し、連続時間の計算からだけ除く。
+
+この集計の母集団は**指定系列の全prepared入力区間**。GT有効の評価frameだけではないので、
+既報mIoU/Depthのsupport件数と同一とは限らない。新しい精度スコアや共通の絶対量binによる再評価ではない。
+「多い状態が続く／激しく変わる」は分位点だけで断定せず、系列別の低・高活動の連続秒数と実動画を確認する。
+動画にも実イベント数と区間長を表示し、`frames.csv`に`event_count`・`window_us`を追加する。
