@@ -213,6 +213,19 @@ Depthは既存common runnerが旧5条件固定なので、そのまま`--output`
 まずDSEC Stage1＋M3ED Semanticの2ジョブでCPU/I/Oの競合を確認する。GPU2まで重いcache抽出を同時起動することは既定にしない。
 今回の提案時点で新しいSemantic/Depthジョブをサーバーへ起動した事実はない。
 
+## M3ED Semanticの最初の比較結果（2026-11-17受領）
+
+E1 Encoder＋LSTM（h蒸留）・ConvLSTMは50epoch中のepoch20を採用し、best mIoU38.601202%。
+既存E1 Encoder＋LSTM（h蒸留）・Patchwise LSTMの38.700944%に対し−0.099742pt。
+Q1は27.977294%対29.109403%（ConvLSTM−Patchwise=−1.132109pt）、
+Q5は47.709706%対47.394163%（＋0.315543pt）。全体/全5群のframe・valid pixels件数は一致。
+全体は近いが、低活動Q1での追加容量の利益は今回得られていない。単一seed/単一taskの結論に限定する。
+全量と監査は台帳§94、`docs/evaluation_records/20261117_m3ed_semantic_convlstm_activity_best.json`。
+DSEC Semanticと両datasetのDepthは引き続き同じ比較条件で進める。
+
+残り3ジョブを空きGPUで並列に進める実行手順は`docs/temporal_remaining_jobs.md`。
+`tools/run_temporal_downstream.py --gpus 0,1,2 --preflight`で読み取り確認し、`--execute`で新規runを起動する。
+
 Macはstdlib planner回帰・AST/CLI確認のみ。PyTorch/Hydra/GPU/実データ/VRAMはサーバーで確認する。
 専用runnerの実行前preflightには共通学習テスト、ConvLSTM矩形gridとDepth4段、
 両dataset/両方式のHydra合成/runtime設定検証を含む。サーバー実行成功・新しいスコアはまだ未受領。

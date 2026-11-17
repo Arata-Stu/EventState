@@ -2,6 +2,34 @@
 
 最終更新: 2026-11-17
 
+2026-11-17 ユーザーが残り3ジョブを空きGPUで並列実行するコマンドを希望（台帳§95）。
+新run_temporal_downstream.pyでDSEC Semantic（dev→refit→test/5分位）、M3ED Depth、DSEC Depthをまとめて実行する。
+既存CLI・recipeを再利用し、M3ED Semanticの完了出力には触れない。busy GPUを除外し、scratch合計予約で待機制御。
+GPU0/1/2指定なら最大3並列、OMP/MKL等thread1。fresh outputのみ、失敗時成果物は保持し無断再学習しない。
+予定出力outputs/stage2_temporal_remaining_20261117/summary.json、ログ同root/logs/。手順docs/temporal_remaining_jobs.md。
+実サーバーのpreflight/実行はまだ行っていない。コードはユーザー自身がpushする方針を維持する。
+Mac stdlib52件（新規22＋scheduler18＋Stage1 planner12）とCLI/AST/diff確認通過。実GT・checkpoint・CUDAはサーバー未検証。
+起動コード・テスト・新手順書5ファイルはローカルcommit cc73a0a。こちらからpushせず、ユーザー自身のpush後にサーバーでpullする。
+
+2026-11-17 M3ED ConvLSTM Semanticの採用epoch20・best全体/活動5分位を受領（台帳§94）。
+best mIoU38.601202%で、同条件Patchwise E1の38.700944%に対し−0.099742ポイント。
+Q1は27.977294%（Patchwise比−1.132109pt）、Q2〜Q4もわずかに低く、Q5は47.709706%（＋0.315543pt）。
+全体/各群のframe数・valid pixelsはPatchwiseと完全一致し、群合計も一致。sample/GT/割当hashは今回未受領。
+全体は近いが、今回の低活動Q1ではPatchwiseが高い。時間部＋出力projection約8.09倍のConvLSTMで全体/Q1改善は得られていない。
+単一seed・M3ED Semanticのみで普遍的な方式優劣や記憶機序の因果としない。採用20は50epoch予算内のval選択。
+受領/検算JSON docs/evaluation_records/20261117_m3ed_semantic_convlstm_activity_best.json。
+次は同条件のDSEC SemanticとM3ED Depth→DSEC Depth。今回、追加学習は起動していない。
+
+2026-11-17 続報：ConvLSTM Stage1のDSEC/M3ED両worker completeと、M3ED Semantic epoch49＋学習後評価100%を受領（台帳§93）。
+epoch49は50epoch目。表示mIoU38.584630%はlast epochであり、選択best.ptの正式結果として扱わない。
+続く条件名付き26:35のvalidationは既存runnerではbest.ptの追加評価。プロンプト復帰・例外表示なしで正常終了を強く支持。
+次に親_SUCCESS、h/validation_metrics.json、h/activity_groups.jsonをGPUなしで読み、best epoch/全体/Q1〜Q5を回収する。
+期待出力は前回コマンドのoutputs/stage2_m3ed_semantic_convlstm_20261117。実marker/JSON/checkpoint SHAはまだ未受領。
+旧Patchwise E1はmIoU38.700944%。last値との差でConvLSTMの勝敗を確定せず、bestと同じsupport/hashを確認する。
+次の学習候補はDSEC SemanticとM3ED Depthを2GPUで並列→DSEC Depth。新しいGT補完/lossは加えない。
+受領記録docs/evaluation_records/20261117_temporal_stage1_and_m3ed_semantic_completion_reported.json。
+Stage1のcomplete行は当該planの最終checkpoint確認を含むが、今回貼付だけでstep数/seed/configまでは復元できない。
+
 2026-11-17 ユーザーが現在の1GPU学習はConvLSTMと回答し、M3ED worker complete行を受領（台帳§92）。
 表示はDSEC GPU0、M3ED GPU1。ユーザーの「現在1GPU」と合わせDSEC残りと解釈するが、現在のGPU空きは未確認。
 出力root/stepがないのでsmoke/fullの識別と本番step_00099999.ptはサーバーで確認する。

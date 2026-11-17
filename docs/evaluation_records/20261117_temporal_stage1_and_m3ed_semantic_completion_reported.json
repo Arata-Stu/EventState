@@ -1,0 +1,55 @@
+{
+  "received_date": "2026-11-17",
+  "source": "User-pasted Stage 1 completion and M3ED Semantic final validation log",
+  "condition_label": "E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+  "stage1_reported_lines": [
+    "[stage1] GPUs ['0']: dsec_E1_convlstm_w1 E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+    "[stage1] GPUs ['1']: m3ed_E1_convlstm_w1 E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+    "[stage1] complete: m3ed_E1_convlstm_w1 E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+    "[stage1] complete: dsec_E1_convlstm_w1 E1 Encoder＋LSTM（h蒸留）・ConvLSTM"
+  ],
+  "semantic_last_epoch_record": {
+    "epoch": 49,
+    "learning_rate": 2.0000000000000003e-06,
+    "train/ce_loss": 0.21145422030476074,
+    "train/dice_loss": 0.0,
+    "train/loss": 0.21145422030476074,
+    "val/class_IoU": [0.5310124984763012, 0.6352330322413516, 0.10510173957645044, 0.3809516399194007, 0.15262825742940012, 0.741588566903273, 0.3796860677092881, 0.6190478508883411, 0.542443186337321, 0.014647779998631177, 0.14196867613069047],
+    "val/evaluated_pixels": 5079348727,
+    "val/mIoU": 0.38584629960094996,
+    "val/mean_class_accuracy": 0.4940977135587292,
+    "val/pixel_accuracy": 0.741191750625001
+  },
+  "semantic_progress_lines": {
+    "last_epoch_validation": {"completed_batches": 3328, "total_batches": 3328, "elapsed_display": "05:24", "batches_per_second_display": 10.27},
+    "post_training_best_head_evaluation": {"completed_batches": 3328, "total_batches": 3328, "elapsed_display": "26:35", "batches_per_second_display": 2.09},
+    "shell_prompt_returned": true
+  },
+  "interpretation": {
+    "stage1": "Both workers reported complete, which checks successful process exit and a nonempty final checkpoint for the selected plan; the pasted lines do not specify smoke/full or update count.",
+    "semantic": "Epoch 49 is the fiftieth epoch. The following condition-labelled evaluation uses best.pt in the current runner. Returning to the shell with no shown traceback strongly supports completion; saved _SUCCESS and report files remain to be confirmed.",
+    "reported_miou_percent": 38.584629960094996,
+    "reported_miou_is_last_epoch_not_confirmed_best": true
+  },
+  "recipe_and_paths_from_preceding_command_not_independently_recovered": {
+    "seed": 0,
+    "split": "M3ED common Semantic train3/public val2, InternImage pseudo-labels mapped to 11 classes",
+    "feature": "h",
+    "head": "frozen backbone, linear 384 to 11, CE, 50 epochs",
+    "expected_backbone": "outputs/stage1_temporal_full_20261115/m3ed_E1_convlstm_w1/checkpoints/step_00099999.pt",
+    "expected_semantic_root": "outputs/stage2_m3ed_semantic_convlstm_20261117",
+    "expected_best_metrics": "outputs/stage2_m3ed_semantic_convlstm_20261117/h/validation_metrics.json",
+    "expected_activity_report": "outputs/stage2_m3ed_semantic_convlstm_20261117/h/activity_groups.json"
+  },
+  "not_received": [
+    "Stage 1 training_summary.json, successful update counts and checkpoint hashes",
+    "Semantic _SUCCESS and saved best epoch/score",
+    "ConvLSTM activity quintile scores and comparability hashes",
+    "ConvLSTM DSEC Semantic or either dataset Depth results"
+  ],
+  "next_steps": [
+    "Read saved Semantic completion marker, best-selection metrics and activity report without GPU inference.",
+    "Compare best-head all/Q1-Q5 scores and support hashes with the existing Patchwise E1.",
+    "Proceed with DSEC Semantic and M3ED Depth in separate output/cache roots, initially on two GPUs; keep the established task recipes."
+  ]
+}

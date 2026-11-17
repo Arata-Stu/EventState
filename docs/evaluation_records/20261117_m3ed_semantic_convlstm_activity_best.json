@@ -1,0 +1,91 @@
+{
+  "received_date": "2026-11-17",
+  "source": "User-pasted saved best-head and activity report summary",
+  "dataset": "m3ed",
+  "task": "semantic",
+  "condition_label": "E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+  "selected_epoch_one_based": 20,
+  "reported_mIoU_precision": "six decimal places in percent; no extra source precision assumed",
+  "groups": {
+    "all": {
+      "mIoU_percent": 38.601202,
+      "frames": 26617,
+      "valid_pixels": 5079348727,
+      "patchwise_mIoU_percent": 38.70094398410913,
+      "convlstm_minus_patchwise_percentage_points": -0.09974198410913004
+    },
+    "p00_20": {
+      "mIoU_percent": 27.977294,
+      "frames": 12882,
+      "valid_pixels": 2458284942,
+      "patchwise_mIoU_percent": 29.109403232081043,
+      "convlstm_minus_patchwise_percentage_points": -1.1321092320810422
+    },
+    "p20_40": {
+      "mIoU_percent": 48.956439,
+      "frames": 2516,
+      "valid_pixels": 480130796,
+      "patchwise_mIoU_percent": 49.15741098728912,
+      "convlstm_minus_patchwise_percentage_points": -0.20097198728911536
+    },
+    "p40_60": {
+      "mIoU_percent": 51.017531,
+      "frames": 3022,
+      "valid_pixels": 576691282,
+      "patchwise_mIoU_percent": 51.42280955681361,
+      "convlstm_minus_patchwise_percentage_points": -0.405278556813613
+    },
+    "p60_80": {
+      "mIoU_percent": 49.599986,
+      "frames": 4602,
+      "valid_pixels": 878204262,
+      "patchwise_mIoU_percent": 49.70257316086777,
+      "convlstm_minus_patchwise_percentage_points": -0.10258716086777042
+    },
+    "p80_100": {
+      "mIoU_percent": 47.709706,
+      "frames": 3595,
+      "valid_pixels": 686037445,
+      "patchwise_mIoU_percent": 47.394163139447926,
+      "convlstm_minus_patchwise_percentage_points": 0.31554286055207115
+    }
+  },
+  "comparison_reference": {
+    "path": "docs/evaluation_records/20261115_semantic_depth_activity_metrics.json",
+    "condition": "m3ed_E1",
+    "condition_label": "E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM",
+    "report": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/m3ed_E1.json"
+  },
+  "audit": {
+    "all_and_group_frame_counts_match_patchwise": true,
+    "all_and_group_valid_pixels_match_patchwise": true,
+    "group_frame_and_pixel_sums_match_all": true,
+    "checkpoint_and_sample_assignment_target_support_hashes_received": false,
+    "completion_marker_received": false
+  },
+  "recipe_from_previous_command": {
+    "seed": 0,
+    "budget_epochs": 50,
+    "split": "common M3ED train3/public val2",
+    "labels": "InternImage pseudo-labels mapped to DSEC-11",
+    "backbone": "frozen final Stage 1 ConvLSTM",
+    "feature": "h",
+    "head": "linear 384 to 11",
+    "loss": "CE",
+    "expected_output": "outputs/stage2_m3ed_semantic_convlstm_20261117/h/activity_groups.json",
+    "resolved_config_received": false
+  },
+  "temporal_module_plus_output_projection_parameters": {
+    "patchwise": 1330560,
+    "convlstm": 10766208,
+    "ratio": 8.09148629148629,
+    "source": "docs/temporal_comparison.md",
+    "scope": "time module plus output projection only; not total model or measured latency"
+  },
+  "interpretation_limits": [
+    "Single configured seed and one dataset/task; no significance or universal superiority claim.",
+    "All/group mIoU comes from corresponding confusion matrices; do not reconstruct all by averaging group mIoU.",
+    "Support count agreement does not independently verify sample identities or GT/mask hashes.",
+    "Best epoch 20 was selected within the unchanged 50-epoch training budget; it is not a new 20-epoch recipe."
+  ]
+}

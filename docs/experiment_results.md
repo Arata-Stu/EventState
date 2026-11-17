@@ -2764,3 +2764,101 @@ DSEC Semantic Q5の78frameという制約を併記する。
 - 当初の空きGPU活用候補だった同一head continuous/reset診断やGT coverage可視化は、主比較を支える追加診断として残す。
   新しいGT補完や学習条件を同時に加えず、まず完了済M3EDの方式比較を得る。
   過去のCPU/I/O競合を踏まえ、最初はStage1＋Semanticの2ジョブを提案。今回、サーバー実行・新精度値はない。
+
+## 93. ConvLSTM両Stage 1とM3ED Semanticの終了ログを受領（2026-11-17）
+
+- ユーザーがDSEC/M3ED双方の`[stage1] complete`と、M3ED Semanticのepoch49および後続の条件名付き
+  validation100%→shellプロンプト復帰を提示。例外表示なし。
+  受領全数値は`docs/evaluation_records/20261117_temporal_stage1_and_m3ed_semantic_completion_reported.json`へ保存。
+- 条件はE1 Encoder＋LSTM（h蒸留）・ConvLSTM。前回提示コマンドのrecipeはseed0、M3ED common Semantic
+  train3/public val2（InternImage疑似11class）、凍結h＋linear384→11、CE、50epoch。
+  本番Stage1の期待splitはDSEC35/M3ED3だが、今回の貼付にはresolved config/更新数/checkpoint SHAがないため、
+  実seed・Stage1更新数・保存先を独立に再確認できたという意味ではない。
+  Stage1 completeはworker終了code0と当該planの最終checkpoint非空の確認後に出る。smoke/full識別は保存plan/checkpointを確認する。
+- epochは0始まりなので`49`は50epoch目。受領した**最終epoch**のvalidation値：
+
+| 指標 | 値 |
+| --- | ---: |
+| mIoU | 38.584630% |
+| pixel accuracy | 74.119175% |
+| mean class accuracy | 49.409771% |
+| evaluated pixels | 5,079,348,727 |
+| train CE / total loss | 0.2114542203 |
+| train Dice loss | 0（無効） |
+| LR | 2e-6 |
+
+- 最終epoch validationは3328batch・5:24、続く条件名付き評価は3328batch・26:35。
+  現行runnerの後者は`best.pt`を再評価して全体/活動群JSONを書き、最後に親`_SUCCESS`を作る処理。
+  新たな学習epochではない。正常終了を強く支持するが、markerと保存best/activity値そのものはまだ未受領。
+- 前回コマンドの期待出力は`outputs/stage2_m3ed_semantic_convlstm_20261117/`、
+  `h/validation_metrics.json`（best更新時のepoch/mIoU）、`h/activity_groups.json`（bestの全体/Q1〜Q5）。
+  旧Patchwise E1のbest全体mIoUは38.700944%。今回のlast epochとの差−0.116314ポイントを
+  ConvLSTMの最終的な優劣とは扱わない。正式比較ではbest評価と群別support/各種hashを回収する。
+- 次はGPUを使わず保存JSON/markerを確認。その後、既存手順のDSEC SemanticとM3ED Depthを別GPU・新規rootで進める候補。
+  DSEC Semanticは既存wrapperで6/2開発→train8refit→公式test3、活動5分位は後続evaluatorで追加できる。
+  M3ED Depthは既存target index/統計と同じ4段readout・VKITTI初期化DPT・log-L1・50epochを維持する。
+  今回、追加のサーバー学習・推論・GT補完をこちらから起動した事実はない。
+
+## 94. M3ED Semantic ConvLSTMの採用bestと活動5分位：Patchwiseとの比較（2026-11-17）
+
+- ユーザーが保存JSONを読んだ出力を提示。E1 Encoder＋LSTM（h蒸留）・ConvLSTM、採用epoch20、
+  best全体mIoU38.601202%とQ1〜Q5のmIoU/frame/valid pixelsを受領。
+  受領値・既存Patchwiseとの差・support監査は`docs/evaluation_records/20261117_m3ed_semantic_convlstm_activity_best.json`。
+- 前回コマンドのrecipeはseed0、M3ED common Semantic train3/public val2・InternImage疑似11class、
+  352×640・backbone凍結・h384ch＋linear head・通常CE、50epoch予算でval最良選択。
+  期待出力は`outputs/stage2_m3ed_semantic_convlstm_20261117/h/activity_groups.json`、
+  最良epochの元は同rootの`validation_metrics.json`。採用20は1始まりであり、予算を20epochへ変えた実験ではない。
+  今回resolved config、checkpoint SHA、sample/GT/活動割当/support hash、親_SUCCESSの値は未提示。
+- Patchwise正本は§85の`docs/evaluation_records/20261115_semantic_depth_activity_metrics.json`内`m3ed_E1`。
+  差はConvLSTM−Patchwise、単位はmIoUのパーセントポイント。新値はユーザーの%小数6桁の精度を維持する。
+
+| 活動群 | E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM [%] | E1 Encoder＋LSTM（h蒸留）・ConvLSTM [%] | 差 [pt] |
+| --- | ---: | ---: | ---: |
+| 全体 | 38.700944 | 38.601202 | −0.099742 |
+| Q1（下位20%） | 29.109403 | 27.977294 | −1.132109 |
+| Q2 | 49.157411 | 48.956439 | −0.200972 |
+| Q3 | 51.422810 | 51.017531 | −0.405279 |
+| Q4 | 49.702573 | 49.599986 | −0.102587 |
+| Q5（上位20%） | 47.394163 | 47.709706 | ＋0.315543 |
+
+- 全体と全5群のframe数・valid pixelsがPatchwiseと一致。全体26,617frame/5,079,348,727画素、
+  群別frameは12,882/2,516/3,022/4,602/3,595、画素は2,458,284,942/480,130,796/576,691,282/878,204,262/686,037,445。
+  群別合計も全体と一致する。件数一致だけでsample/GT identityまで独立確認したとはしない。
+- このM3ED Semantic結果では、全体は近い一方、目的の低活動Q1はPatchwiseが1.132109pt高い。
+  ConvLSTMはQ5で0.315543pt高い。空間混合を加えたことによる低活動改善は今回は確認できない。
+  各群mIoUは群内混同行列から算出するため、群mIoUのframe加重平均で全体を再構成・差分分解しない。
+- 時間モデル＋出力projectionのparameter数はPatchwise1,330,560、ConvLSTM10,766,208（約8.09倍、§86/手順書）。
+  この追加容量による全体/Q1の利益は今回得られていない。ただし総モデル容量や実測latencyが8倍という意味ではない。
+  単一seed・M3ED Semanticだけで一般的優位性・有意差・記憶保持機構の因果を主張しない。
+- 次は同条件でDSEC SemanticとM3ED Depthを進め、その後DSEC Depthも揃える。
+  今回Macはstdlibによる差分計算・support整合確認だけを実施し、サーバー再学習・再評価は起動していない。
+
+## 95. 残り3ジョブの空きGPU並列launcherとサーバー手順（2026-11-17、未実行）
+
+- ユーザーがDSEC Semantic・M3ED Depth・DSEC Depthの残り3ジョブを、空いているGPUで並列に進めたいと明示。
+  `tools/run_temporal_downstream.py`とSemantic helperを追加し、既存下流CLI/runnerへ接続した。
+  既完了M3ED Semanticは再学習・上書きしない。新しい精度結果やサーバー実行の受領ではない。
+- 条件はE1 Encoder＋LSTM（h蒸留）・ConvLSTM、seed0、本番Stage1 step99999を凍結。
+  DSEC Semanticは既存Patchwise E1 final/config.jsonからラベルrootとrecipeを確認し、
+  6/2開発50epoch→最良epoch数でtrain8再学習→公式test3＋共通活動5分位。
+  Depthは旧runのdataset別train/val indexと共通train統計を再利用し、4段readout・VKITTI初期化DPT、
+  log-L1・50epoch/batch4/FP32・val pooled MAE選択を維持。pooled/F³式frame平均と全活動群を同じheadで評価する。
+  DSECは公開val視差評価も実行するが、公式test uploadは起動しない。
+- `--gpus 0,1,2 --preflight`は読取確認のみ、`--execute`が実行。指定GPUのcompute processをnvidia-smiで確認し、
+  busyを除外、空き数とscratch合計予約に応じて最大3並列または待機する。GPU照会失敗や空き0台なら学習前に停止。
+  worker開始直前も空きを確認し、物理GPU IDをSemantic wrapperへ正しく継承する。
+  OMP/MKL/OpenBLAS/NumExprのthread1で過去のCPU過剰使用を抑えるが、実速度/I/O競合はサーバーで確認する。
+- preflightでは旧protocol/GT/統計/sourceを確認し、元GT hashと入力hashを記録する。
+  Depthで最初RGB timestampだけを合法skipする従来仕様も維持。
+  workerは実checkpointのConvLSTM最終段1層/384ch/h-only/seed0/full99999を確認する。
+  新規output/cacheのみ許可し、親lockを重い子処理まで継承。中断・失敗時の成果物は保持して停止する。
+- 予定出力`outputs/stage2_temporal_remaining_20261117/`、集約`summary.json`、`logs/`、
+  Semantic `dsec_semantic/`、Depth `heads/{dsec,m3ed}_E1_convlstm/stages/`。
+  既存GT indexを新runの`targets/`へコピーし、元runのhead/reportを変更しない。
+  手順`docs/temporal_remaining_jobs.md`。ユーザー自身のpush後、サーバーでpull→preflight→executeする。
+- Macのstdlib52件（新規launcher/helper22、既存scheduler18、既存Stage1 planner12）・CLI/AST/diff確認通過。
+  合成fixtureでbusy GPU除外、初回RGBだけの合法skip、protocol/GT/入力改変拒否、lock FD継承、
+  容量不足・既存出力保護、両workerへのdispatchとsummary作成を確認した。
+  実GT/HDF5、実checkpoint metadata、CUDA/GPU実行はサーバー未確認。Macで依存追加や重い学習はしていない。
+- 起動コード・テスト・新手順書5ファイルをローカルcommit `cc73a0a`へ保存。
+  既存の未コミット実験記録・handoff等はこのcode commitへ混ぜていない。pushはユーザー自身が行う。
