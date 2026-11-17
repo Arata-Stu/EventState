@@ -2862,3 +2862,34 @@ DSEC Semantic Q5の78frameという制約を併記する。
   実GT/HDF5、実checkpoint metadata、CUDA/GPU実行はサーバー未確認。Macで依存追加や重い学習はしていない。
 - 起動コード・テスト・新手順書5ファイルをローカルcommit `cc73a0a`へ保存。
   既存の未コミット実験記録・handoff等はこのcode commitへ混ぜていない。pushはユーザー自身が行う。
+
+## 96. 残り3ジョブのサーバー並列起動とDSEC Semantic完了を受領（2026-11-18）
+
+- ユーザーが長いサーバーログを提示。原文`docs/evaluation_records/20261118_temporal_remaining_progress_received.log`はGit非管理で保存し、
+  解析記録`docs/evaluation_records/20261118_temporal_remaining_progress.json`に元添付SHA256・起動条件・各job状態を記録。
+  今回の実行場所は`/home/iASL/Arata_repo/EventState`、mainはbdd081f→5fb08a9へfast-forward。
+- 添付にはStage1のsmoke各99更新と、続くfull各99,999更新の起動引数・両dataset completeが含まれる。
+  本番出力は`outputs/stage1_temporal_full_20261115/{dsec,m3ed}_E1_convlstm_w1/`。
+  E1 Encoder＋LSTM（h蒸留）・ConvLSTM、seed0、単GPU、DSEC common train35/clip8/batch8、M3ED common train3/clip16/batch4。
+  h蒸留・LR1e-4・FP16・勾配蓄積1・validation無効・augmentation/activity mask/event dropout無効を起動引数で確認。
+  これで従来のcomplete行だけでは不明だったsmoke/full識別は解消。
+  completeは終了code0と最終非空checkpoint確認後の表示だが、training_summaryと実重みSHAの原本は今回未受領。
+- M3ED Semanticは保存親marker=True、best採用epoch20、mIoU38.601202%を再確認。全体/5群数値は§94と同じで、追加実験ではない。
+- 残り3ジョブのpreflightは26,548file、idle GPU0/1/2、scratch空き983.4GiB、同時実行可能3/3。
+  続くexecuteでも再確認してから3workerを開始。2回のpreflight表示は仕様上の確認であり、二重学習ではない。
+  全job条件はE1 Encoder＋LSTM（h蒸留）・ConvLSTM、launcher固定seed0・既存split/GT/loss/予算。
+
+| GPU | job | split・処理 | 予約 | 貼付末尾の状態 |
+| --- | --- | --- | ---: | --- |
+| 0 | DSEC Semantic：E1 Encoder＋LSTM（h蒸留）・ConvLSTM | 開発6/2→train8 refit→公式test3/活動5分位 | 9.8GiB | completed |
+| 1 | M3ED Depth：E1 Encoder＋LSTM（h蒸留）・ConvLSTM | train3/public val2、4段特徴→DPT | 119.2GiB | train/val抽出完了、head学習起動 |
+| 2 | DSEC Depth：E1 Encoder＋LSTM（h蒸留）・ConvLSTM | train37/public val4、4段特徴→DPT | 99.6GiB | train/val抽出完了、head学習起動 |
+
+- run rootは`outputs/stage2_temporal_remaining_20261117/`、各job logは同rootの`logs/`。
+  DSEC Semanticのcompletedはphase更新とworker終了0/result存在確認の2回表示で、再実行ではない。
+  このrunで実データの特徴抽出、Semanticのhead学習・refit・test/群別評価まで進んだことを確認。
+  DepthのDPT学習は起動段階まで確認できるが、epoch数・学習速度・終了・新スコアは貼付にないため断定しない。
+- 例外・worker failure表示はない。親summary.json/_SUCCESSは全3本成功後に生成するので、Depth進行中に存在しなくても正常。
+  最新実機の状態をこちらから照会したわけではなく、以上は受領ログ末尾時点の状態である。
+- 次は起動コマンドを再実行せず、Depth2本を継続し、完成済み`dsec_semantic/activity_test.json`または`result.json`をCPUで回収する。
+  DSEC Semanticの新mIoU/活動5群・hash、Depth両datasetの新精度はまだ未受領。

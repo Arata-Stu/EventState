@@ -1,6 +1,18 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-17
+最終更新: 2026-11-18
+
+2026-11-18 サーバー続報：main bdd081f→5fb08a9へpull後、残り3ジョブをGPU0/1/2で並列起動（台帳§96）。
+preflightで入力26,548file照合、空き3GPU、scratch983.4GiB、予約Semantic9.8/M3ED Depth119.2/DSEC Depth99.6GiBを確認。
+貼付末尾ではGPU0のDSEC Semanticが開発→refit→test/活動5分位までcompleted。新mIoU値はまだ未受領。
+GPU1 M3ED Depth／GPU2 DSEC Depthはtrain/val特徴抽出が完了し、DPT head学習起動へ移行。epoch/終了/新スコアは未受領。
+エラー表示なし。起動コマンドを再実行せず、Depth2本を継続しつつ、完成DSEC Semantic JSONをCPUで回収する。
+run outputs/stage2_temporal_remaining_20261117、Semantic dsec_semantic/activity_test.json（またはresult.json）。
+parent summary/_SUCCESSは全3本終了後なので、この時点でなくても正常。completed重複はphase更新とworker終了確認の2表示。
+添付にはStage1 smoke99→full99999の両方と本番両datasetのcompleteがあり、従来のsmoke/full未確定は解消。
+fullはseed0、DSEC train35/clip8/batch8、M3ED train3/clip16/batch4、各99,999更新の起動引数まで受領。
+M3ED Semanticも_SUCCESS=True、採用20、38.601202%を再確認。重みSHA/training_summary原本は未受領。
+受領記録docs/evaluation_records/20261118_temporal_remaining_progress.json、原文同日のprogress_received.log（Git非管理）。
 
 2026-11-17 ユーザーが残り3ジョブを空きGPUで並列実行するコマンドを希望（台帳§95）。
 新run_temporal_downstream.pyでDSEC Semantic（dev→refit→test/5分位）、M3ED Depth、DSEC Depthをまとめて実行する。
