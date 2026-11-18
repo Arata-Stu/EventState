@@ -23,7 +23,9 @@ sys.path.insert(0, str(PROJECT))
 
 from event_state.activity_quantiles import ActivityIndex
 from event_state.dense.protocol import digest, load_protocol
-from tools.common_depth_parallel import parse_gpus, reservation_bytes, run_parallel
+from tools.common_depth_parallel import (
+    MAX_PARALLEL_DEPTH_JOBS, initially_feasible, parse_gpus, reservation_bytes, run_parallel,
+)
 from tools.temporal_downstream_semantic import build_semantic_job, run_semantic_job
 
 LABEL = 'E1 Encoder＋LSTM（h蒸留）・ConvLSTM'
@@ -213,13 +215,10 @@ def preflight(a, plan, gpus):
             f'{job["dataset"].upper()} Depth: train/val features → DPT head → all/Q1–Q5')
         print(f'[{job["name"]}] {job["label"]} | {task} | '
               f'{reservation_bytes(job["remaining_cache_bytes"]) / 2**30:.1f} GiB reservation', flush=True)
-    selected = []
-    for job in plan['jobs']:
-        if len(selected) < len(gpus) and sum(reservation_bytes(j['remaining_cache_bytes'])
-                                           for j in [*selected, job]) <= free:
-            selected.append(job)
+    selected = initially_feasible(plan['jobs'], len(gpus), free)
     print(f'Initially feasible parallel jobs: {len(selected)}/{len(plan["jobs"])}; '
-          'additional jobs wait for a GPU or scratch.', flush=True)
+          f'Depth limit {MAX_PARALLEL_DEPTH_JOBS}; host slots checked at launch; '
+          'additional jobs wait for a slot or scratch.', flush=True)
     if not gpus:
         raise RuntimeError('No requested GPU is idle. No training or output creation performed.')
     if not selected:

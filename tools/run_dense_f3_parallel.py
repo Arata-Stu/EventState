@@ -7,15 +7,18 @@ import fcntl
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 PROJECT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT))
+from tools.depth_slots import MAX_PARALLEL_DEPTH_JOBS, SLOT_FD_ENV, hold_depth_slot, try_depth_slot
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('run_root', type=Path)
-    p.add_argument('--gpus', default='0,1,2')
+    p.add_argument('--gpus', default='0,1,2', help='GPU IDs in priority order. At most two concurrent Depth workers.')
     p.add_argument('--cache-root', type=Path, help='Omit to locate existing cache by saved head metadata hash')
     a = p.parse_args()
     root = a.run_root.resolve()
@@ -35,6 +38,7 @@ def main():
     gpus = a.gpus.split(',')
     if len(set(gpus)) != len(gpus) or not all(g.isdigit() for g in gpus):
         raise ValueError('Use distinct numeric GPU IDs')
+    gpus = gpus[:MAX_PARALLEL_DEPTH_JOBS]
     # Refuse old sequential runner or independent head/cache workers on this run.
     processes = subprocess.check_output(['ps', '-eo', 'pid,args'], text=True)
     for line in processes.splitlines():
@@ -46,16 +50,26 @@ def main():
     pending = [('dsec', 'alpha1'), ('m3ed', 'baseline'), ('m3ed', 'alpha1'), ('dsec', 'baseline')]
     running = {}
     env = dict(os.environ, CACHE_ROOT=str(a.cache_root.resolve()), RESUME='1', SKIP_MODEL_COMPARISON='1')
+    waiting_for_slot = False
     try:
         while pending or running:
             for gpu in gpus:
                 if pending and gpu not in running:
+                    slot = try_depth_slot()
+                    if slot is None:
+                        if not waiting_for_slot:
+                            print('[parallel] waiting for a host Depth slot', flush=True)
+                            waiting_for_slot = True
+                        break
                     ds, condition = pending.pop(0)
-                    print(f'[parallel] GPU {gpu}: {ds}_{condition}', flush=True)
-                    proc = subprocess.Popen(['bash', 'tools/run_dense_f3_pipeline.sh', 'depth', str(root)],
-                        cwd=PROJECT, env=dict(env, DATASETS=ds, CONDITIONS=condition, CUDA_VISIBLE_DEVICES=gpu),
-                        start_new_session=True)
-                    running[gpu] = proc
+                    with slot:
+                        print(f'[parallel] GPU {gpu}: {ds}_{condition}', flush=True)
+                        job_env = dict(env, DATASETS=ds, CONDITIONS=condition, CUDA_VISIBLE_DEVICES=gpu)
+                        job_env[SLOT_FD_ENV] = str(slot.fileno())
+                        running[gpu] = subprocess.Popen(
+                            ['bash', 'tools/run_dense_f3_pipeline.sh', 'depth', str(root)], cwd=PROJECT,
+                            env=job_env, pass_fds=(slot.fileno(),), start_new_session=True)
+                    waiting_for_slot = False
             for gpu, proc in list(running.items()):
                 code = proc.poll()
                 if code is not None:
@@ -64,9 +78,12 @@ def main():
                     del running[gpu]
             time.sleep(1)
         # All writers finished. Validate/reuse all artifacts, then compute model comparisons serially.
-        subprocess.run(['bash', 'tools/run_dense_f3_pipeline.sh', 'depth', str(root)], cwd=PROJECT,
-            env=dict(env, DATASETS='dsec m3ed', CONDITIONS='baseline alpha1',
-                     SKIP_MODEL_COMPARISON='0', CUDA_VISIBLE_DEVICES=gpus[0]), check=True)
+        with hold_depth_slot() as slot:
+            comparison_env = dict(env, DATASETS='dsec m3ed', CONDITIONS='baseline alpha1',
+                                  SKIP_MODEL_COMPARISON='0', CUDA_VISIBLE_DEVICES=gpus[0])
+            comparison_env[SLOT_FD_ENV] = str(slot.fileno())
+            subprocess.run(['bash', 'tools/run_dense_f3_pipeline.sh', 'depth', str(root)], cwd=PROJECT,
+                           env=comparison_env, pass_fds=(slot.fileno(),), check=True)
     finally:
         import signal
         for proc in running.values():

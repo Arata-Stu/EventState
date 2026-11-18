@@ -1,9 +1,11 @@
 """Placement Semantic routing, identity, cleanup and resumption without Torch or data."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 import io
 import json
+import os
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -30,6 +32,94 @@ class PlacementSemanticTests(unittest.TestCase):
             self.assertIn(f"[m3ed_{key}]", text)
             self.assertIn(f"[dsec_{key}]", text)
         self.assertNotIn("depth", text.lower())
+
+    def test_gpu_list_and_legacy_gpu_select_the_expected_pool(self):
+        for flags, pool in (([], "0"), (["--gpu", "2"], "2"), (["--gpus", "2,0,1"], "2,0,1")):
+            with redirect_stdout(io.StringIO()) as stream:
+                suite.main(flags)
+            self.assertEqual(stream.getvalue().count(f"| GPU pool {pool}\n"), 12)
+        for flags in (["--gpu", "0", "--gpus", "1"], ["--gpus", "0,0"], ["--gpu", "-1"]):
+            with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+                suite.main(flags)
+
+    def test_multiple_workers_share_one_summary_and_use_each_available_gpu_exclusively(self):
+        output, scratch = self.root/"output", self.root/"scratch"
+        flags = ["--execute", "--gpus", "0,1,2", "--output", str(output), "--scratch", str(scratch)]
+        # Stand-ins execute as actual child processes, with the real scheduler's GPU masks,
+        # process groups and inherited run lock. GPU 2 starts slow and the other GPUs refill.
+        program = """
+import json, os, sys, time
+from pathlib import Path
+root, scratch, key, result, fd = sys.argv[1:]
+root, scratch = Path(root), Path(scratch)
+gpu = os.environ["CUDA_VISIBLE_DEVICES"]
+assert os.fstat(int(fd)).st_ino == (root / ".lock").stat().st_ino
+assert os.getsid(0) == os.getpid()
+slot = scratch / ("gpu-" + gpu)
+with slot.open("x"): pass
+if key == "dsec_E1_b3":
+    deadline = time.monotonic() + 8
+    while not (root / "m3ed_E1_b6" / "verified.json").exists():
+        if time.monotonic() > deadline: raise TimeoutError("No GPU was refilled")
+        time.sleep(0.01)
+receipt = root / key / "verified.json"
+receipt.parent.mkdir()
+temporary = receipt.with_suffix(".tmp")
+temporary.write_text(json.dumps(dict(gpu=gpu)))
+temporary.replace(receipt)
+Path(result).write_text(receipt.read_text())
+slot.unlink()
+"""
+        original_command = suite.worker_command
+        def command(a, job, status, result, fd):
+            args = original_command(a, job, status, result, fd)
+            self.assertEqual(args[args.index("--datasets")+1], job["dataset"])
+            self.assertEqual(args[args.index("--conditions")+1], job["condition"])
+            self.assertEqual(Path(args[args.index("--output")+1]), output.resolve())
+            return [sys.executable, "-c", program, str(output), str(scratch), job["name"], str(result), str(fd)]
+        actual_scheduler = suite.run_parallel
+        def dispatch(jobs, *args, **kwargs):
+            self.assertTrue(all(j["kind"] == "semantic" and j["remaining_cache_bytes"] == 1024 for j in jobs))
+            return actual_scheduler(jobs, *args, poll_interval=0.01, **kwargs)
+        with patch.object(suite, "idle_gpus", return_value=("2","0")) as idle, \
+                patch.object(suite, "cache_bytes", return_value=1024) as estimate, \
+                patch.object(suite, "worker_command", side_effect=command), \
+                patch.object(suite, "run_parallel", side_effect=dispatch), redirect_stdout(io.StringIO()), \
+                patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "parent"}):
+            suite.main(flags)
+            self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "parent")
+            idle.assert_called_once_with(("0", "1", "2"))
+            self.assertEqual(estimate.call_count, 2)
+            with patch.object(suite, "run_condition") as verify:
+                suite.main(flags)
+                self.assertEqual(verify.call_count, 12)
+            self.assertEqual(estimate.call_count, 2)
+            self.assertEqual(idle.call_count, 1)
+        results = suite.read(output/"summary.json")["semantic"]
+        self.assertEqual(len(results), 12)
+        self.assertTrue((output/"_SUCCESS").exists())
+        self.assertEqual({r["gpu"] for r in results.values()}, {"2", "0"})
+        self.assertEqual(results["dsec_E1_b3"]["gpu"], "2")
+        self.assertEqual(results["m3ed_E1_b6"]["gpu"], "0")
+
+    def test_worker_rechecks_gpu_and_validates_inherited_lock_before_training(self):
+        a = SimpleNamespace(output=self.root, execute=True, worker_status=self.root/"status.json",
+                            worker_result=self.root/"result.json")
+        with (self.root/".lock").open("w") as lock, (self.root/"other").open("w") as wrong, \
+                patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "2"}), \
+                patch.object(suite, "idle_gpus", return_value=()) as idle, \
+                patch.object(suite, "run_condition", return_value=dict(gpu="2")) as fit:
+            a.parent_lock_fd = wrong.fileno()
+            with self.assertRaisesRegex(ValueError, "different run lock"):
+                suite.run_worker(a, "dsec", "E1_b3")
+            a.parent_lock_fd = lock.fileno()
+            with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                suite.run_worker(a, "dsec", "E1_b3")
+            fit.assert_not_called()
+            idle.return_value = ("2",)
+            suite.run_worker(a, "dsec", "E1_b3")
+            fit.assert_called_once()
+        self.assertEqual(suite.read(a.worker_result), dict(gpu="2"))
 
     def metadata(self, ds="dsec", cond="E1_b9"):
         return SimpleNamespace(global_step=99999, config=dict(dataset=dict(name=ds), seed=0,
@@ -98,7 +188,7 @@ class PlacementSemanticTests(unittest.TestCase):
         a = SimpleNamespace(stage1_root=self.root/"stage1", output=self.root/"outputs",
             scratch=self.root/"scratch", data=self.root/"data", statistics=self.root/"stats.json",
             m3ed_target_root=self.root/"targets", activity_root=self.root/"activity",
-            execute=True)
+            execute=True, worker_status=self.root/"m3ed.status.json")
         key = f"{ds}_{condition}"
         checkpoint = a.stage1_root/f"{key}_w1/checkpoints/step_00099999.pt"
         checkpoint.parent.mkdir(parents=True)
@@ -108,6 +198,8 @@ class PlacementSemanticTests(unittest.TestCase):
             self.assertEqual(command[command.index("--features")+1], "h")
             self.assertEqual(command[command.index("--checkpoint")+1], str(checkpoint))
             self.assertEqual(command[command.index("--condition-label")+1], suite.placement_label(condition))
+            self.assertEqual(command[command.index("--parent-lock-fd")+1], "18")
+            self.assertEqual(command[command.index("--worker-status")+1], str(a.worker_status))
             self.assertEqual(kwargs["pass_fds"], (18,))
             cache = Path(command[command.index("--cache")+1])
             (cache/"seq").mkdir(parents=True)

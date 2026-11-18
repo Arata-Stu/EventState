@@ -31,7 +31,7 @@ python -u tools/run_temporal_downstream.py --gpus 0,1,2 --execute
 ```
 
 `--gpus`は物理GPU番号。指定したGPUのうち、`nvidia-smi`で既存のcompute processがないものだけを使う。
-3台空いて容量も足りれば3並列。2台なら2並列で残り1ジョブを待機し、1台なら順次実行する。
+3台空いて容量も足りれば、Depth 2件とSemantic 1件を並列実行する。2台なら2並列で残り1ジョブを待機し、1台なら順次実行する。
 Xorg等のgraphics processだけのGPUはcompute使用中とは扱わない。空き0台／GPU照会失敗なら学習を始めず停止する。
 空きは起動前と各worker開始時に再確認するが、GPUを他ユーザーに対して予約する仕組みではない。
 

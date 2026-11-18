@@ -26,9 +26,11 @@ _LOCK_FD = None
 
 
 def run(tool, *args):
-    # Preserve the parent's run lock even if it is killed before its GPU child.
+    from tools.depth_slots import inherited_depth_fds
+    # A surviving GPU subprocess retains the run lock and its host Depth slot.
+    fds = () if _LOCK_FD is None else (_LOCK_FD,)
     subprocess.run([sys.executable, '-u', str(ROOT/'tools'/tool), *map(str, args)], check=True,
-                   pass_fds=(() if _LOCK_FD is None else (_LOCK_FD,)))
+                   pass_fds=fds + inherited_depth_fds())
 
 
 def read(path):
@@ -217,7 +219,7 @@ def build_jobs(a, indexes, activity_indexes):
                     backbone=ckpt, disparity=True) is not None
                 if not score_ok:
                     invalid_reports.append(str(score))
-            jobs.append(dict(name=name, label=label, dataset=ds, backbone=str(ckpt),
+            jobs.append(dict(name=name, kind='depth', label=label, dataset=ds, backbone=str(ckpt),
                 head=str(head), report=str(report), activity_report=str(activity_report),
                 activity_manifest=str(getattr(a, ds+'_activity_manifest')) if activity_index is not None else None,
                 indexes={role: str(indexes[ds, role]) for role in roles},
@@ -382,7 +384,9 @@ def _prepare(a):
 
 
 def _preflight(a, jobs):
-    from tools.common_depth_parallel import admission_bytes, parse_gpus, reservation_bytes
+    from tools.common_depth_parallel import (
+        MAX_PARALLEL_DEPTH_JOBS, initially_feasible, parse_gpus, reservation_bytes,
+    )
     # File checks deliberately avoid torch.load/model construction/GPU inference.
     for job in jobs:
         if job['roles']:
@@ -409,13 +413,10 @@ def _preflight(a, jobs):
                 actions.append(text)
         print(f'[{job["name"]}] {job["label"]} | {"; ".join(actions) or "reuse completed reports"} | '
               f'{reservation_bytes(job["remaining_cache_bytes"])/2**30:.1f} GiB temporary reservation', flush=True)
-    pending = sorted(jobs, key=lambda job: job['remaining_cache_bytes'])
-    selected = []
-    for job in pending:
-        if len(selected) < len(gpus) and admission_bytes(job, selected) <= free:
-            selected.append(job)
+    selected = initially_feasible(jobs, len(gpus), free)
     print(f'Initially feasible parallel conditions: {len(selected)}/{len(gpus)} '
-          '(scratch reservation estimate; GPU availability is not probed)', flush=True)
+          f'(Depth limit {MAX_PARALLEL_DEPTH_JOBS}; scratch estimate; host slots checked at launch; '
+          'GPU availability is not probed)', flush=True)
     print('Preflight completed: no files created, no model loading or inference.', flush=True)
 
 
@@ -429,9 +430,11 @@ def _export(a, summary, export_args):
     if getattr(a, 'gpus', None):
         from tools.common_depth_parallel import parse_gpus
         os.environ['CUDA_VISIBLE_DEVICES'] = parse_gpus(a.gpus)[0]
+    from tools.depth_slots import hold_depth_slot
     try:
-        run('export_dsec_depth_submission.py', *export_args, '--name', 'dsec_'+winner[0],
-            '--backbone', checkpoint('dsec', winner), '--feature', 'stages')
+        with hold_depth_slot():
+            run('export_dsec_depth_submission.py', *export_args, '--name', 'dsec_'+winner[0],
+                '--backbone', checkpoint('dsec', winner), '--feature', 'stages')
     finally:
         if previous is None:
             os.environ.pop('CUDA_VISIBLE_DEVICES', None)
@@ -471,8 +474,10 @@ def pipeline(a, lock_fd=None):
         save(summary_path, summary)
         _export(a, summary, export_args)
     else:
+        from tools.depth_slots import hold_depth_slot
         for i, job in enumerate(jobs):
-            summary[job['name']] = run_condition(a, job)
+            with hold_depth_slot():
+                summary[job['name']] = run_condition(a, job)
             save(summary_path, summary)
             # Preserve the original serial DSEC -> submission -> M3ED order.
             if job['dataset'] == 'dsec' and (i+1 == len(jobs) or jobs[i+1]['dataset'] != 'dsec'):
@@ -561,7 +566,7 @@ def main():
     p.add_argument('--dsec-activity-manifest', type=Path, help='Shared train-fitted DSEC event-rate quintiles')
     p.add_argument('--m3ed-activity-manifest', type=Path, help='Shared train-fitted M3ED event-rate quintiles')
     p.add_argument('--activity-only', action='store_true', help='Score completed heads; never train or export')
-    p.add_argument('--gpus', help='Independent condition workers on up to three GPUs, e.g. 0,1,2')
+    p.add_argument('--gpus', help='Up to three candidate GPU IDs, e.g. 0,1,2. At most two concurrent Depth workers.')
     p.add_argument('--preflight', action='store_true', help='Read-only input checks and job plan; no model loading or inference')
     p.add_argument('--worker-plan', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--worker-name', help=argparse.SUPPRESS)

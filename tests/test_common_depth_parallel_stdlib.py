@@ -15,13 +15,17 @@ import time
 import unittest
 
 from tools import common_depth_parallel as parallel
+from tools import depth_slots
 from tools import run_common_depth as runner
+from tools import run_dense_f3_parallel as f3
 
 
 WORKER = r'''
 import json, os, sys, time
 from pathlib import Path
 job, status_path, result_path, events_path = json.loads(sys.argv[1]), *map(Path, sys.argv[2:])
+if job.get('kind') == 'depth':
+    os.fstat(int(os.environ['EVENTSTATE_DEPTH_SLOT_FD']))
 
 def event(kind, **extra):
     data = dict(kind=kind, name=job['name'], pid=os.getpid(),
@@ -52,6 +56,14 @@ event('end')
 
 def events_at(path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def setUpModule():
+    tmp = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(tmp.cleanup)
+    isolated = patch.object(depth_slots, 'SLOT_DIR', Path(tmp.name)/'slots')
+    isolated.start()
+    unittest.addModuleCleanup(isolated.stop)
 
 
 class ParallelDepthSchedulerTest(unittest.TestCase):
@@ -88,7 +100,7 @@ class ParallelDepthSchedulerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             events, command = self.fixture(root)
-            jobs = [self.job('condition' + str(i)) for i in range(6)]
+            jobs = [dict(self.job('condition' + str(i)), kind='semantic') for i in range(6)]
             with patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES': 'inherited-parent-value'}):
                 results = parallel.run_parallel(jobs, ('0', '1', '2'), scratch=root,
                     state_dir=root/'state', worker_command=command, disk_free=lambda: 10**12,
@@ -111,6 +123,98 @@ class ParallelDepthSchedulerTest(unittest.TestCase):
             for job in jobs:
                 self.assertEqual(results[job['name']]['condition'], job['label'])
                 self.assertTrue((root/'state'/(job['name'] + '.log')).is_file())
+
+    def test_two_depth_workers_across_datasets_leave_third_gpu_for_semantic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events, command = self.fixture(root)
+            jobs = [dict(self.job(name), kind=kind) for name, kind in (
+                ('dsec_E0', 'depth'), ('m3ed_E1', 'depth'), ('dsec_E2', 'depth'),
+                ('m3ed_semantic', 'semantic'))]
+            selected = parallel.initially_feasible(jobs, 3, 10**12)
+            self.assertEqual([j['name'] for j in selected], ['dsec_E0', 'm3ed_E1', 'm3ed_semantic'])
+            callbacks = []
+            results = parallel.run_parallel(jobs, ('0', '1', '2'), scratch=root,
+                state_dir=root/'state', worker_command=command, disk_free=lambda: 10**12,
+                poll_interval=.01, on_complete=lambda name, value: callbacks.append((name, value)))
+            active = set()
+            peak = 0
+            for event in events_at(events):
+                if event['kind'] == 'start':
+                    active.add(event['name'])
+                    self.assertLessEqual(len(active - {'m3ed_semantic'}), 2)
+                    peak = max(peak, len(active))
+                elif event['kind'] == 'end':
+                    active.remove(event['name'])
+            self.assertEqual(peak, 3)
+            self.assertCountEqual(callbacks, list(results.items()))
+
+    def test_f3_depth_launcher_limits_workers_with_three_requested_gpus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'pretrain').mkdir()
+            with patch.object(sys, 'argv', ['f3', tmp, '--cache-root', tmp, '--gpus', '2,1,0']), \
+                 patch.object(f3.subprocess, 'check_output', return_value=''), \
+                 patch.object(f3.subprocess, 'Popen') as launch, \
+                 patch.object(f3.subprocess, 'run') as compare, patch.object(f3.time, 'sleep'):
+                launch.return_value.poll.return_value = 0
+                f3.main()
+            self.assertEqual([call.kwargs['env']['CUDA_VISIBLE_DEVICES'] for call in launch.call_args_list],
+                             ['2', '1', '2', '1'])
+            compare.assert_called_once()
+
+    def test_external_depth_workers_leave_gpu_for_semantic_and_release_slots_on_exit(self):
+        holder_code = """from pathlib import Path
+import os, sys
+from tools import depth_slots
+depth_slots.SLOT_DIR = Path(sys.argv[1])
+first, second = depth_slots.try_depth_slot(), depth_slots.try_depth_slot()
+assert first is not None and second is not None
+print('ready', flush=True)
+sys.stdin.read(1)
+os._exit(7)
+"""
+        with tempfile.TemporaryDirectory() as tmp, subprocess.Popen(
+                [sys.executable, '-c', holder_code, str(depth_slots.SLOT_DIR)],
+                cwd=runner.ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as holder:
+            self.assertEqual(holder.stdout.readline().strip(), 'ready')
+            root = Path(tmp)
+            events, command = self.fixture(root)
+            jobs = [dict(self.job(kind), kind=kind) for kind in ('depth', 'semantic')]
+            deadline = time.monotonic() + 10
+
+            def sleep(interval):
+                if time.monotonic() > deadline:
+                    raise TimeoutError('Jobs did not finish after host slots were released')
+                time.sleep(interval)
+
+            def completed(name, _result):
+                if name == 'semantic':
+                    self.assertEqual([e['name'] for e in events_at(events)], ['semantic', 'semantic'])
+                    self.assertIsNone(depth_slots.try_depth_slot())
+                    holder.stdin.close()
+
+            parallel.run_parallel(jobs, ('2',), scratch=root, state_dir=root/'other-run',
+                worker_command=command, disk_free=lambda: 10**12, poll_interval=.01,
+                sleep=sleep, on_complete=completed)
+            self.assertEqual(holder.wait(timeout=2), 7)
+            self.assertEqual([e['name'] for e in events_at(events)],
+                             ['semantic', 'semantic', 'depth', 'depth'])
+
+    def test_waits_when_external_depth_workers_occupy_both_slots_and_scratch(self):
+        with tempfile.TemporaryDirectory() as tmp, depth_slots.try_depth_slot() as first, \
+                depth_slots.try_depth_slot():
+            root = Path(tmp)
+            events, command = self.fixture(root)
+
+            def release_first(interval):
+                first.close()
+                time.sleep(interval)
+
+            parallel.run_parallel([dict(self.job('depth', size=100), kind='depth')], ('0',),
+                scratch=root, state_dir=root/'state', worker_command=command,
+                disk_free=lambda: 1000 if first.closed else 0, sleep=release_first, poll_interval=.01)
+            self.assertEqual([e['kind'] for e in events_at(events)], ['start', 'end'])
 
     def test_pending_job_waits_for_reserved_cache_and_starts_before_training_finishes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -523,6 +627,7 @@ class ParallelDepthRunnerTest(unittest.TestCase):
             with patch.object(runner, 'ROOT', root), patch.object(runner.os, 'chdir'), \
                  patch.object(sys, 'path', sys.path.copy()), \
                  patch.object(sys, 'argv', self.command_line(args, preflight=True)), \
+                 patch.object(runner.shutil, 'disk_usage', return_value=SimpleNamespace(free=10**12)), \
                  patch.dict(sys.modules, {'torch': None, 'numpy': None}), \
                  patch.object(runner, 'run') as launch, patch.object(runner, 'verify_decoder') as decoder, \
                  patch.object(runner, 'timestamps') as download, \
@@ -532,6 +637,7 @@ class ParallelDepthRunnerTest(unittest.TestCase):
                 operation.assert_not_called()
             self.assertEqual(self.tree(root), before)
             self.assertIn('GPU(s) 0, 1, 2', output.getvalue())
+            self.assertIn('Initially feasible parallel conditions: 2/3 (Depth limit 2', output.getvalue())
             for ds in ('dsec', 'm3ed'):
                 for condition in runner.CONDITIONS[:3]:
                     self.assertIn('[' + ds + '_' + condition[0] + '] ' + condition[1], output.getvalue())

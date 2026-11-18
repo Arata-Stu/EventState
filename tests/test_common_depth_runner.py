@@ -7,7 +7,16 @@ import tempfile
 import unittest
 
 from tools import run_common_depth as runner
+from tools import depth_slots
 from event_state.dense.depth_frame_metrics import F3_FRAME_PROTOCOL
+
+
+def setUpModule():
+    tmp = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(tmp.cleanup)
+    isolated = patch.object(depth_slots, 'SLOT_DIR', Path(tmp.name)/'slots')
+    isolated.start()
+    unittest.addModuleCleanup(isolated.stop)
 
 
 class DepthRunTest(unittest.TestCase):

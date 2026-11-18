@@ -1,4 +1,5 @@
-"""Standard-library scheduling for independent common Depth conditions."""
+"""Standard-library scheduling for independent downstream GPU jobs."""
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -6,6 +7,9 @@ import signal
 import shutil
 import subprocess
 import time
+
+
+from tools.depth_slots import MAX_PARALLEL_DEPTH_JOBS, SLOT_FD_ENV, try_depth_slot
 
 
 def parse_gpus(value):
@@ -27,6 +31,22 @@ def admission_bytes(job, active_statuses):
     """Free space must cover this job and the unallocated caches of active jobs."""
     return reservation_bytes(job['remaining_cache_bytes']) + sum(
         reservation_bytes(status['remaining_cache_bytes']) for status in active_statuses)
+
+
+def has_depth_slot(job, active_jobs):
+    return job.get('kind') != 'depth' or sum(
+        active.get('kind') == 'depth' for active in active_jobs) < MAX_PARALLEL_DEPTH_JOBS
+
+
+def initially_feasible(jobs, gpu_count, free_bytes):
+    """Predict the first dispatch using the worker order, Depth limit and scratch budget."""
+    selected = []
+    for job in jobs:
+        if len(selected) == gpu_count:
+            break
+        if has_depth_slot(job, selected) and admission_bytes(job, selected) <= free_bytes:
+            selected.append(job)
+    return selected
 
 
 def stop_process_group(proc, timeout=10):
@@ -59,10 +79,40 @@ def _read_status(path, fallback):
     return status
 
 
+def _start_worker(job, gpu, slot, state_dir, worker_command, popen_factory, lock_fd):
+    name = job['name']
+    status_path = state_dir / f'{name}.status.json'
+    result_path = state_dir / f'{name}.result.json'
+    log_path = state_dir / f'{name}.log'
+    if status_path.exists() or result_path.exists():
+        raise ValueError(f'{state_dir}: worker state already exists')
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu))
+    fds = [] if lock_fd is None else [lock_fd]
+    if slot is not None:
+        env[SLOT_FD_ENV] = str(slot.fileno())
+        fds.append(slot.fileno())
+    command = worker_command(job, status_path, result_path)
+    print(f'[{name}] GPU {gpu} | {job["label"]} | starting; '
+          f'{reservation_bytes(job["remaining_cache_bytes"]) / 2**30:.1f} GiB '
+          f'reserved | log: {log_path}', flush=True)
+    log = log_path.open('w')
+    try:
+        proc = popen_factory(command, stdout=log, stderr=subprocess.STDOUT,
+                             env=env, start_new_session=True, pass_fds=tuple(fds))
+    except BaseException:
+        log.close()
+        raise
+    return dict(proc=proc, gpu=gpu, job=job, status_path=status_path,
+                result_path=result_path, log_path=log_path, log=log,
+                status=dict(phase='starting', remaining_cache_bytes=job['remaining_cache_bytes']))
+
+
 def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None,
-                 poll_interval=2.0, popen_factory=None, disk_free=None, sleep=None):
+                 poll_interval=2.0, popen_factory=None, disk_free=None, sleep=None,
+                 on_complete=None):
     """Run condition workers with exclusive GPUs and aggregate scratch reservations.
 
+    Across datasets, at most two workers with kind='depth' can run together.
     Workers atomically write status and result JSON files. A cache reservation may
     decrease only after that entire cache role has been extracted. Interrupted
     worker-owned caches and head/report artifacts are deliberately left in place.
@@ -73,6 +123,8 @@ def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     pending = list(jobs)
+    if pending and not gpus:
+        raise ValueError('At least one GPU is required to launch pending workers')
     if len({job['name'] for job in pending}) != len(pending):
         raise ValueError('Duplicate condition jobs')
     active = {}
@@ -111,19 +163,25 @@ def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None
                 entry['log'].close()
                 available.append(entry['gpu'])
                 del active[name]
+                if on_complete is not None:
+                    on_complete(name, results[name])
                 print(f"[{name}] GPU {entry['gpu']} | {entry['job']['label']} | completed | "
                       f"log: {entry['log_path']}", flush=True)
 
             while pending and available:
+                active_jobs = [entry['job'] for entry in active.values()]
+                eligible = [job for job in pending if has_depth_slot(job, active_jobs)]
+                if not eligible:
+                    break
                 free = disk_free()
                 statuses = [entry['status'] for entry in active.values()]
                 # A disparity-only or smaller M3ED job can fit while a larger
                 # DSEC extraction waits; preserve condition order among fits.
-                fitting = next((job for job in pending
+                fitting = next((job for job in eligible
                                 if admission_bytes(job, statuses) <= free), None)
                 if fitting is None:
-                    minimum = min(admission_bytes(job, statuses) for job in pending)
-                    waiting = (tuple(job['name'] for job in pending),
+                    minimum = min(admission_bytes(job, statuses) for job in eligible)
+                    waiting = (tuple(job['name'] for job in eligible),
                                tuple(entry['status']['remaining_cache_bytes'] for entry in active.values()))
                     if waiting != last_waiting:
                         print(f'Scratch wait: {len(available)} GPU(s) idle; need '
@@ -131,39 +189,33 @@ def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None
                               f'{free / 2**30:.1f} GiB available at {scratch}', flush=True)
                         last_waiting = waiting
                     if not active:
+                        # Other managed Depth workers may still be reclaiming scratch.
+                        if any(job.get('kind') == 'depth' for job in eligible):
+                            probe = try_depth_slot()
+                            if probe is None:
+                                break
+                            probe.close()
                         raise OSError(f'No pending condition fits scratch: need at least '
                                       f'{minimum / 2**30:.1f} GiB, have {free / 2**30:.1f} GiB '
                                       f'at {scratch}; retained partial caches are not removed automatically')
                     break
-                pending.remove(fitting)
-                gpu = available.pop(0)
-                name = fitting['name']
-                status_path = state_dir / f'{name}.status.json'
-                result_path = state_dir / f'{name}.result.json'
-                log_path = state_dir / f'{name}.log'
-                # Each scheduler invocation uses a fresh state_dir. Never accept
-                # results or reservations belonging to an earlier invocation.
-                if status_path.exists() or result_path.exists():
-                    raise ValueError(f'{state_dir}: worker state already exists')
-                log = log_path.open('w')
-                env = os.environ.copy()
-                env['CUDA_VISIBLE_DEVICES'] = str(gpu)
-                command = worker_command(fitting, status_path, result_path)
-                print(f'[{name}] GPU {gpu} | {fitting["label"]} | starting; '
-                      f'{reservation_bytes(fitting["remaining_cache_bytes"]) / 2**30:.1f} GiB '
-                      f'reserved | log: {log_path}', flush=True)
-                try:
-                    proc = popen_factory(command, stdout=log, stderr=subprocess.STDOUT,
-                        env=env, start_new_session=True,
-                        pass_fds=(() if lock_fd is None else (lock_fd,)))
-                except BaseException:
-                    log.close()
-                    raise
-                active[name] = dict(proc=proc, gpu=gpu, job=fitting, status_path=status_path,
-                    result_path=result_path, log_path=log_path, log=log,
-                    status=dict(phase='starting', remaining_cache_bytes=fitting['remaining_cache_bytes']))
+                slot = None
+                if fitting.get('kind') == 'depth':
+                    slot = try_depth_slot()
+                    if slot is None:
+                        fitting = next((job for job in eligible if job.get('kind') != 'depth'
+                                        and admission_bytes(job, statuses) <= free), None)
+                        if fitting is None:
+                            if last_waiting != 'depth slots':
+                                print('Waiting for a host Depth slot', flush=True)
+                                last_waiting = 'depth slots'
+                            break
+                with slot or nullcontext():
+                    pending.remove(fitting)
+                    active[fitting['name']] = _start_worker(
+                        fitting, available.pop(0), slot, state_dir, worker_command, popen_factory, lock_fd)
                 last_waiting = None
-            if active:
+            if active or pending:
                 sleep(poll_interval)
     finally:
         # A second Ctrl+C must not leave a CUDA child or the inherited run lock

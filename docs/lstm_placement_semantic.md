@@ -23,7 +23,7 @@
 
 ## 学習サーバーでの実行
 
-コード同期後、`sig-gpu5` で実行する。以下はGPU 0・1・2が使用可能な場合の例。Stage 1は各GPUで1モデルずつ、最大3モデルを並列に学習する。SemanticはGPU 0で順番に評価する。
+コード同期後、`sig-gpu5` で実行する。以下はGPU 0・1・2が空いている場合の例。Stage 1・Semanticともに、独立したデータセット・配置の組を各GPUに1件ずつ割り当て、最大3件を並列に実行する。
 
 ```bash
 cd /home/iASL/Arata_repo/EventState
@@ -31,7 +31,8 @@ source env/bin/activate
 git pull --ff-only
 nvidia-smi
 
-placement_args=(--placement-suite --phase baseline --gpus 0,1,2
+gpus=0,1,2
+placement_args=(--placement-suite --phase baseline --gpus "$gpus"
   --statistics-dir outputs/stage1_joined_baseline_full_20261107)
 smoke_root=outputs/stage1_placement_smoke_20261118
 full_root=outputs/stage1_placement_full_20261118
@@ -39,12 +40,13 @@ semantic_root=outputs/stage2_placement_semantic_20261118
 
 python -u tools/run_stage1_common.py "${placement_args[@]}" --stage smoke --output-root "$smoke_root" --execute &&
 python -u tools/run_stage1_common.py "${placement_args[@]}" --stage full --output-root "$full_root" --execute &&
-python -u tools/run_placement_semantic.py --stage1-root "$full_root" --output "$semantic_root" --gpu 0 --execute
+python -u tools/run_placement_semantic.py --stage1-root "$full_root" --output "$semantic_root" --gpus "$gpus" --execute
 ```
 
 smokeは各配置・各データセット99更新。本番は同じDINOv3初期値から開始し、学習済みの対照を再学習しない。Stage 1の各出力は `<full_root>/<dataset>_<条件ID>_w1/checkpoints/step_00099999.pt`。計画を確認する場合は各コマンドの `--execute` を外す。
 
 Semanticの実行結果は `<semantic_root>/summary.json` に順次集約される。各条件のhead、評価レポート、特徴キャッシュを保存し、照合済みの条件は同じSemanticコマンドを再実行するとスキップする。特徴キャッシュの保存先は各条件の `cache` に記録する。
+実際に割り当てた物理GPUと条件ごとのログパスは起動時に表示される。Semanticは候補GPUの空きと特徴キャッシュの必要容量を確認して割り当てる。`--gpu 0` を明示した旧コマンドは1枚で実行する。
 
 ## 評価
 

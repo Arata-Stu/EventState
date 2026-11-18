@@ -1,6 +1,7 @@
-# Common Depthを3GPUで実行する
+# Common Depthを最大2並列で実行する
 
-2026-11-11追加。`tools/run_common_depth.py --gpus 0,1,2`で、独立した条件を各GPUに1本ずつ、最大3本同時に実行する。
+2026-11-18の運用方針。独立した条件を各GPUに1本ずつ割り当て、Depthの下流はデータセットを合わせて同時2本までとする。
+Common Depth、ConvLSTMの混合ランナー、F³の並列ランナーは同じホスト・ユーザーで実行枠を共有する。以下は他にDepthが走っていないときの例。旧版や個別スクリプトで別途1本実行中なら、ここには空きGPUを1枚だけ指定する。
 既存runの完了済みhead・評価を再利用する。Depth headのbatch、loss、seed、epoch数、split、best選択基準は変更しない。
 条件名の旧型DDP・新型DDPはStage 1重みの学習方式を表し、今回のDepth headをDDPで学習する意味ではない。
 
@@ -24,10 +25,10 @@ nvidia-smi
 git pull --ff-only
 
 # 既存target index・重み・head・評価の整合性と実行計画を確認。推論・出力作成はしない。
-python tools/run_common_depth.py --gpus 0,1,2 --preflight
+python tools/run_common_depth.py --gpus 0,1 --preflight
 
 # 同じrun rootを使い、完了済み成果物から再開する。
-python -u tools/run_common_depth.py --gpus 0,1,2
+python -u tools/run_common_depth.py --gpus 0,1
 ```
 
 `nvidia-smi`で他の学習がGPUを使っている場合は、そのGPUを割り当てない。
@@ -72,7 +73,7 @@ M3EDや特徴抽出・後続採点へこの数値をそのまま適用しない�
   並列実行ではDSECとM3EDが重なる場合がある。`--gpus`なしの既存直列経路はDSEC→M3EDの順を維持する。
 - 特徴cacheの必要容量を合算して予約し、10%余裕を含めて入る条件だけ起動する。
   容量不足時は`Scratch wait`を表示する。小さいM3ED条件や特徴cache不要の視差採点を先に実行できる。
-  単独でも入らない場合は明示的に停止する。3GPU同時使用や3倍の速度は保証しない。
+  単独でも入らない場合は明示的に停止する。
 - 各workerは個別のログ・状態を保存する。起動表示の条件ID・条件名・GPU番号・logパスで進捗を確認する。
   既存のhead・JSONと最終`summary.json`の配置は維持する。
 - run全体のlockを共有し、同じrun rootへの二重起動を拒否する。
@@ -87,9 +88,7 @@ M3EDや特徴抽出・後続採点へこの数値をそのまま適用しない�
 ## 学習完了後
 
 Semantic・Depthの共通活動5分位評価は[既存の一括手順](semantic_depth_activity.md)で実行する。
-通常のDepth学習を3GPU化するだけでは、まだ生成していない活動manifestや追加評価は自動実行しない。
-必要ならDepthの既存`--activity-only`にも`--gpus 0,1,2`を併用できる。
+Depthの追加評価には、活動manifestを用意して `--activity-only --gpus 0,1` を指定できる。
 
-Macで関連stdlib91件（並列処理18件を含む）、変更新規Python34ファイルの構文、CLI、差分確認が通過。
+2026-11-11の実装時はMacで関連stdlib91件（並列処理18件を含む）、変更新規Python34ファイルの構文、CLI、差分確認が通過。
 模擬workerの3同時実行、GPU環境変数の分離、scratch予約・待機、完了E0の再利用、停止時の子孫終了を確認した。
-実GPU・実データの3並列実行はサーバーで確認する。

@@ -64,4 +64,6 @@ if __name__ == '__main__':
     if command is None:
         print('[resume] verified existing output; skip', flush=True)
     else:
-        subprocess.run(command, check=True)
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from tools.depth_slots import inherited_depth_fds
+        subprocess.run(command, check=True, pass_fds=inherited_depth_fds())

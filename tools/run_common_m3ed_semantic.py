@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -69,8 +70,13 @@ def main():
     p.add_argument('--features',nargs='+',choices=['z','h','concat'],default=['z','h','concat'])
     p.add_argument('--device',default='cuda')
     p.add_argument('--preflight',action='store_true')
+    p.add_argument('--parent-lock-fd', type=int, help=argparse.SUPPRESS)
+    p.add_argument('--worker-status', type=Path, help=argparse.SUPPRESS)
     add_activity_arguments(p)
     a=p.parse_args()
+    inherited = () if a.parent_lock_fd is None else (a.parent_lock_fd,)
+    if inherited:
+        os.fstat(a.parent_lock_fd)
     activity_index=load_activity_options(a.activity_manifest,a.condition_label,dataset='m3ed')
     import h5py
     from event_state.dense.temporal import LowActivityClock
@@ -157,6 +163,11 @@ def main():
         del net
         (a.cache/'identity.json').write_text(json.dumps(identity))
         (a.cache/'_SUCCESS').touch()
+    if a.worker_status is not None:
+        status = dict(phase="features cached; fitting and evaluating Semantic head", remaining_cache_bytes=0)
+        temporary = a.worker_status.with_suffix(".tmp")
+        temporary.write_text(json.dumps(status) + "\n")
+        temporary.replace(a.worker_status)
     a.output.mkdir(parents=True)
     view=a.output/'targets'
     view.mkdir()
@@ -164,7 +175,7 @@ def main():
     for feature in a.features:
         subprocess.run([sys.executable,str(ROOT/'tools/train_m3ed_semantic.py'),'--split-manifest',str(MANIFEST),
             '--feature-cache-dir',str(a.cache),'--target-cache-dir',str(view),'--feature',feature,
-            '--output-dir',str(a.output/feature),'--device',a.device],check=True)
+            '--output-dir',str(a.output/feature),'--device',a.device],check=True,pass_fds=inherited)
         score_groups(a.output/feature,a.cache,view,split,feature,a.device,
             activity_manifest=a.activity_manifest,condition_label=a.condition_label,prepared_root=a.prepared_root)
     (a.output/'_SUCCESS').touch()
