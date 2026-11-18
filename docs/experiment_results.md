@@ -2893,3 +2893,130 @@ DSEC Semantic Q5の78frameという制約を併記する。
   最新実機の状態をこちらから照会したわけではなく、以上は受領ログ末尾時点の状態である。
 - 次は起動コマンドを再実行せず、Depth2本を継続し、完成済み`dsec_semantic/activity_test.json`または`result.json`をCPUで回収する。
   DSEC Semanticの新mIoU/活動5群・hash、Depth両datasetの新精度はまだ未受領。
+
+## 97. DSEC Semantic ConvLSTMの公式test・活動5分位を受領（2026-11-18）
+
+- ユーザーが`dsec_semantic/activity_test.json`のCPU回収出力を提示。正常完了marker=True、
+  E1 Encoder＋LSTM（h蒸留）・ConvLSTM、全体mIoU60.594520%と活動5群のmIoU/frame/valid pixelsを受領。
+  受領・差分・support監査は`docs/evaluation_records/20261118_dsec_semantic_convlstm_activity_best.json`。
+- 実出力は`/home/iASL/Arata_repo/EventState/outputs/stage2_temporal_remaining_20261117/dsec_semantic/activity_test.json`。
+  先のlauncher固定recipeはseed0、凍結h384ch＋linear11class・CE・FP16、開発6/2で50epoch→最良epoch数をtrain8でrefit→公式test3。
+  Stage1はfull99999・ConvLSTM E1 h蒸留をworkerで確認している。新しい条件やGT補完は加えていない。
+  今回の貼付には開発採用epoch、実refit epoch数、元config、head/backbone SHA、sample/GT/割当/support hashは含まれない。
+- 比較正本は§85の`docs/evaluation_records/20261115_semantic_depth_activity_metrics.json`内`semantic/dsec_E1`。
+  新値はユーザーの%小数6桁を維持。差はConvLSTM−Patchwise、単位はmIoUのパーセントポイント。
+
+| 活動群 | E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM [%] | E1 Encoder＋LSTM（h蒸留）・ConvLSTM [%] | 差 [pt] |
+| --- | ---: | ---: | ---: |
+| 全体 | 60.482540 | 60.594520 | ＋0.111980 |
+| Q1（下位20%） | 56.253054 | 56.643935 | ＋0.390881 |
+| Q2 | 61.818061 | 61.687456 | −0.130605 |
+| Q3 | 63.319907 | 63.449806 | ＋0.129899 |
+| Q4 | 57.325604 | 57.528801 | ＋0.203197 |
+| Q5（上位20%） | 51.467778 | 51.220218 | −0.247560 |
+
+- 全体2,806frame/790,169,600画素、群frame817/823/620/468/78、
+  群画素230,067,200/231,756,800/174,592,000/131,788,800/21,964,800。
+  全体/全群がPatchwiseと一致し、群合計も全体と一致。件数一致をhash/identityの独立確認とはしない。
+
+両SemanticのConvLSTM−Patchwise差（pt）：
+
+| dataset | 全体 | Q1 | Q5 |
+| --- | ---: | ---: | ---: |
+| DSEC | ＋0.111980 | ＋0.390881 | −0.247560 |
+| M3ED | −0.099742 | −1.132109 | ＋0.315543 |
+
+- DSECはConvLSTMが全体/Q1で微増、M3EDではPatchwiseが高い。最高活動Q5の優劣も逆になる。
+  この単一seedでは両dataset全体の差は約0.1ptと小さく、ConvLSTMによる一律の低活動改善は確認できない。
+  有意差・統計的同等性・普遍的方式優位・記憶機序の因果は主張しない。DSEC Q5は78frameに限られる。
+  群mIoUは群内混同行列から計算するため、群mIoUをframe加重平均して全体の差を説明しない。
+- ConvLSTM Semanticは両datasetの比較数値が揃った。残りはDSEC/M3ED Depthの2ジョブ。
+  Depthの最後の受領状態は§96のhead学習移行で、今回Depth完了/新精度はまだ未提示。
+  Macではstdlibで数値・support整合を確認し、サーバー再学習・再評価は起動していない。
+
+## 98. 残り3ジョブすべての最終Completedを受領（2026-11-18）
+
+- ユーザーが`Completed: /home/iASL/Arata_repo/EventState/outputs/stage2_temporal_remaining_20261117/summary.json`を提示。
+  受領記録`docs/evaluation_records/20261118_temporal_remaining_completed.json`。
+- 現行launcherは`run_parallel`で全workerの終了0とresult存在を確認した後、summary.jsonを保存し、
+  親_SUCCESSを書いてからCompletedを表示する。したがって残り3ジョブと追加評価の正常終了を確認できる。
+  これは報告行と実装順序に基づく判断であり、summary内容とmarkerをこちらがサーバーで直接読んだという意味ではない。
+- 条件はE1 Encoder＋LSTM（h蒸留）・ConvLSTM、seed0、凍結本番Stage1、従来と同じ下流recipe。
+  DSEC Semanticの開発6/2→train8 refit→公式test3/活動5分位、M3ED Depth train3/val2、DSEC Depth train37/val4の
+  head学習・全体/活動5分位・pooled/F³式frame平均まで終了。DSEC公開val視差評価も成功に含まれる。
+  出力rootは`outputs/stage2_temporal_remaining_20261117/`、Depth原本は
+  `heads/{dsec,m3ed}_E1_convlstm/stages/activity_continuous.json`。
+- 既済M3ED Semanticも合わせ、今回のPatchwise LSTM対ConvLSTM比較用の学習・評価実行はすべて終了。
+  Semantic値は§94/97を既受領だが、今回のメッセージに新しいDepth数値はない。
+  DepthのMAE/RMSE/AbsRel等、F³式frame平均、活動5群、support/identity hashes、DSEC視差MAEは数値回収待ち。
+- 次は保存JSONをGPUなしで読み、既存Patchwise E1との4組（2dataset×2task）の比較をまとめる。
+  数値を回収するための再学習・特徴再抽出・再推論は行わない。
+
+## 99. ConvLSTM Depth全量・同一性監査とSemanticを合わせた種類比較の総括（2026-11-18）
+
+- ユーザーが正常完了marker=TrueとDepth2件の回収JSONを提示。全量は
+  `docs/evaluation_records/20261118_temporal_depth_convlstm_metrics.json`、原文同日の`temporal_depth_convlstm_received.log`はGit非管理。
+  差分/6hash/support/群再集計の監査は`docs/evaluation_records/20261118_temporal_comparison_audit.json`。
+  総括表・全指標・5群の両集計は`docs/temporal_comparison_results_20261118.md`。
+- 条件はE1 Encoder＋LSTM（h蒸留）・ConvLSTM、seed0、frozen full99999 Stage1、既存4段readout。
+  DepthはVKITTI初期化DPT、log-L1、50epoch/batch4/FP32、0.1<GT≤80m、val pooled MAE最良選択。
+  DSEC train37/public val4、M3ED train3/public val2。旧Patchwise E1とGT/入力窓/解像度/統計/下流recipeを維持。
+  新出力は`outputs/stage2_temporal_remaining_20261117/heads/{dsec,m3ed}_E1_convlstm/stages/activity_continuous.json`。
+  両Depth headの採用epochは8。train_dense_probe.pyはepoch+1を保存するため、ここは1始まり。
+
+### 主比較：Depth全体（誤差は低い方がよい）
+
+差の相対率は `(ConvLSTM / Patchwise − 1) × 100`。負が誤差改善。
+
+| dataset/指標 | E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM | E1 Encoder＋LSTM（h蒸留）・ConvLSTM | 誤差変化 |
+| --- | ---: | ---: | ---: |
+| DSEC pooled MAE[m] | 2.445824 | 2.487786 | ＋1.716% |
+| DSEC pooled RMSE[m] | 4.088795 | 4.162017 | ＋1.791% |
+| DSEC AbsRel | 0.104564 | 0.106697 | ＋2.040% |
+| DSEC frame平均 MAE[m] | 2.590480 | 2.641458 | ＋1.968% |
+| DSEC 公開val視差MAE[px] | 1.870813 | 1.888776 | ＋0.960% |
+| M3ED pooled MAE[m] | 3.678082 | 3.318846 | −9.767% |
+| M3ED pooled RMSE[m] | 6.766504 | 6.236755 | −7.829% |
+| M3ED AbsRel | 0.215305 | 0.189963 | −11.770% |
+| M3ED frame平均 MAE[m] | 4.121049 | 3.716064 | −9.827% |
+
+### 全活動5群のpooled MAE[m]
+
+| 群 | DSEC Patchwise | DSEC ConvLSTM | M3ED Patchwise | M3ED ConvLSTM |
+| --- | ---: | ---: | ---: | ---: |
+| Q1 | 2.196312 | 2.246397 | 5.119266 | 4.563695 |
+| Q2 | 2.263113 | 2.288793 | 3.611621 | 3.437420 |
+| Q3 | 2.413834 | 2.415825 | 3.152041 | 2.868305 |
+| Q4 | 2.687870 | 2.777262 | 3.026193 | 2.701145 |
+| Q5 | 3.050876 | 3.143762 | 2.798025 | 2.502655 |
+
+- 表の両方式はいずれもE1 Encoder＋LSTM（h蒸留）。DSECは全5群でMAE悪化、M3EDは全5群で改善。
+  frame平均MAEでも全5群が同じ方向。M3ED Q1のE1比改善はpooled10.853%、frame平均10.888%。
+- DSECは全体/各群の主指標でPatchwiseが有利。M3ED全体では新ConvLSTMが旧E0/E1/E2/旧DDP/新DDPの全報告指標を上回る。
+  旧最良に対してもpooled MAEは新DDP3.556542m→3.318846m（6.683%改善）、
+  frame平均MAEはE0 3.898916m→3.716064m（4.690%改善）。
+- ただしM3ED Q1をE0 Encoder（z蒸留）と比べると、pooled MAEは4.664813m→4.563695mで2.168%改善する一方、
+  frame平均は4.659016m→4.755376mで2.068%悪化。低活動の問題が全面的に解消したとはしない。
+  主比較のPatchwise E1に対しては両集計で改善している。E0比較では蒸留先/readoutも違うため構造だけの因果とはしない。
+
+### 同一性・集計の監査
+
+- Depth両datasetのmanifest/sample/活動割当/validity support/sample＋GT/validity maskの6hashが旧Patchwise E1と完全一致。
+  全体と全5群のframe/valid frame/割合/有効画素/系列数/系列別frame/rate min-maxも一致。
+  DSEC全体2,975frame・158,944,430画素、M3ED26,611frame・276,482,385画素。
+  新protocol SHAは現repoのds_f3 digestと一致。全群status=ok、群support合計がallと一致する。
+- 群から全体を再構成して整合。pooledは画素重み、RMSE系は二乗してから集計、frame平均はframe数重み。
+  最大絶対差はDSEC約2.7e-15/M3ED約3.3e-14で浮動小数点範囲。
+  受領hash/指標間の照合であり、元GTやpredictionをこちらがサーバーから独立再計算したわけではない。
+  旧20件抽出recordにhead/backbone SHAはないため、新旧のモデルSHA差をこの正本だけで確認したとも言わない。
+- pooled SqRelは誤差²/GT、F³式frame SqRelは誤差²/GT²であり、同じ式の重み変更だけとして説明しない。
+  F³式追加指標は入力・学習・サンプル条件まで原論文と同一という意味ではない。DSEC視差も公開val値であり公式test提出値ではない。
+
+### 4組の比較が揃った時点の結論
+
+- SemanticはDSEC＋0.111980pt/M3ED−0.099742ptと微差、DepthはDSEC悪化/M3ED改善でdataset/task依存。
+  時間部＋出力projection約8.09倍のConvLSTMが一律に有利とは結論しない。
+  単一seedで有意差・統計的同等性・普遍的優位・記憶機序の因果は主張しない。
+- 今回のPatchwise対ConvLSTMの学習・追加評価・数値整理は完了。
+  次の研究段階は既定のLSTM配置比較だが、方式選択を全task共通の勝者があるかのように扱わない。
+  今回Macはstdlib解析・hash/集計整合確認のみで、新規学習・再推論・依存追加は行っていない。

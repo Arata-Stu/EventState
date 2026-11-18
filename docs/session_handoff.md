@@ -8,6 +8,32 @@ E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM、E1 E
 `tools/render_full_evaluation.py` が動画と、全時刻のイベント発生率の折れ線からシークできる閲覧用index.htmlを生成する。
 既定出力 `outputs/full_sequence_review_20261118/`。手順は `docs/activity_comparison_videos.md`。実データの全編動画は未生成。
 
+2026-11-18 Depth2件の全体/5分位/両集計/hashと親_SUCCESS=Trueを受領し、今回の種類比較の数値整理が揃った（台帳§99）。
+DSEC ConvLSTMはpooled MAE2.487786m（Patchwise2.445824m比＋1.716%）、frame平均2.641458m（＋1.968%）で全5群MAEも悪化。
+M3ED ConvLSTMはpooled3.318846m（Patchwise3.678082m比−9.767%）、frame平均3.716064m（−9.827%）で全5群MAEが改善。
+両Depthの6種hash・全群support/系列構成/rate範囲が旧Patchwise E1と一致。受領値照合でありraw再hashではない。
+M3ED全体では旧5条件の全報告指標も上回るが、Q1のframe MAE4.755376mはE0の4.659016mより依然悪い。
+両head採用epoch8（1始まり、50epoch予算のval pooled MAE選択）。DSEC公開val視差1.888776pxはPatchwise1.870813pxより悪化。
+Semanticは微差、Depthはdataset依存で共通winnerなし。単一seedで有意差/普遍優位/記憶機序の因果は主張しない。
+総括docs/temporal_comparison_results_20261118.md、全量20261118_temporal_depth_convlstm_metrics.json、監査20261118_temporal_comparison_audit.json。
+学習・評価・今回の数値比較は完了。次の研究段階は従来計画のLSTM配置比較だが、新規学習を今回起動していない。
+
+2026-11-18 最終Completed: outputs/stage2_temporal_remaining_20261117/summary.jsonを受領（台帳§98）。
+launcherは全3worker成功→summary保存→親_SUCCESS作成後にCompletedを表示するため、残り3ジョブと追加評価は終了。
+DSEC Semantic、M3ED Depth、DSEC Depth（公開val視差含む）が揃い、既済M3ED Semanticと合わせ今回の比較用学習/評価実行は全完了。
+Semantic値はDSEC60.594520%／M3ED38.601202%を既受領。Depth2datasetの数値・5群・両集計・比較hashはまだ未受領。
+次は保存activity_continuous.jsonとsummary.jsonのCPU読取でDepthを回収し、Patchwise E1との4task比較をまとめる。
+再学習/特徴再抽出/再推論は不要。受領記録docs/evaluation_records/20261118_temporal_remaining_completed.json。
+
+2026-11-18 DSEC ConvLSTM Semanticの_SUCCESS=Trueと全体/活動5分位を受領（台帳§97）。
+全体60.594520%、Patchwise E1比＋0.111980pt。Q1は56.643935%（＋0.390881pt）、Q5は51.220218%（−0.247560pt）。
+全体/全群のframe・valid pixels件数はPatchwiseと一致。sample/GT/割当hash・開発採用epochは未受領。
+M3EDは全体−0.099742pt/Q1−1.132109pt/Q5＋0.315543ptだったため、Semanticでの優劣はdataset/活動群依存。
+両dataset全体の差は約0.1ptと小さい。単一seedで有意差/統計的同等性や一律の低活動改善を主張しない。
+受領記録docs/evaluation_records/20261118_dsec_semantic_convlstm_activity_best.json。
+これでConvLSTM SemanticはDSEC/M3ED両方の比較数値が揃った。残りはDepth2ジョブの完了・数値回収。
+Depthの最後の受領状態は§96のhead学習移行であり、今回新たなDepth進捗は未提示。
+
 2026-11-18 サーバー続報：main bdd081f→5fb08a9へpull後、残り3ジョブをGPU0/1/2で並列起動（台帳§96）。
 preflightで入力26,548file照合、空き3GPU、scratch983.4GiB、予約Semantic9.8/M3ED Depth119.2/DSEC Depth99.6GiBを確認。
 貼付末尾ではGPU0のDSEC Semanticが開発→refit→test/活動5分位までcompleted。新mIoU値はまだ未受領。

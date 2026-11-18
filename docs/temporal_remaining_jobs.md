@@ -13,6 +13,9 @@ DSEC Semanticは2回のhead fittingを含むので、3ジョブ内に合計4回�
 Stage 1を学習し直す処理や、GT補完・loss変更は含まない。Depthは従来通りlog-L1、batch4、FP32、seed0。
 Semanticはh384ch、linear、CE、batch8、FP16、seed0。両方式で同じ既存活動manifestを使う。
 
+2026-11-18、既定runの最終`Completed: .../summary.json`を受領。3ジョブと追加評価はすべて終了した（台帳§98）。
+結果回収は保存JSONを読むだけでよく、以下の起動コマンドを再実行する必要はない。
+
 ## サーバーでの実行
 
 追加したコードをユーザー自身がpushした後、sig-gpu5の別ターミナルで実行する。

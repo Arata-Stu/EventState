@@ -1,0 +1,40 @@
+{
+  "received_date": "2026-11-18",
+  "source": "User-pasted final launcher completion line",
+  "reported_line": "Completed: /home/iASL/Arata_repo/EventState/outputs/stage2_temporal_remaining_20261117/summary.json",
+  "condition_label": "E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+  "run": "/home/iASL/Arata_repo/EventState/outputs/stage2_temporal_remaining_20261117",
+  "completion_semantics_verified_against": "tools/run_temporal_downstream.py::execute",
+  "inferred_from_reported_line_and_current_code": {
+    "all_three_workers_returned_success_with_result_files": true,
+    "summary_json_written": true,
+    "parent_success_marker_written_before_completed_line": true,
+    "dsec_semantic_development_refit_test_activity_completed": true,
+    "m3ed_depth_training_public_val_activity_completed": true,
+    "dsec_depth_training_public_val_activity_and_disparity_completed": true
+  },
+  "recipe": {
+    "seed": 0,
+    "evidence": "previous launch log, fixed runner recipe and worker checkpoint checks",
+    "semantic_split": "DSEC development6/2 → official train8 refit → official test3",
+    "depth_splits": {"dsec": "train37/public val4", "m3ed": "train3/public val2"},
+    "depth_head": "frozen four-level backbone features, VKITTI-initialized DPT, 50 epochs, log-L1, pooled validation MAE selection"
+  },
+  "expected_depth_reports": {
+    "dsec": "heads/dsec_E1_convlstm/stages/activity_continuous.json",
+    "m3ed": "heads/m3ed_E1_convlstm/stages/activity_continuous.json"
+  },
+  "semantic_values_previously_received": {
+    "dsec_mIoU_percent": 60.594520,
+    "m3ed_mIoU_percent": 38.601202
+  },
+  "not_received_in_this_message": [
+    "summary.json contents",
+    "Depth pooled and frame-mean metrics for either dataset",
+    "Depth activity-quintile metrics and comparability hashes",
+    "DSEC public-validation disparity score",
+    "a separate direct read of the parent _SUCCESS marker"
+  ],
+  "status": "The training and evaluation runs for this architecture comparison have completed. Numerical Depth collection and comparison remain.",
+  "next_action": "Read saved reports on the server using CPU-only JSON extraction; do not retrain or rerun inference to recover these results."
+}

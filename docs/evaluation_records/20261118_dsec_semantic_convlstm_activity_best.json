@@ -1,0 +1,96 @@
+{
+  "received_date": "2026-11-18",
+  "source": "User-pasted CPU extraction of completed DSEC Semantic activity_test.json",
+  "dataset": "dsec",
+  "task": "semantic",
+  "condition_label": "E1 Encoder＋LSTM（h蒸留）・ConvLSTM",
+  "completion_marker": true,
+  "reported_mIoU_precision": "six decimal places in percent; no extra source precision assumed",
+  "groups": {
+    "all": {
+      "mIoU_percent": 60.59452,
+      "frames": 2806,
+      "valid_pixels": 790169600,
+      "patchwise_mIoU_percent": 60.48253979036014,
+      "convlstm_minus_patchwise_percentage_points": 0.1119802096398601
+    },
+    "p00_20": {
+      "mIoU_percent": 56.643935,
+      "frames": 817,
+      "valid_pixels": 230067200,
+      "patchwise_mIoU_percent": 56.25305401115281,
+      "convlstm_minus_patchwise_percentage_points": 0.3908809888471865
+    },
+    "p20_40": {
+      "mIoU_percent": 61.687456,
+      "frames": 823,
+      "valid_pixels": 231756800,
+      "patchwise_mIoU_percent": 61.8180608831725,
+      "convlstm_minus_patchwise_percentage_points": -0.13060488317250218
+    },
+    "p40_60": {
+      "mIoU_percent": 63.449806,
+      "frames": 620,
+      "valid_pixels": 174592000,
+      "patchwise_mIoU_percent": 63.31990694190585,
+      "convlstm_minus_patchwise_percentage_points": 0.12989905809415347
+    },
+    "p60_80": {
+      "mIoU_percent": 57.528801,
+      "frames": 468,
+      "valid_pixels": 131788800,
+      "patchwise_mIoU_percent": 57.32560448146569,
+      "convlstm_minus_patchwise_percentage_points": 0.20319651853431253
+    },
+    "p80_100": {
+      "mIoU_percent": 51.220218,
+      "frames": 78,
+      "valid_pixels": 21964800,
+      "patchwise_mIoU_percent": 51.467777569504555,
+      "convlstm_minus_patchwise_percentage_points": -0.2475595695045527
+    }
+  },
+  "comparison_reference": {
+    "path": "docs/evaluation_records/20261115_semantic_depth_activity_metrics.json",
+    "condition": "dsec_E1",
+    "condition_label": "E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM",
+    "report": "/home/iASL/Arata_repo/EventState/outputs/semantic_depth_activity_20261110/semantic/dsec_E1.json"
+  },
+  "recipe": {
+    "seed": 0,
+    "seed_evidence": "fixed launcher and runtime checkpoint recipe checks; original Stage 2 config not pasted",
+    "split": "development6/2 → official train8 refit → official test3",
+    "feature": "h",
+    "head": "linear 384 to 11",
+    "loss": "CE",
+    "development_budget_epochs": 50,
+    "selected_development_epoch_received": false,
+    "final_epoch_count_received": false,
+    "output": "/home/iASL/Arata_repo/EventState/outputs/stage2_temporal_remaining_20261117/dsec_semantic/activity_test.json"
+  },
+  "audit": {
+    "all_and_group_frame_counts_match_patchwise": true,
+    "all_and_group_valid_pixels_match_patchwise": true,
+    "group_frame_and_pixel_sums_match_all": true,
+    "checkpoint_sample_assignment_target_support_hashes_received": false
+  },
+  "semantic_comparison_both_datasets": {
+    "dsec": {
+      "all": 0.1119802096398601,
+      "p00_20": 0.3908809888471865,
+      "p80_100": -0.2475595695045527
+    },
+    "m3ed": {
+      "all": -0.09974198410913004,
+      "p00_20": -1.1321092320810422,
+      "p80_100": 0.31554286055207115
+    }
+  },
+  "interpretation_limits": [
+    "Single configured seed: no significance or statistical equivalence claim.",
+    "DSEC Q5 has only 78 frames and is not an independent large sample.",
+    "All/group mIoU is computed from corresponding confusion matrices, not a frame-weighted mean of group mIoU.",
+    "Support counts agree but sample, assignment, GT and mask identities have not been independently checked from this pasted summary.",
+    "Semantic results alone do not establish a causal memory mechanism or settle the remaining Depth comparison."
+  ]
+}

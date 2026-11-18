@@ -226,6 +226,30 @@ DSEC Semanticと両datasetのDepthは引き続き同じ比較条件で進める�
 残り3ジョブを空きGPUで並列に進める実行手順は`docs/temporal_remaining_jobs.md`。
 `tools/run_temporal_downstream.py --gpus 0,1,2 --preflight`で読み取り確認し、`--execute`で新規runを起動する。
 
+## Semantic両datasetの比較が揃った時点（2026-11-18）
+
+DSECのE1 Encoder＋LSTM（h蒸留）・ConvLSTMは公式test mIoU60.594520%、
+E1 Encoder＋LSTM（h蒸留）・Patchwise LSTMの60.482540%に対し＋0.111980pt。
+Q1は56.643935%対56.253054%（＋0.390881pt）、Q5は51.220218%対51.467778%（−0.247560pt）。
+全体/全5群のframe・valid pixels件数は一致し、Semanticの正常完了markerも受領した。
+M3EDとDSECでは全体/Q1/Q5の優劣が逆で、全体差はいずれも約0.1pt。
+単一seedなので、有意差や統計的同等性は主張しない。全量と監査は台帳§97。
+Semantic2件は揃い、残りはDSEC/M3ED Depthの2ジョブの完了・結果回収である。
+
+2026-11-18続報：残り3ジョブの最終`Completed: .../summary.json`を受領した（台帳§98）。
+Depth2件と追加評価も終了し、今回の比較用学習/評価実行はすべて完了。次はDepth保存JSONの数値・hashを回収する。
+
+## Depth数値回収後の総括（2026-11-18）
+
+Depthも全量を受領し、全4組の比較数値が揃った（台帳§99）。詳細は`docs/temporal_comparison_results_20261118.md`。
+DSEC pooled MAEはPatchwise2.445824m→ConvLSTM2.487786m（誤差＋1.716%）、
+M3EDは3.678082m→3.318846m（−9.767%）。frame平均もDSEC＋1.968%/M3ED−9.827%と同じ方向。
+両datasetとも全5群でこの方向が一致。Depth比較の6hashと全群support/系列構成/rate範囲も一致した。
+M3EDは全体で旧5条件を上回るが、Q1のframe平均MAEはE0より依然悪い。低活動全般の課題解消とはしない。
+Semantic微差とDepthのdataset依存を踏まえ、共通の勝者・記憶機序の因果・有意差は主張しない。
+今回の種類比較の数値整理は完了し、次は既定の配置比較を検討する段階である。新規学習は今回起動していない。
+
 Macはstdlib planner回帰・AST/CLI確認のみ。PyTorch/Hydra/GPU/実データ/VRAMはサーバーで確認する。
 専用runnerの実行前preflightには共通学習テスト、ConvLSTM矩形gridとDepth4段、
-両dataset/両方式のHydra合成/runtime設定検証を含む。サーバー実行成功・新しいスコアはまだ未受領。
+両dataset/両方式のHydra合成/runtime設定検証を含む。当初追加時点では実データ未実行だったが、
+11/18時点ではStage1両dataset・Semantic両datasetの終了/数値、およびDepth両datasetのhead学習移行を受領済み（台帳§96〜97）。
