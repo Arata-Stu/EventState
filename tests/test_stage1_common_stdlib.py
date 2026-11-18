@@ -8,6 +8,7 @@ import unittest
 
 from event_state.dense.common_protocol import load_common, audit_common
 from event_state.dense.protocol import digest, load_protocol
+from tools.placement_conditions import PLACEMENTS, placement_label
 from tools.run_stage1_common import plan
 from event_state.dense.stream_lanes import segments, FullStreamBatchSampler
 
@@ -95,6 +96,35 @@ class CommonTests(unittest.TestCase):
                 a.lstm_from_stage = first
                 for job in plan(a):
                     self.assertIn(f"model.temporal.first_stage={first}", job["command"])
+            a.placement_suite = True
+            with self.assertRaisesRegex(ValueError, 'placement-suite'):
+                plan(a)
+            a.lstm_from_stage = None
+            a.phase = 'ddp'
+            with self.assertRaisesRegex(ValueError, 'placement-suite'):
+                plan(a)
+            a.phase = 'all'
+            a.gpus = '2'
+            expected = {'E1_b3': [3], 'E1_b6': [6], 'E1_b9': [9], 'E1_b9_12': [9, 12],
+                        'E1_b6_9_12': [6, 9, 12], 'E1_b3_6_9_12': [3, 6, 9, 12]}
+            self.assertEqual({key: list(value) for key, value in PLACEMENTS.items()}, expected)
+            for stage, steps in [('smoke', 99), ('full', 99999)]:
+                a.stage = stage
+                suite = plan(a)
+                self.assertEqual(len(suite), 12)
+                self.assertEqual({job['name'] for job in suite}, {
+                    f'{ds}_{key}_w1' for ds in ('dsec', 'm3ed') for key in expected})
+                for job in suite:
+                    key = job['condition']
+                    self.assertEqual((job['world'], job['steps'], job['after_blocks']),
+                                     (1, steps, expected[key]))
+                    self.assertEqual(job['label'], placement_label(key))
+                    self.assertEqual(job['planned_frames'], 64 * steps)
+                    for override in ('model=four_stage_lstm', 'experiment=h_distill_lstm',
+                                     'training.resume=null', 'seed=0',
+                                     '++model.temporal.after_blocks=' + json.dumps(expected[key], separators=(',', ':')),
+                                     f"hydra.run.dir={(a.output_root / job['name']).resolve()}"):
+                        self.assertIn(override, job['command'])
             self.assertFalse(a.output_root.exists())
             stats['sequences'] = ['wrong']
             (root/'m3ed_common.json').write_text(json.dumps(stats))

@@ -86,6 +86,17 @@ class SemanticJobTests(unittest.TestCase):
         self.assertTrue(all(Path(p).is_absolute() for p in job["inputs"]))
         self.assertFalse(Path(job["output"]).exists())
 
+    def test_explicit_placement_uses_requested_checkpoint_and_attempt(self):
+        checkpoint = self.args.stage1_root / "dsec_E1_b9_w1/checkpoints/step_00099999.pt"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.write_bytes(b"single block 9 fixture")
+        label = "E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（9層後）"
+        job = semantic.build_semantic_job(self.args, checkpoint=checkpoint, name="attempt-01", label=label)
+        self.assertEqual(job["backbone"], str(checkpoint.resolve()))
+        self.assertEqual(job["label"], label)
+        self.assertEqual(job["output"], str(self.args.output.resolve() / "attempt-01"))
+        self.assertEqual(job["cache"], str(self.args.scratch.resolve() / "attempt-01"))
+
     def test_wrong_recipe_or_split_is_rejected(self):
         original = self.args.baseline_semantic_config.read_text()
         for key, value in (("feature", "z"), ("head_type", "nonlinear"), ("loss", "ce-dice"),

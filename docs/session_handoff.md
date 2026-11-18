@@ -2,6 +2,13 @@
 
 最終更新: 2026-11-18
 
+2026-11-18 次の学習計画を具体化。E1 Encoder＋LSTM（h蒸留）・Patchwise LSTMを
+ViTの3層後のみ、6層後のみ、9層後のみ、9＋12層後、6＋9＋12層後、3＋6＋9＋12層後の6配置で比較する。
+12層後のみの単GPU E1を既存対照として再利用。DSEC・M3EDの共通Stage 1と凍結Semantic segmentationを先行し、Depthは後段に保留する。
+実装では途中のLSTM出力を後続ViTに渡し、12層目まで通した最終表現を全条件で蒸留・Semanticの読み出しに使う。
+学習本数は新規Stage 1が12、Semanticが12評価条件。実データのsmoke・本学習・新しいmIoUの受領はまだない。
+条件・手順は `docs/lstm_placement_semantic.md`。以前の `--lstm-from-stage N` はNから最終段まで連続して置く設定。
+
 2026-11-18 定性評価：ユーザーは低活動区間の抽出に加え、全評価系列を通しで見て時間モデルの寄与を確認したい。
 DSEC Semantic公式test3・Depth公開val4、M3ED Semantic/Depth公開val各2を対象とし、9走行・11動画。
 E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM、E1 Encoder＋LSTM（h蒸留）・ConvLSTMを同時表示する。

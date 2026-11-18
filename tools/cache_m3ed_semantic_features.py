@@ -20,6 +20,7 @@ from tqdm import tqdm
 
 from event_state.segmentation import load_m3ed_semantic_split
 from event_state.losses.activity_weighting import ACTIVITY_FORMAT
+from event_state.models.temporal import detach_temporal_state
 from event_state.segmentation.state_probe import forward_frames
 from event_state.training import load_checkpoint, load_checkpoint_config_metadata
 from event_state.training.factory import build_evaluation_runtime
@@ -206,9 +207,7 @@ def main() -> None:
             outputs = (forward_frames(runtime.model, events, recurrent_state, args.state_policy)
                        if args.include_activity or args.state_policy == "frame"
                        else runtime.model(events, state=recurrent_state))
-            recurrent_state = outputs.get("state")
-            if recurrent_state is not None:
-                recurrent_state = tuple(value.detach() for value in recurrent_state)
+            recurrent_state = detach_temporal_state(outputs.get("state"))
             frame_indices = batch["frame_indices"][0].detach().cpu()
             timestamps = batch["timestamps"][0].detach().cpu()
             valid = torch.from_numpy(target_validity[sequence][frame_indices.numpy()])

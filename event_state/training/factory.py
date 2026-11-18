@@ -422,6 +422,7 @@ def _build_model(config: Any) -> nn.Module:
     temporal_model = build_temporal_backbone(
         grid_size=grid_size,
         first_stage=_value(temporal_config, "first_stage", 1),
+        after_blocks=_value(temporal_config, "after_blocks", None),
         kind=str(_value(temporal_config, "type")),
         input_dim=int(_value(temporal_config, "input_dim")),
         hidden_dim=int(_value(temporal_config, "hidden_dim", _value(temporal_config, "input_dim"))),

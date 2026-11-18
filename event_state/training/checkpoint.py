@@ -64,6 +64,7 @@ class CheckpointState:
 class CheckpointConfigMetadata:
     config: dict[str, Any]
     signatures: dict[str, Any]
+    global_step: int | None = None
 
 
 def _plain_value(value: Any) -> Any:
@@ -453,6 +454,7 @@ def load_checkpoint_config_metadata(path: str | Path) -> CheckpointConfigMetadat
     return CheckpointConfigMetadata(
         config=_plain_value(config),
         signatures=_plain_value(signatures),
+        global_step=checkpoint.get("global_step"),
     )
 
 

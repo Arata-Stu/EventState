@@ -20,6 +20,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from event_state.dense.common_protocol import load_common
 from event_state.dense.protocol import digest
+from tools.placement_conditions import PLACEMENTS, placement_label
 from tools.run_dense_pretrain import _hydra_object
 
 
@@ -31,10 +32,15 @@ DEFAULT_PREFLIGHT_TESTS = (
 
 
 def plan(a):
+    placement_suite = getattr(a, 'placement_suite', False)
+    first_stage = getattr(a, 'lstm_from_stage', None)
+    four_stage = getattr(a, 'four_stage_lstm', False) or first_stage is not None
+    if placement_suite and (four_stage or a.phase == 'ddp'):
+        raise ValueError('--placement-suite runs six single-GPU placements; use it without other placement flags or --phase ddp')
     gpus = a.gpus.split(',')
     valid_ids = all(x.isdigit() for x in gpus)
     distinct_ids = valid_ids and len({int(x) for x in gpus}) == len(gpus)
-    if a.phase == 'baseline':
+    if a.phase == 'baseline' or placement_suite:
         if not 1 <= len(gpus) <= 3 or not distinct_ids:
             raise ValueError('Specify one to three distinct GPU IDs for baseline')
     elif len(gpus) != 3 or not distinct_ids:
@@ -45,6 +51,12 @@ def plan(a):
         raise FileExistsError('Use a fresh output root; do not overwrite prior runs')
     if not a.teacher_checkpoint.is_file():
         raise FileNotFoundError(a.teacher_checkpoint)
+    if placement_suite:
+        specs = [(condition, 1) for condition in PLACEMENTS]
+    elif four_stage:
+        specs = [('E1', world) for world in (1, 3)]
+    else:
+        specs = [(e, 1) for e in ('E0', 'E1', 'E2')] + [('E1', 3)]
     jobs = []
     for ds in ('dsec', 'm3ed'):
         protocol = load_common(ds)
@@ -66,22 +78,18 @@ def plan(a):
         accumulation = 1
         branch_batch = 4 if ds == 'dsec' else 2
         clip = 8 if ds == 'dsec' else 16
-        specs = [(e, 1) for e in ('E0', 'E1', 'E2')] + [('E1', 3)]
-        first_stage = getattr(a, 'lstm_from_stage', None)
-        four_stage = getattr(a, 'four_stage_lstm', False) or first_stage is not None
-        if four_stage:
-            specs = [('E1', world) for world in (1, 3)]
-        for condition, world in specs:
+        for condition_id, world in specs:
             if a.phase == 'baseline' and world != 1 or a.phase == 'ddp' and world != 3:
                 continue
             base_steps = 99 if a.stage == 'smoke' else 99999
             steps = base_steps // world
             warmup = (9 if a.stage == 'smoke' else 999) // world
-            variant = 'four_stage_lstm' if four_stage else condition
+            condition = 'E1' if placement_suite else condition_id
+            variant = 'four_stage_lstm' if four_stage else condition_id
             if first_stage and first_stage > 1:
                 variant = f'lstm_from_s{first_stage}'
             name = f'{ds}_{variant}_w{world}'
-            model_kind = 'four_stage_lstm' if four_stage else ('no_memory' if condition == 'E0' else 'lstm')
+            model_kind = 'four_stage_lstm' if four_stage or placement_suite else ('no_memory' if condition == 'E0' else 'lstm')
             experiment = {'E0': 'gep_baseline', 'E1': 'h_distill_lstm', 'E2': 'h_distill_lstm_zloss'}[condition]
             cmd = [sys.executable]
             if world > 1:
@@ -124,12 +132,20 @@ def plan(a):
                 if first_stage is not None:
                     cmd.append(f"model.temporal.first_stage={first_stage}")
                     label = f"Encoder＋S{first_stage}以降LSTM（最終h蒸留）"
+            if placement_suite:
+                blocks = PLACEMENTS[condition_id]
+                label = placement_label(condition_id)
+                cmd.append('++model.temporal.after_blocks=' + json.dumps(blocks, separators=(',', ':')))
+            if four_stage or placement_suite:
                 cmd.append(f"experiment.name={variant}_h_distill")
-            jobs.append(dict(name=name, label=label, world=world, command=cmd, steps=steps,
+            job = dict(name=name, label=label, world=world, command=cmd, steps=steps,
                 effective_clips=2 * branch_batch * accumulation * world,
                 planned_frames=steps * 2 * branch_batch * accumulation * world * clip,
                 statistics=str(stats_file.resolve()), statistics_sha256=hashlib.sha256(stats_file.read_bytes()).hexdigest(),
-                protocol=protocol))
+                protocol=protocol)
+            if placement_suite:
+                job.update(condition=condition_id, after_blocks=list(blocks))
+            jobs.append(job)
     return sorted(jobs, key=lambda j: j['world'])
 
 
@@ -217,9 +233,13 @@ def main():
     p.add_argument('--num-workers', type=int, default=2)
     p.add_argument('--lstm-from-stage', type=int, choices=(1, 2, 3, 4), help='Insert LSTMs from this stage through S4')
     p.add_argument('--four-stage-lstm', action='store_true', help='Run final-h distillation with LSTMs after blocks 3/6/9/12')
+    p.add_argument('--placement-suite', action='store_true',
+                   help='Train single-GPU E1 with Patchwise LSTMs at [3], [6], [9], [9,12], [6,9,12], [3,6,9,12]')
     p.add_argument('--execute', action='store_true')
     p.add_argument('--skip-preflight', action='store_true', help='Only after same-code server preflight passes')
     a = p.parse_args()
+    if a.placement_suite:
+        a.preflight_tests = DEFAULT_PREFLIGHT_TESTS + ('tests/test_four_stage_depth.py',)
     jobs = plan(a)
     for job in jobs:
         print(f'{job["name"]} {job["label"]}: clips/update={job["effective_clips"]}, steps={job["steps"]}, frames={job["planned_frames"]}')

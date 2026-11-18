@@ -164,6 +164,8 @@ class EventStateModel(nn.Module):
             z, stages, new_state = self.temporal_model(
                 self.event_encoder.backbone, flat_events, batch_size, sequence_length, state
             )
+            # Distillation and semantic probing share the block-12 output,
+            # including when recurrent features entered the ViT earlier.
             return {"z": z, "h": stages[-1], "state": new_state}
         flat_z = self.encode_event(flat_events)
         z = flat_z.reshape(

@@ -19,6 +19,7 @@ from tqdm import tqdm
 from event_state.segmentation import find_semantic_label_dir, load_dsec_semantic_split
 from event_state.data.activity import scale_event_activation
 from event_state.losses.activity_weighting import ACTIVITY_FORMAT
+from event_state.models.temporal import detach_temporal_state
 from event_state.data.dsec_feature_source import RawGEPFeatureSource, validate_source
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
 
@@ -288,9 +289,7 @@ def main() -> None:
                 if args.state_policy == "frame":
                     recurrent_state = None
                 outputs = model(normalized.unsqueeze(1), state=recurrent_state)
-                recurrent_state = outputs.get("state")
-                if recurrent_state is not None:
-                    recurrent_state = tuple(value.detach() for value in recurrent_state)
+                recurrent_state = detach_temporal_state(outputs.get("state"))
                 if frame_index not in labeled_indices:
                     continue
                 grid_height = normalized.shape[-2] // model.event_encoder.patch_size

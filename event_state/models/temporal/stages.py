@@ -6,16 +6,33 @@ from .lstm import PatchwiseLSTM
 
 
 class FourStageLSTM(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, first_stage=1):
+    """Insert independent patchwise LSTMs between selected ViT blocks.
+
+    The four readouts always correspond to blocks 3, 6, 9 and 12. Inactive
+    readouts retain the ViT features produced downstream of earlier insertions.
+    """
+
+    def __init__(self, input_dim, hidden_dim, output_dim, first_stage=1, *, after_blocks=None):
         super().__init__()
         if input_dim != output_dim:
             raise ValueError("Direct stage connections require the ViT token dimension")
         self.input_dim, self.output_dim = input_dim, output_dim
         if first_stage not in (1, 2, 3, 4):
             raise ValueError("first_stage must be 1, 2, 3 or 4")
-        self.first_stage = first_stage
+        if after_blocks is None:
+            after_blocks = tuple(range(3 * first_stage, 13, 3))
+        else:
+            if first_stage != 1:
+                raise ValueError("Use after_blocks or a non-default first_stage, not both")
+            after_blocks = tuple(after_blocks)
+            if (not after_blocks or any(type(block) is not int or block not in (3, 6, 9, 12)
+                                        for block in after_blocks)
+                    or after_blocks != tuple(sorted(set(after_blocks)))):
+                raise ValueError("after_blocks must be a nonempty, increasing subset of [3, 6, 9, 12]")
+        self.after_blocks = after_blocks
+        self.first_stage = after_blocks[0] // 3
         self.stages = nn.ModuleList(
-            PatchwiseLSTM(input_dim, hidden_dim, output_dim) for _ in range(first_stage, 5)
+            PatchwiseLSTM(input_dim, hidden_dim, output_dim) for _ in self.after_blocks
         )
 
     def forward(self, backbone, frames, batch, time, state=None):
@@ -34,7 +51,7 @@ class FourStageLSTM(nn.Module):
             if index % 3 == 0:
                 patches = backbone.norm(tokens[:, prefix:])
                 z = patches.reshape(batch, time, height * width, self.input_dim)
-                if index // 3 < self.first_stage:
+                if index not in self.after_blocks:
                     outputs.append(z)
                     continue
                 active = len(states)

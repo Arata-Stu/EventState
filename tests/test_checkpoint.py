@@ -10,6 +10,7 @@ from torch import nn
 from event_state.training.checkpoint import (
     assert_checkpoint_config_compatible,
     load_checkpoint,
+    load_checkpoint_config_metadata,
     save_checkpoint,
 )
 from event_state.training.optim import WarmupCosineScheduler
@@ -57,6 +58,7 @@ def test_checkpoint_restores_model_optimizer_scheduler_and_step(tmp_path: Path) 
     )
 
     assert restored.global_step == 7
+    assert load_checkpoint_config_metadata(checkpoint_path).global_step == 7
     assert restored.best_validation_loss == 0.25
     assert restored.data_state == {"epoch": 2, "batch_in_epoch": 3}
     for name, value in model.state_dict().items():

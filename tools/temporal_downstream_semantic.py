@@ -83,7 +83,7 @@ def _labels(root, role, sequence):
     return matches[0], len(files)
 
 
-def build_semantic_job(a):
+def build_semantic_job(a, *, checkpoint=None, name="dsec_semantic", label=LABEL):
     """Validate a fresh job and return its plan without writing any files."""
     project = Path(a.project_root).resolve()
     config_path = _file(_resolve(project, a.baseline_semantic_config))
@@ -113,14 +113,14 @@ def build_semantic_job(a):
         raise ValueError("Previous final DSEC Semantic head did not use the official eight train sequences")
     labels_root = _resolve(project, config["labels_root"])
     events = _resolve(project, Path(a.data) / "DSEC_cache/events/gep_rgb")
-    checkpoint = _file(_resolve(project, Path(a.stage1_root) /
+    checkpoint = _file(_resolve(project, checkpoint or Path(a.stage1_root) /
         "dsec_E1_convlstm_w1/checkpoints/step_00099999.pt"))
     activity_path = _file(_resolve(project, Path(a.activity_root) / "dsec.json"))
     activity = ActivityIndex.load(activity_path)
     if activity.identity["source_contract"]["dataset"] != "dsec":
         raise ValueError("Expected the shared DSEC activity manifest")
-    output = _resolve(project, Path(a.output) / "dsec_semantic")
-    cache = _resolve(project, Path(a.scratch) / "dsec_semantic")
+    output = _resolve(project, Path(a.output) / name)
+    cache = _resolve(project, Path(a.scratch) / name)
     if output.exists() or cache.exists():
         raise FileExistsError(f"Preserving existing Semantic output/cache; choose fresh roots: {output}, {cache}")
     sources, count = {}, 0
@@ -159,7 +159,7 @@ def build_semantic_job(a):
                     activity_group_names=list(activity.groups),
                     labels_root=str(labels_root), sources=sources, seed=0,
                     development_epochs=50, feature="h", head_type="linear", loss="ce")
-    return dict(name="dsec_semantic", kind="semantic", task="semantic", dataset="dsec", label=LABEL,
+    return dict(name=name, kind="semantic", task="semantic", dataset="dsec", label=label,
                 backbone=str(checkpoint), checkpoint=str(checkpoint), output=str(output), head=str(output),
                 cache=str(cache), events=str(events), labels_root=str(labels_root), split=str(split_file),
                 activity_manifest=str(activity_path), activity_report=str(output / "activity_test.json"),
