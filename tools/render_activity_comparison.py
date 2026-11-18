@@ -6,7 +6,10 @@ from sequence start; only the selected display intervals are written to disk.
 """
 import argparse
 import csv
+from contextlib import ExitStack
+from functools import lru_cache
 import gc
+from itertools import chain, zip_longest
 import json
 import math
 from pathlib import Path
@@ -17,7 +20,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-CONDITIONS = ('E0', 'E1', 'E2', 'E1_old_ddp', 'E1_new_ddp')
+from event_state.evaluation.comparison_timing import ffmpeg_executable
+
+CONDITIONS = ('E0', 'E1', 'E2', 'E1_old_ddp', 'E1_new_ddp', 'E1_convlstm')
 
 
 def read(path):
@@ -50,14 +55,6 @@ def cjk_font(path=None):
                 font.getmask('\uffff').size, bytes(font.getmask('\uffff'))):
             return candidate
     raise FileNotFoundError('Japanese font required: pass --font /path/to/NotoSansCJK-Regular.ttc')
-
-
-def ffmpeg_executable():
-    found = shutil.which('ffmpeg')
-    if found:
-        return found
-    import imageio_ffmpeg
-    return imageio_ffmpeg.get_ffmpeg_exe()
 
 
 def rgb_frame(dataset, task, cfg, prepared_root, sequence, timestamp):
@@ -124,14 +121,35 @@ def frame_metric(task, prediction, target, valid):
     return float((tp[union > 0] / union[union > 0]).mean())
 
 
+@lru_cache(maxsize=4)
+def _panel_font(font_path):
+    from PIL import ImageFont
+    return ImageFont.truetype(str(font_path), 16)
+
+
+def activity_chart(width, scene, records, cutpoints, ymax):
+    from PIL import Image, ImageDraw
+    chart = Image.new('RGB', (width, 48), '#141414')
+    draw = ImageDraw.Draw(chart)
+    for boundary in (cutpoints[0], cutpoints[-1]):
+        y = 47 * (1 - boundary / ymax)
+        draw.line((12, y, width-12, y), fill='#555555')
+    points = [(12 + (width-24) * (r['timestamp']-scene['start_us']) / (scene['end_us']-scene['start_us']),
+               47 * (1 - r['event_rate_hz'] / ymax))
+              for r in records if scene['start_us'] <= r['timestamp'] < scene['end_us']]
+    if len(points) > 1:
+        draw.line(points, fill='#65cfff', width=2)
+    return chart
+
+
 def draw_frame(task, rgb, events, target, valid, predictions, labels, scene, timestamp,
-               activity_record, activity_records, cutpoints, font_path, depth_max, activity_ymax):
+               activity_record, activity_records, cutpoints, font_path, depth_max, activity_ymax,
+               *, chart=None):
     import numpy as np
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
     height, width = rgb.shape[:2]
     header, footer = 42, 138
-    font = ImageFont.truetype(str(font_path), 19)
-    small = ImageFont.truetype(str(font_path), 16)
+    small = _panel_font(font_path)
     panels = [('RGB (reference only)', rgb), ('GEP events', events)]
     if target is None:
         missing = Image.new('RGB', (width, height), '#232323')
@@ -180,21 +198,12 @@ def draw_frame(task, rgb, events, target, valid, predictions, labels, scene, tim
             draw.text((x+17, bottom+46), name, font=small, fill='white')
             x += 18 + int(draw.textlength(name, font=small)) + 15
     # One event-rate axis shared by every selected clip and all compared models.
-    left, right, top, low = 12, total_width-12, bottom+79, bottom+126
-    selected = [r for r in activity_records if scene['start_us'] <= r['timestamp'] < scene['end_us']]
-    ymax = activity_ymax
-    def xy(t, value):
-        return (left+(right-left)*(t-scene['start_us'])/(scene['end_us']-scene['start_us']),
-                low-(low-top)*value/ymax)
-    for boundary in (cutpoints[0], cutpoints[-1]):
-        y = xy(scene['start_us'], boundary)[1]
-        draw.line((left, y, right, y), fill='#555555')
-    points = [xy(r['timestamp'], r['event_rate_hz']) for r in selected]
-    if len(points) > 1:
-        draw.line(points, fill='#65cfff', width=2)
-    x = xy(timestamp, 0)[0]
-    draw.line((x, top, x, low), fill='#ffcc55', width=2)
-    draw.text((max(12, total_width-310), bottom+69), f'Activity axis: 0..{ymax/1e6:.2f} M events/s', font=small, fill='white')
+    if chart is None:
+        chart = activity_chart(total_width, scene, activity_records, cutpoints, activity_ymax)
+    canvas.paste(chart, (0, bottom+79))
+    x = 12 + (total_width-24)*(timestamp-scene['start_us'])/(scene['end_us']-scene['start_us'])
+    draw.line((x, bottom+79, x, bottom+126), fill='#ffcc55', width=2)
+    draw.text((max(12, total_width-310), bottom+69), f'Activity axis: 0..{activity_ymax/1e6:.2f} M events/s', font=small, fill='white')
     # H.264 yuv420 requires even dimensions; pad rather than rescale predictions.
     if canvas.width % 2 or canvas.height % 2:
         padded = Image.new('RGB', (canvas.width+canvas.width%2, canvas.height+canvas.height%2), '#141414')
@@ -202,29 +211,156 @@ def draw_frame(task, rgb, events, target, valid, predictions, labels, scene, tim
     return canvas, metrics
 
 
+def load_backend(args, dataset, condition):
+    from event_state.evaluation.comparison_depth import DepthBackend
+    from event_state.evaluation.comparison_semantic import SemanticBackend
+    options = {}
+    if condition == 'E1_convlstm':
+        options.update(temporal_run=args.temporal_depth_run, temporal_stage1=args.convlstm_stage1_run)
+    if args.task == 'semantic':
+        if condition == 'E1_convlstm':
+            options['m3ed_temporal_semantic'] = args.m3ed_convlstm_semantic_run
+        return SemanticBackend(dataset, condition, ROOT, args.teacher_checkpoint, args.device, **options)
+    return DepthBackend(dataset, condition, ROOT, args.depth_run, args.teacher_checkpoint, args.device, **options)
+
+
+def render_full_sequences(args, scenes, records_by_sequence, activity, manifest, font_path, ffmpeg):
+    """One chronological pass per recording, with independent state per model."""
+    import numpy as np
+    from event_state.activity_reporting import validate_activity_source
+    from event_state.dense.source import prepared_frames
+    from event_state.evaluation.comparison_depth import DepthTargets
+    from event_state.evaluation.full_video import encode_native_video
+
+    dataset, conditions = manifest['dataset'], manifest['conditions']
+    cutpoints = [c['event_rate_hz'] for c in activity.identity['cutpoints']]
+    with ExitStack() as stack:
+        models = []
+        labels = []
+        for condition in conditions:
+            model = load_backend(args, dataset, condition)
+            if hasattr(model, 'close'):
+                stack.callback(model.close)
+            label = model.label
+            if condition == 'E1':
+                label = 'E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM'
+            print(f'[comparison] {dataset}/{args.task} {label}', flush=True)
+            models.append(model)
+            labels.append(label)
+            manifest['models'][condition] = dict(model.identity, condition_label=label)
+        first = models[0]
+        for model in models:
+            if model.prepared_root != first.prepared_root or model.frame_size != first.frame_size:
+                raise ValueError('Models use different prepared inputs or geometry')
+            if model.cfg.dataset.representation.percentile != first.cfg.dataset.representation.percentile:
+                raise ValueError('Models require different GEP inputs')
+
+        for scene in scenes:
+            seq = scene['sequence']
+            records = records_by_sequence[seq]
+            metadata = read(first.prepared_root/seq/'metadata.json')
+            validate_activity_source(activity, seq, metadata)
+            for model in models:
+                if seq in getattr(model, 'config', {}).get('training_sequences', []):
+                    raise ValueError(f'Training sequence in evaluation video: {seq}')
+                model.reset()
+            targets = DepthTargets(args.depth_run, dataset, seq) if args.task == 'depth' else None
+            manifest['targets'][seq] = (targets.identity if targets else dict(
+                label_source=first.identity['label_source'], timestamp_policy='exact match; unavailable stays unavailable',
+                roots={key: value for key, value in first.config.items()
+                       if key in ('labels_root', 'target_cache_dir', 'target_root', 'extra_target_root')}))
+            height, width = first.frame_size
+            ymax = max(cutpoints[-1], max(r['event_rate_hz'] for r in records), 1) * 1.05
+            chart = activity_chart(3*width, scene, records, cutpoints, ymax)
+            destination = args.output/scene['id']
+            destination.mkdir()
+            video = destination/'comparison.mp4'
+
+            def frames(table):
+                inputs = prepared_frames(first.prepared_root, seq, first.cfg, dataset)
+                for count, (record, frame) in enumerate(zip_longest(records, inputs), 1):
+                    if (frame is None or record is None or record['timestamp'] != frame['timestamp']
+                            or record['previous_timestamp'] != frame['previous_timestamp']
+                            or record['event_count'] != frame['event_count']):
+                        raise ValueError(f'Prepared input/activity timeline differs at {seq}, frame {count}')
+                    stamp = record['timestamp']
+                    predictions = [model.step(frame) for model in models]
+                    if any(p is None or p.shape != first.frame_size or not np.isfinite(p).all() for p in predictions):
+                        raise ValueError(f'Missing/nonfinite prediction or changed geometry: {seq}/{stamp}')
+                    target, valid = None, None
+                    if targets:
+                        pair = targets.get(stamp)
+                        if pair is not None:
+                            target, valid = pair
+                    else:
+                        target = first.ground_truth(seq, stamp)
+                        for model in models[1:]:
+                            other = model.ground_truth(seq, stamp)
+                            if (other is None) != (target is None) or (target is not None and not np.array_equal(target, other)):
+                                raise ValueError(f'Models reference different Semantic GT: {seq}/{stamp}')
+                        for model in models:
+                            scored = getattr(model, 'scored_frame_indices', {}).get(seq)
+                            if scored is not None and (frame['frame_index'] in scored) != (target is not None):
+                                raise ValueError(f'Semantic GT coverage differs from evaluated frames: {seq}/{stamp}')
+                        if target is not None:
+                            valid = target != 255
+                    if valid is None:
+                        valid = np.zeros(first.frame_size, dtype=bool)
+                    rgb = rgb_frame(dataset, args.task, first.cfg, first.prepared_root, seq, stamp)
+                    events = event_frame(frame['events'], dataset, args.task)
+                    canvas, metrics = draw_frame(args.task, rgb, events, target, valid, predictions, labels,
+                        scene, stamp, record, records, cutpoints, font_path, args.depth_display_max, ymax, chart=chart)
+                    table.writerow([stamp, (stamp-scene['start_us'])/1e6, record['event_count'], record['window_us'],
+                                    record['event_rate_hz'], record['group'], target is not None, int(valid.sum()), *metrics])
+                    if count % 100 == 0:
+                        print(f'[comparison] {seq} {count}/{len(records)} | {" / ".join(labels)}', flush=True)
+                    yield canvas
+
+            with (destination/'frames.csv').open('x', newline='', encoding='utf-8') as stream:
+                table = csv.writer(stream)
+                table.writerow(['source_timestamp_us', 'video_time_s', 'event_count', 'window_us', 'event_rate_hz',
+                                'activity_group', 'gt_available', 'valid_pixels',
+                                *[c+('_frame_mIoU' if args.task == 'semantic' else '_frame_MAE_m') for c in conditions]])
+                canvases = frames(table)
+                first_frame = next(canvases)
+                size = first_frame.size
+                rgb_frames = (image.tobytes() for image in chain([first_frame], canvases))
+                encode_native_video(ffmpeg, video, scene['timestamps_us'], scene['end_us'], size, rgb_frames)
+            manifest['videos'][scene['id']] = dict(path=str(video.resolve()), original_frames=len(records),
+                duration_seconds=scene['duration_us']/1e6, terminal_duplicate=True, activity_axis_max_hz=ymax)
+            save(args.output/'manifest.json', manifest)
+            print(f'[comparison] saved: {video}', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenes', type=Path, required=True)
     parser.add_argument('--task', choices=('semantic', 'depth'), required=True)
-    parser.add_argument('--conditions', default='E0,E1,E2')
+    parser.add_argument('--conditions', help='Comma-separated condition IDs; full recordings default to E0,E1,E1_convlstm')
+    parser.add_argument('--sequence', help='Render one complete recording from a full-sequence plan')
     parser.add_argument('--depth-run', type=Path, default=ROOT/'outputs/stage2_common_depth_vkitti_20261110')
+    parser.add_argument('--temporal-depth-run', type=Path, help='Completed ConvLSTM Depth and DSEC Semantic run')
+    parser.add_argument('--convlstm-stage1-run', type=Path, help='ConvLSTM full pretraining output root')
+    parser.add_argument('--m3ed-convlstm-semantic-run', type=Path, help='Completed M3ED ConvLSTM Semantic run')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--teacher-checkpoint', type=Path)
     parser.add_argument('--font', type=Path)
     parser.add_argument('--depth-display-max', type=float, default=80)
     args = parser.parse_args()
-    conditions = args.conditions.split(',')
+    plan = read(args.scenes)
+    full = plan['selection'].get('mode') == 'full_sequences'
+    conditions = args.conditions.split(',') if args.conditions is not None else (
+        ['E0', 'E1', 'E1_convlstm'] if full else ['E0', 'E1', 'E2'])
     if not conditions or len(set(conditions)) != len(conditions) or any(c not in CONDITIONS for c in conditions):
-        parser.error('Choose unique common conditions: E0,E1,E2,E1_old_ddp,E1_new_ddp')
+        parser.error('Choose unique conditions: ' + ','.join(CONDITIONS))
     if not math.isfinite(args.depth_display_max) or args.depth_display_max <= 0:
         parser.error('depth-display-max must be positive and finite')
     if args.output.exists():
         raise FileExistsError('Existing comparison outputs are preserved; choose a fresh --output')
     from event_state.activity_quantiles import ActivityIndex, canonical_sha256
-    from event_state.evaluation.activity_scenes import eligible_sequences
+    from event_state.evaluation.activity_scenes import eligible_sequences, validate_full_sequence
     from event_state.evaluation.comparison_timing import validate_scene, write_concat, build_ffmpeg_command
-    plan = read(args.scenes)
     dataset = plan['dataset']
     if dataset not in ('dsec', 'm3ed') or (dataset == 'dsec' and plan['task'] != args.task):
         raise ValueError('DSEC Semantic test and Depth val scenes must remain task-specific')
@@ -237,6 +373,12 @@ def main():
         raise ValueError('Scene IDs must be unique safe directory names')
     max_gap = round(float(plan['selection']['max_gap_seconds'])*1e6)
     allowed, split_source = eligible_sequences(dataset, args.task)
+    if full and (plan['task'] != args.task or sorted(s['sequence'] for s in scenes) != sorted(allowed)):
+        raise ValueError('Full plan must include each evaluation recording exactly once')
+    if args.sequence is not None:
+        if not full or args.sequence not in allowed:
+            parser.error('--sequence must name one evaluation recording in a full-sequence plan')
+        scenes = [s for s in scenes if s['sequence'] == args.sequence]
     for scene in scenes:
         validate_scene(scene, max_gap_us=max_gap)
         if scene['sequence'] not in allowed:
@@ -248,11 +390,9 @@ def main():
     font_path, ffmpeg = cjk_font(args.font), ffmpeg_executable()
     import numpy as np
     import torch
-    from PIL import Image
     from event_state.activity_reporting import validate_activity_source
     from event_state.dense.source import prepared_frames
-    from event_state.evaluation.comparison_depth import DepthBackend, DepthTargets
-    from event_state.evaluation.comparison_semantic import SemanticBackend
+    from event_state.evaluation.comparison_depth import DepthTargets
     grouped = {}
     records_by_sequence = {}
     for scene in scenes:
@@ -260,6 +400,9 @@ def main():
         if scene['sequence'] not in records_by_sequence:
             records_by_sequence[scene['sequence']] = [activity.lookup(scene['sequence'], t)
                                                      for t in activity.timestamps(scene['sequence'])]
+        if full:
+            validate_full_sequence(scene, records_by_sequence[scene['sequence']])
+            continue
         # Demand the complete original input timeline, never an intersection of model frames.
         expected = [r['timestamp'] for r in records_by_sequence[scene['sequence']]
                     if scene['start_us'] <= r['timestamp'] < scene['end_us']]
@@ -273,8 +416,9 @@ def main():
                 any(b['previous_timestamp'] != a['timestamp'] for a, b in zip(intervals, intervals[1:]))):
             raise ValueError('Scene activity does not continuously cover its entire display interval')
     args.output.mkdir(parents=True)
-    for sequence in grouped:
-        (args.output/'assets'/sequence).mkdir(parents=True)
+    if not full:
+        for sequence in grouped:
+            (args.output/'assets'/sequence).mkdir(parents=True)
     manifest = dict(format_version=1, dataset=dataset, task=args.task, status='incomplete',
                     selection_file=str(args.scenes.resolve()), selection_sha256=canonical_sha256(plan),
                     source_activity=activity.identity, scenes=scenes, conditions=conditions,
@@ -282,13 +426,21 @@ def main():
                     timing='Native timestamps, VFR; one final duplicate at endpoint holds the final frame',
                     depth_display_max_m=args.depth_display_max, models={}, targets={}, videos={})
     save(args.output/'manifest.json', manifest)
+    if full:
+        try:
+            render_full_sequences(args, scenes, records_by_sequence, activity, manifest, font_path, ffmpeg)
+        except BaseException:
+            manifest['status'] = 'failed; partial outputs preserved'
+            save(args.output/'manifest.json', manifest)
+            raise
+        manifest['status'] = 'complete'
+        save(args.output/'manifest.json', manifest)
+        (args.output/'_SUCCESS').write_text('All requested full sequences rendered at native timestamps.\n')
+        return
     sources = {}
     try:
         for condition_number, condition in enumerate(conditions):
-            if args.task == 'semantic':
-                backend = SemanticBackend(dataset, condition, ROOT, args.teacher_checkpoint, args.device)
-            else:
-                backend = DepthBackend(dataset, condition, ROOT, args.depth_run, args.teacher_checkpoint, args.device)
+            backend = load_backend(args, dataset, condition)
             if args.task == 'semantic' and set(grouped).intersection(getattr(backend, 'config', {}).get('training_sequences', [])):
                 raise ValueError('A selected scene was used to train this Semantic head')
             print(f'[comparison] ready: {dataset}/{args.task} {backend.label}; one model on {args.device}', flush=True)

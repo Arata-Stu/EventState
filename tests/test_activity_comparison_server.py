@@ -1,6 +1,7 @@
 """Small CPU-only rendering checks; no checkpoints or dataset downloads."""
 import numpy as np
 from PIL import ImageFont
+import pytest
 
 from tools.render_activity_comparison import depth_color, draw_frame, frame_metric, semantic_color
 
@@ -49,7 +50,8 @@ def test_missing_gt_still_draws_predictions_and_native_source_time(tmp_path):
     assert not np.array_equal(pixels[32+42+50, 5], (0, 0, 0))
 
 
-def test_renderer_replays_prefix_and_keeps_all_scene_inputs_with_missing_gt(tmp_path, monkeypatch):
+@pytest.mark.parametrize("full", [False, True])
+def test_renderer_replays_prefix_and_keeps_all_scene_inputs_with_missing_gt(tmp_path, monkeypatch, full):
     import json
     from types import SimpleNamespace
     import torch
@@ -79,7 +81,9 @@ def test_renderer_replays_prefix_and_keeps_all_scene_inputs_with_missing_gt(tmp_
     class Backend:
         def __init__(self, dataset, condition, *args):
             self.condition=condition;self.label=condition+' Encoder LSTM h'
-            self.identity={'condition_label':self.label,'label_source':'fixture'};self.cfg=object();self.config={}
+            self.identity={'condition_label':self.label,'label_source':'fixture'}
+            self.cfg=SimpleNamespace(dataset=SimpleNamespace(representation=SimpleNamespace(percentile=99)))
+            self.config={}
             self.prepared_root=prepared;self.frame_size=(352,640);calls[condition]=[]
         def reset(self): pass
         def close(self): pass
@@ -87,7 +91,8 @@ def test_renderer_replays_prefix_and_keeps_all_scene_inputs_with_missing_gt(tmp_
         def step(self, frame, predict=True):
             calls[self.condition].append((frame['frame_index'],predict))
             return np.full(self.frame_size,8,dtype=np.uint8) if predict else None
-    monkeypatch.setattr(comparison_semantic, 'SemanticBackend', Backend)
+    monkeypatch.setattr(comparison_semantic, 'SemanticBackend',
+                        lambda dataset, condition, *a, **kw: Backend(dataset, condition))
     def frames(*args):
         for i,t in enumerate(stamps,1):
             yield dict(sequence_name=sequence,frame_index=i,timestamp=t,previous_timestamp=t-50000,
@@ -103,14 +108,36 @@ def test_renderer_replays_prefix_and_keeps_all_scene_inputs_with_missing_gt(tmp_
     plan={'dataset':'m3ed','task':'semantic','activity_manifest':'fixture',
           'activity_manifest_sha256':'fixture','status':'complete','shortfalls':[],
           'selection':{'max_gap_seconds':0.25},'scenes':[scene]}
+    args = []
+    if full:
+        from event_state.evaluation import full_video
+        scene.update(id='fixture_full', kind='full_sequence', start_us=stamps[0], end_us=300000,
+                     duration_us=250000, timestamps_us=stamps, frames=5,
+                     terminal_hold_us=50000, warmup_frames_before_start=0)
+        plan['selection']['mode'] = 'full_sequences'
+        other = dict(scene, sequence='car_urban_day_rittenhouse', id='other')
+        plan['scenes'] = [scene, other]
+        args = ['--sequence', sequence, '--conditions', 'E0,E1,E1_convlstm']
+        def encode_full(ffmpeg, path, ts, end, size, images):
+            assert ts == stamps and end == 300000 and size[0] == 1920
+            assert all(len(pixels) == size[0]*size[1]*3 for pixels in images)
+            path.write_bytes(b'encoder fixture')
+        monkeypatch.setattr(full_video, 'encode_native_video', encode_full)
     selection=tmp_path/'scenes.json';selection.write_text(json.dumps(plan))
     output=tmp_path/'comparison'
     monkeypatch.setattr(renderer.sys,'argv',['renderer','--scenes',str(selection),
-        '--task','semantic','--output',str(output),'--device','cpu'])
+        '--task','semantic','--output',str(output),'--device','cpu', *args])
     renderer.main()
     assert (output/'_SUCCESS').exists()
-    assert all(value==[(1,False),(2,True),(3,True),(4,True)] for value in calls.values())
     result=json.loads((output/'manifest.json').read_text())
+    if full:
+        assert result['conditions'] == ['E0','E1','E1_convlstm']
+        assert all(value == [(i, True) for i in range(1,6)] for value in calls.values())
+        assert result['videos']['fixture_full']['original_frames'] == 5
+        assert not (output/'predictions').exists() and not (output/'assets').exists()
+        assert not (output/'other').exists() and not list(output.rglob('*.png'))
+        return
+    assert all(value==[(1,False),(2,True),(3,True),(4,True)] for value in calls.values())
     assert result['status']=='complete' and result['videos']['fixture_low']['original_frames']==3
     assert len(list((output/'fixture_low').glob('*.png')))==3
     import csv

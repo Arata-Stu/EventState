@@ -32,7 +32,7 @@ class DepthBackend:
     """One frozen, already evaluated four-stage Depth model; never train a head."""
 
     def __init__(self, dataset, condition, project_root, depth_run,
-                 teacher_checkpoint=None, device="cuda"):
+                 teacher_checkpoint=None, device="cuda", *, temporal_run=None, temporal_stage1=None):
         from tools import run_common_depth
         from event_state.dense.benchmark_inference import DepthPredictor
 
@@ -40,20 +40,28 @@ class DepthBackend:
         self.condition = condition
         self.project_root = Path(project_root).expanduser().resolve()
         self.depth_run = _resolve(self.project_root, depth_run)
-        matches = [spec for spec in run_common_depth.CONDITIONS if spec[0] == condition]
-        if len(matches) != 1:
-            raise ValueError(f"Unknown common Depth condition: {condition}")
-        specification = matches[0]
-        self.label = specification[1]
-        # Reuse the authoritative condition/step lookup while permitting a
-        # caller's checkout root, rather than the module's imported checkout.
-        relative = run_common_depth.checkpoint(dataset, specification).relative_to(run_common_depth.ROOT)
-        backbone = self.project_root / relative
+        if condition == "E1_convlstm":
+            from tools.temporal_downstream_semantic import LABEL
+            self.depth_run = _resolve(self.project_root, temporal_run or "outputs/stage2_temporal_remaining_20261117")
+            stage1 = _resolve(self.project_root, temporal_stage1 or "outputs/stage1_temporal_full_20261115")
+            backbone = stage1 / f"{dataset}_E1_convlstm_w1/checkpoints/step_00099999.pt"
+            self.label = LABEL
+        else:
+            matches = [spec for spec in run_common_depth.CONDITIONS if spec[0] == condition]
+            if len(matches) != 1:
+                raise ValueError(f"Unknown common Depth condition: {condition}")
+            specification = matches[0]
+            self.label = specification[1]
+            relative = run_common_depth.checkpoint(dataset, specification).relative_to(run_common_depth.ROOT)
+            backbone = self.project_root / relative
         teacher = _resolve(self.project_root, teacher_checkpoint) if teacher_checkpoint else None
         name = f"{dataset}_{condition}"
         self.predictor = DepthPredictor(self.depth_run, name, "stages", device,
                                         teacher_weights=teacher, backbone=backbone)
         self.cfg = self.predictor.cfg
+        if condition == "E1_convlstm":
+            from tools.run_temporal_downstream import validate_backbone_config
+            validate_backbone_config(self.cfg, self.dataset)
         prepared = self.cfg.dataset.get("event_cache_dir") or self.cfg.dataset.get("prepared_root")
         if not prepared:
             raise ValueError("Depth checkpoint has no prepared event source")

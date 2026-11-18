@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>EventState 評価動画</title>
+<style>
+:root { color-scheme: dark; font-family: Inter, "Hiragino Sans", "Noto Sans CJK JP", sans-serif; background: #111618; color: #edf2ef; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1540px; margin: auto; padding: 18px clamp(12px, 3vw, 46px) 24px; }
+header, .graph-title, .controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1, h2, p { margin: 0; }
+h1 { font-weight: 650; font-size: clamp(18px, 2vw, 24px); }
+h2 { font-weight: 550; font-size: 15px; }
+nav, .steps, .measurements, .timing { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+nav label { color: #bac7c1; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+select, button { font-family: inherit; color: #edf2ef; background: #202a29; border: 1px solid #465451; border-radius: 5px; padding: 5px 8px; font-size: 13px; }
+select { max-width: 100%; }
+button { cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+a { color: #9ddfc9; font-size: 13px; }
+:focus-visible { outline: 2px solid #8adfc1; outline-offset: 3px; }
+video { display: block; margin: 12px 0 8px; width: 100%; height: min(57vh, 64vw); min-height: 200px; background: #050707; }
+.controls { font-size: 13px; color: #c5cfca; }
+.timing { gap: 15px; }
+.number, output { font-variant-numeric: tabular-nums; }
+.chart-section { margin: 14px 0 12px; padding: 11px 13px 7px; border-radius: 7px; border: 1px solid #3e4b48; background: #1a2222; }
+.measurements { font-size: 13px; gap: 14px; color: #c9d7d0; }
+.measurements strong { color: #a6ebcd; font-weight: 550; }
+.plot { position: relative; margin-top: 4px; height: clamp(108px, 15vh, 155px); touch-action: none; cursor: crosshair; }
+canvas { display: block; width: 100%; height: 100%; }
+#playhead { position: absolute; width: 2px; top: 10px; bottom: 26px; background: #ffd07b; pointer-events: none; }
+#playhead::before { content: ""; position: absolute; top: -2px; left: -3px; border: 4px solid transparent; border-top-color: #ffd07b; }
+.hint, .conditions { font-size: 12px; color: #aebcb6; line-height: 1.6; }
+#error { margin: 10px 0; color: #ffd6a7; }
+@media (max-width: 700px) {
+  main { padding: 11px 9px 16px; }
+  header, nav { align-items: flex-start; }
+  nav, nav label { max-width: 100%; }
+  video { min-height: 0; height: auto; max-height: 60vh; aspect-ratio: 16 / 9; }
+  .chart-section { padding: 8px; }
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>EventState 評価動画</h1>
+  <nav aria-label="動画の選択">
+    <label>データセット <select id="dataset"></select></label>
+    <label>タスク <select id="task"></select></label>
+    <label>系列 <select id="sequence"></select></label>
+  </nav>
+</header>
+<p id="error" role="alert" hidden></p>
+<video id="player" controls playsinline preload="metadata" aria-label="モデル予測の比較動画"></video>
+<div class="controls">
+  <div class="steps">
+    <button type="button" id="previous">← 前のコマ</button>
+    <button type="button" id="next">次のコマ →</button>
+  </div>
+  <div class="timing">
+    <output id="frame"></output><output id="time"></output><output id="stamp"></output>
+    <a id="csv">フレーム別 CSV</a>
+  </div>
+</div>
+<section class="chart-section" aria-labelledby="graph-title">
+  <div class="graph-title">
+    <h2 id="graph-title">イベント発生率 <span class="hint">（百万イベント/秒）</span></h2>
+    <div class="measurements"><strong id="rate" class="number"></strong><span id="count" class="number"></span></div>
+  </div>
+  <div id="plot" class="plot" role="slider" tabindex="0" aria-label="系列全体のイベント発生率と再生位置" aria-valuemin="0">
+    <canvas id="chart" aria-hidden="true"></canvas><span id="playhead"></span>
+  </div>
+  <p class="hint">波形をクリック・ドラッグして移動。波形を選んで ← → で1コマ、Home / End で先頭・末尾。</p>
+</section>
+<p id="conditions" class="conditions"></p>
+</main>
+<script id="review-data" type="application/json">__REVIEW_DATA__</script>
+<script>
+"use strict";
+const data = JSON.parse(document.getElementById("review-data").textContent);
+const byId = id => document.getElementById(id);
+const player = byId("player"), plot = byId("plot"), canvas = byId("chart");
+const sets = byId("dataset"), tasks = byId("task"), sequences = byId("sequence");
+const margin = {left: 52, right: 12, top: 10, bottom: 26};
+const labels = {dsec: "DSEC", m3ed: "M3ED", semantic: "Semantic", depth: "Depth"};
+const integer = new Intl.NumberFormat("ja-JP");
+let current, cursor = 0, drag = null, frameCallback = null;
+let pendingFrame = null;
+
+function elapsed(i) {
+  return (current.timestamps_us[i] - current.timestamps_us[0]) / 1e6;
+}
+
+function frameAt(seconds) {
+  // Input timestamp intervals are half-open. A sub-microsecond tolerance
+  // accommodates seconds expressed as a JavaScript floating-point number.
+  const stamps = current.timestamps_us;
+  const target = stamps[0] + Math.round(seconds * 1e6);
+  let start = 0, end = stamps.length;
+  while (start < end) {
+    const mid = Math.floor((start + end) / 2);
+    if (stamps[mid] <= target) start = mid + 1;
+    else end = mid;
+  }
+  return Math.max(0, start - 1);
+}
+
+function limits() {
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  return {width, height, graphWidth: Math.max(1, width - margin.left - margin.right),
+          graphHeight: Math.max(1, height - margin.top - margin.bottom)};
+}
+
+function updateCursor(seconds = player.currentTime, exactFrame = null) {
+  if (!current) return;
+  seconds = Math.max(0, Math.min(current.duration_seconds, seconds || 0));
+  cursor = exactFrame === null ? frameAt(seconds) : exactFrame;
+  const total = current.timestamps_us.length;
+  byId("frame").textContent = "コマ " + integer.format(cursor + 1) + " / " + integer.format(total);
+  byId("time").textContent = seconds.toFixed(3) + " / " + current.duration_seconds.toFixed(3) + " 秒";
+  byId("stamp").textContent = "元時刻 " + current.timestamps_us[cursor] + " µs";
+  byId("rate").textContent = (current.rates_hz[cursor] / 1e6).toFixed(3) + " 百万イベント/秒";
+  const haveCounts = current.event_counts && current.window_us;
+  byId("count").textContent = haveCounts ? integer.format(current.event_counts[cursor]) +
+      " イベント / " + (current.window_us[cursor] / 1000).toFixed(3) + " ms" : "";
+  byId("previous").disabled = cursor === 0;
+  byId("next").disabled = cursor === total - 1;
+  byId("playhead").style.left = (margin.left + seconds / current.duration_seconds * limits().graphWidth) + "px";
+  plot.setAttribute("aria-valuenow", seconds.toFixed(3));
+  plot.setAttribute("aria-valuetext", seconds.toFixed(3) + "秒、" + (cursor + 1) + "コマ目");
+}
+
+function renderGraph() {
+  if (!current) return;
+  const {width, height, graphWidth, graphHeight} = limits();
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(ratio, ratio);
+  const rates = current.rates_hz, duration = current.duration_seconds;
+  const peak = rates.reduce((maximum, rate) => Math.max(maximum, rate), 0);
+  const yMax = peak > 0 ? peak * 1.03 : 1e6;
+  const x = time => margin.left + graphWidth * time / duration;
+  const y = rate => margin.top + graphHeight * (1 - rate / yMax);
+  ctx.font = "11px sans-serif";
+  ctx.strokeStyle = "#40504b"; ctx.fillStyle = "#becbc5";
+  for (let i = 0; i <= 3; i++) {
+    const rate = yMax * i / 3;
+    ctx.beginPath(); ctx.moveTo(margin.left, y(rate)); ctx.lineTo(width - margin.right, y(rate)); ctx.stroke();
+    ctx.textAlign = "right"; ctx.fillText((rate / 1e6).toFixed(2), margin.left - 6, y(rate) + 4);
+  }
+  const ticks = width > 550 ? 6 : 3;
+  for (let i = 0; i <= ticks; i++) {
+    const time = duration * i / ticks;
+    ctx.textAlign = i === ticks ? "right" : (i === 0 ? "left" : "center");
+    ctx.fillText(time.toLocaleString("ja-JP", {maximumFractionDigits: duration < 10 ? 2 : 1}) + " 秒",
+                 x(time), height - 6);
+  }
+  // Keep the first, last and extrema within each screen pixel in time order.
+  // Short peaks and troughs remain visible even for long recordings.
+  ctx.beginPath();
+  let first = 0, started = false;
+  while (first < rates.length) {
+    const column = Math.floor(x(elapsed(first)));
+    let end = first + 1, low = first, high = first;
+    while (end < rates.length && Math.floor(x(elapsed(end))) === column) {
+      if (rates[end] < rates[low]) low = end;
+      if (rates[end] > rates[high]) high = end;
+      end++;
+    }
+    for (const index of [...new Set([first, low, high, end - 1])].sort((a, b) => a - b)) {
+      if (started) ctx.lineTo(x(elapsed(index)), y(rates[index]));
+      else { ctx.moveTo(x(elapsed(index)), y(rates[index])); started = true; }
+    }
+    first = end;
+  }
+  ctx.lineTo(x(duration), y(rates[rates.length - 1]));
+  ctx.strokeStyle = "#83dabe"; ctx.lineWidth = 1.5; ctx.stroke();
+  if (pendingFrame === null) updateCursor(player.currentTime);
+  else updateCursor(elapsed(pendingFrame), pendingFrame);
+}
+
+function updateFromMedia() {
+  if (pendingFrame !== null || drag) return;
+  updateCursor(player.currentTime);
+}
+
+function stopWatching() {
+  if (frameCallback !== null && player.cancelVideoFrameCallback) player.cancelVideoFrameCallback(frameCallback);
+  frameCallback = null;
+}
+
+function watchFrames() {
+  stopWatching();
+  if (!player.requestVideoFrameCallback || player.paused || player.ended) return;
+  frameCallback = player.requestVideoFrameCallback((now, info) => {
+    frameCallback = null;
+    if (!player.paused && !player.ended && pendingFrame === null && !drag) updateCursor(info.mediaTime);
+    watchFrames();
+  });
+}
+
+function seekFrame(index) {
+  index = Math.max(0, Math.min(current.timestamps_us.length - 1, index));
+  player.pause();
+  pendingFrame = index;
+  const seconds = elapsed(index);
+  if (player.readyState >= 1) player.currentTime = seconds;
+  updateCursor(seconds, index);
+}
+
+function step(offset) { if (current) seekFrame((pendingFrame ?? cursor) + offset); }
+byId("previous").addEventListener("click", () => step(-1));
+byId("next").addEventListener("click", () => step(1));
+
+function pointerSeek(event) {
+  const position = event.clientX - canvas.getBoundingClientRect().left - margin.left;
+  const fraction = Math.max(0, Math.min(1, position / limits().graphWidth));
+  seekFrame(frameAt(fraction * current.duration_seconds));
+}
+plot.addEventListener("pointerdown", event => {
+  if (!current || drag || event.button !== 0) return;
+  drag = {id: event.pointerId, resume: !player.paused};
+  plot.focus(); plot.setPointerCapture(event.pointerId);
+  pointerSeek(event);
+});
+plot.addEventListener("pointermove", event => {
+  if (drag && drag.id === event.pointerId) pointerSeek(event);
+});
+function endDrag(event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  const resume = drag.resume;
+  drag = null;
+  if (plot.hasPointerCapture(event.pointerId)) plot.releasePointerCapture(event.pointerId);
+  if (resume) player.play().catch(() => {});
+}
+plot.addEventListener("pointerup", endDrag);
+plot.addEventListener("pointercancel", endDrag);
+plot.addEventListener("keydown", event => {
+  if (!current) return;
+  if (event.key === "ArrowLeft") step(-1);
+  else if (event.key === "ArrowRight") step(1);
+  else if (event.key === "Home") seekFrame(0);
+  else if (event.key === "End") seekFrame(current.timestamps_us.length - 1);
+  else return;
+  event.preventDefault();
+});
+player.addEventListener("loadedmetadata", () => {
+  if (pendingFrame !== null) player.currentTime = elapsed(pendingFrame);
+  else updateFromMedia();
+});
+player.addEventListener("seeked", () => {
+  if (pendingFrame !== null && Math.abs(player.currentTime - elapsed(pendingFrame)) < .0001) {
+    const index = pendingFrame;
+    pendingFrame = null;
+    updateCursor(elapsed(index), index);
+  } else {
+    pendingFrame = null;
+    updateFromMedia();
+  }
+});
+player.addEventListener("play", () => { pendingFrame = null; watchFrames(); });
+player.addEventListener("pause", () => { stopWatching(); updateFromMedia(); });
+player.addEventListener("timeupdate", () => {
+  if (player.paused || !player.requestVideoFrameCallback) updateFromMedia();
+});
+player.addEventListener("ended", () => { stopWatching(); updateFromMedia(); });
+player.addEventListener("error", () => {
+  byId("error").textContent = "動画を開けません。index.html と同じフォルダー構成で MP4 が保存されているか確認してください。";
+  byId("error").hidden = false;
+});
+
+function options(select, values, names, previous) {
+  select.replaceChildren(...values.map(value => new Option(names[value] || value, value)));
+  select.value = values.includes(previous) ? previous : values[0];
+}
+function selectSequence() {
+  const selected = data.videos.find(video => video.dataset === sets.value &&
+      video.task === tasks.value && video.sequence === sequences.value);
+  const keepSourceTime = current && current.dataset === selected.dataset &&
+      current.sequence === selected.sequence && current.task !== selected.task;
+  const sourceTime = keepSourceTime ? current.timestamps_us[pendingFrame ?? cursor] : null;
+  stopWatching(); player.pause(); pendingFrame = null; drag = null;
+  current = selected;
+  byId("error").hidden = true;
+  byId("csv").href = current.frames_csv;
+  plot.setAttribute("aria-valuemax", current.duration_seconds.toFixed(3));
+  player.src = current.src;
+  renderGraph();
+  if (sourceTime === null) updateCursor(0, 0);
+  else seekFrame(frameAt((sourceTime - current.timestamps_us[0]) / 1e6));
+}
+function selectTask() {
+  const items = data.videos.filter(video => video.dataset === sets.value && video.task === tasks.value);
+  options(sequences, items.map(video => video.sequence), {}, sequences.value);
+  selectSequence();
+}
+function selectDataset() {
+  const items = data.videos.filter(video => video.dataset === sets.value);
+  options(tasks, [...new Set(items.map(video => video.task))], labels, tasks.value);
+  selectTask();
+}
+
+if (data.videos.length) {
+  byId("conditions").textContent = "比較条件　" + data.conditions.join("　／　");
+  options(sets, [...new Set(data.videos.map(video => video.dataset))], labels, "");
+  sets.addEventListener("change", selectDataset);
+  tasks.addEventListener("change", selectTask);
+  sequences.addEventListener("change", selectSequence);
+  selectDataset();
+  new ResizeObserver(renderGraph).observe(plot);
+} else {
+  byId("error").textContent = "閲覧できる評価動画がありません。";
+  byId("error").hidden = false;
+}
+</script>
+</body>
+</html>

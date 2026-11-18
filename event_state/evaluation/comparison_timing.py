@@ -5,10 +5,14 @@ All durations are formatted from integer microseconds without float rounding.
 """
 from __future__ import annotations
 
+from fractions import Fraction
+import json
 from numbers import Integral
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 
 
 _SAFE_PNG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.png\Z")
@@ -111,3 +115,61 @@ def build_ffmpeg_command(exe, concat_path, output_path):
             "-c:v", "libx264", "-x264-params", "fps=20/1:force-cfr=0",
             "-bf", "0", "-pix_fmt", "yuv420p",
             "-video_track_timescale", "1000000", "-movflags", "+faststart", str(output)]
+
+
+def ffmpeg_executable():
+    executable = shutil.which("ffmpeg")
+    if executable:
+        return executable
+    import imageio_ffmpeg
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _encoded_packet_timestamps(video):
+    probe = shutil.which("ffprobe")
+    if probe:
+        command = [probe, "-v", "error", "-select_streams", "v:0", "-show_packets",
+                   "-show_entries", "packet=pts:stream=time_base", "-of", "json", str(video)]
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        report = json.loads(result.stdout)
+        if len(report.get("streams", [])) != 1:
+            raise ValueError(f"Expected a video stream in {video}")
+        return report["streams"][0]["time_base"], [int(p["pts"]) for p in report.get("packets", [])]
+
+    # Stream-copy into a packet log so the imageio-distributed ffmpeg binary can
+    # verify real PTS without an ffprobe installation or decoding the recording.
+    command = [ffmpeg_executable(), "-nostdin", "-v", "error", "-copyts", "-i", str(video),
+               "-map", "0:v:0", "-c:v", "copy", "-copytb", "1", "-avoid_negative_ts", "disabled",
+               "-f", "framecrc", "-"]
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    lines = result.stdout.splitlines()
+    for line in lines:
+        if line.startswith("#tb 0:"):
+            time_base = line.split(":", 1)[1].strip()
+            break
+    else:
+        raise ValueError(f"Missing video stream time base in packet log for {video}")
+    # framecrc packet columns are stream index, DTS, PTS, duration, size, CRC.
+    return time_base, [int(line.split(",", 3)[2]) for line in lines if line and not line.startswith("#")]
+
+
+def verify_video_timestamps(video: Path, timestamps_us: list[int], end_us: int):
+    """Inspect encoded packet PTS without decoding this renderer's B-frame-free video."""
+    if not timestamps_us:
+        raise ValueError("Video validation needs at least one native source timestamp")
+    end = _integer(end_us, "end_us")
+    start = _integer(timestamps_us[0], "first source timestamp")
+    stamps = validate_scene(dict(start_us=start, end_us=end, timestamps_us=timestamps_us),
+                            max_gap_us=end-start)
+    time_base, pts = _encoded_packet_timestamps(Path(video).resolve())
+    if len(pts) != len(stamps) + 1:
+        raise ValueError(f"{video}: expected {len(stamps) + 1} video packets including the endpoint, got {len(pts)}")
+    units = Fraction(time_base) * 1_000_000
+    if units <= 0:
+        raise ValueError(f"Invalid video time base {time_base}")
+    for number, (tick, source) in enumerate(zip(pts, (*stamps, end))):
+        expected = source - start
+        if tick * units.numerator != expected * units.denominator:
+            raise ValueError(f"{video}: packet {number} PTS {tick} at {time_base} differs from expected {expected} us")
+    return dict(native_frames=len(stamps), encoded_packets=len(pts), first_pts_us=0,
+                terminal_pts_us=end-start, time_base=time_base)

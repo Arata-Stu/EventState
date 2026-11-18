@@ -156,7 +156,8 @@ class SemanticTargets:
 class SemanticBackend:
     """One frozen common checkpoint/head pair, with continuous state."""
 
-    def __init__(self, dataset, condition, project_root, teacher_checkpoint=None, device='cuda'):
+    def __init__(self, dataset, condition, project_root, teacher_checkpoint=None, device='cuda',
+                 *, temporal_run=None, temporal_stage1=None, m3ed_temporal_semantic=None):
         import numpy as np
         import torch
         from omegaconf import OmegaConf
@@ -164,17 +165,28 @@ class SemanticBackend:
         from event_state.segmentation import EventStateSegmentationHead
         from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
         from tools import run_common_depth, run_semantic_depth_activity
+        from tools.temporal_downstream_semantic import LABEL as convlstm_label
 
         self.dataset = str(dataset).lower()
         self.condition = condition
         self.project_root = Path(project_root).expanduser().resolve()
         condition_info = {c: (label, feature) for c, label, feature in run_semantic_depth_activity.CONDITIONS}
+        condition_info['E1_convlstm'] = (convlstm_label, 'h')
         if self.dataset not in ('dsec', 'm3ed') or condition not in condition_info:
             raise ValueError('Expected a DSEC/M3ED common E0/E1/E2/DDP condition')
         self.label, self.feature = condition_info[condition]
-        relative = run_semantic_depth_activity.semantic_run(self.dataset, condition).relative_to(
-            run_semantic_depth_activity.ROOT)
-        run = self.project_root / relative
+        if condition == 'E1_convlstm':
+            if self.dataset == 'm3ed':
+                run = _resolve(m3ed_temporal_semantic or 'outputs/stage2_m3ed_semantic_convlstm_20261117', self.project_root)
+                activity_report = run / 'h/activity_groups.json'
+            else:
+                run = _resolve(temporal_run or 'outputs/stage2_temporal_remaining_20261117', self.project_root) / 'dsec_semantic'
+                activity_report = run / 'activity_test.json'
+        else:
+            relative = run_semantic_depth_activity.semantic_run(self.dataset, condition).relative_to(
+                run_semantic_depth_activity.ROOT)
+            run = self.project_root / relative
+            activity_report = self.project_root / 'outputs/semantic_depth_activity_20261110/semantic' / f'{self.dataset}_{condition}.json'
         head_dir = run / (self.feature if self.dataset == 'm3ed' else 'final')
         self.head_path = head_dir / ('best.pt' if self.dataset == 'm3ed' else 'last.pt')
         if not self.head_path.is_file() or not self.head_path.stat().st_size:
@@ -193,6 +205,7 @@ class SemanticBackend:
             raise FileNotFoundError(f'No Semantic feature metadata to audit: {cache}')
         expected_hashes = set()
         paths = set()
+        self.scored_frame_indices = {}
         for sequence, value in metadata.items():
             if (value.get('task') != self.dataset + '_semantic' or
                     value.get('state_policy') != 'continuous' or
@@ -201,11 +214,16 @@ class SemanticBackend:
                     self.feature not in value.get('features', [])):
                 raise ValueError(f'Incompatible Semantic cache metadata: {cache / sequence}')
             expected_hashes.add(value['checkpoint_sha256'])
+            if 'cached_frame_indices' in value:
+                self.scored_frame_indices[sequence] = frozenset(value['cached_frame_indices'])
             if value.get('checkpoint'):
                 paths.add(_resolve(value['checkpoint'], self.project_root))
         if len(expected_hashes) != 1 or len(paths) > 1:
             raise ValueError('Semantic cache mixes backbone checkpoints')
-        if paths:
+        if condition == 'E1_convlstm':
+            stage1 = _resolve(temporal_stage1 or 'outputs/stage1_temporal_full_20261115', self.project_root)
+            self.backbone_path = stage1 / f'{self.dataset}_E1_convlstm_w1/checkpoints/step_00099999.pt'
+        elif paths:
             self.backbone_path = next(iter(paths))
         else:
             spec = next(v for v in run_common_depth.CONDITIONS if v[0] == condition)
@@ -214,13 +232,15 @@ class SemanticBackend:
         backbone_sha = _sha256(self.backbone_path)
         if backbone_sha != next(iter(expected_hashes)):
             raise ValueError('Semantic cache/backbone SHA256 mismatch')
-        activity_report = self.project_root / 'outputs/semantic_depth_activity_20261110/semantic' / f'{self.dataset}_{condition}.json'
         evaluated = _read(activity_report)['activity_evaluation']
         head_sha = _sha256(self.head_path)
         if evaluated.get('condition_label') != self.label or evaluated.get('head_sha256') != head_sha:
             raise ValueError('Semantic head differs from the completed activity evaluation')
         raw = copy.deepcopy(load_checkpoint_config_metadata(self.backbone_path).config)
         audit_common(raw)
+        if condition == 'E1_convlstm':
+            from tools.run_temporal_downstream import validate_backbone_config
+            validate_backbone_config(raw, self.dataset)
         self.cfg = OmegaConf.create(raw)
         if (self.cfg.dataset.name != self.dataset or
                 self.cfg.dataset.representation.type != 'gep_rgb' or

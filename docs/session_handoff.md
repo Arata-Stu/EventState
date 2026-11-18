@@ -2,6 +2,12 @@
 
 最終更新: 2026-11-18
 
+2026-11-18 定性評価：ユーザーは低活動区間の抽出に加え、全評価系列を通しで見て時間モデルの寄与を確認したい。
+DSEC Semantic公式test3・Depth公開val4、M3ED Semantic/Depth公開val各2を対象とし、9走行・11動画。
+E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM、E1 Encoder＋LSTM（h蒸留）・ConvLSTMを同時表示する。
+`tools/render_full_evaluation.py` が動画と、全時刻のイベント発生率の折れ線からシークできる閲覧用index.htmlを生成する。
+既定出力 `outputs/full_sequence_review_20261118/`。手順は `docs/activity_comparison_videos.md`。実データの全編動画は未生成。
+
 2026-11-18 サーバー続報：main bdd081f→5fb08a9へpull後、残り3ジョブをGPU0/1/2で並列起動（台帳§96）。
 preflightで入力26,548file照合、空き3GPU、scratch983.4GiB、予約Semantic9.8/M3ED Depth119.2/DSEC Depth99.6GiBを確認。
 貼付末尾ではGPU0のDSEC Semanticが開発→refit→test/活動5分位までcompleted。新mIoU値はまだ未受領。

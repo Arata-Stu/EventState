@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 from event_state.activity_quantiles import M3ED_SOURCE_CONTRACT, build_activity_manifest
 from event_state.evaluation.activity_scenes import (
-    continuous_blocks, eligible_sequences, select_scenes, window_candidates,
+    continuous_blocks, eligible_sequences, select_full_sequences, select_scenes,
+    validate_full_sequence, window_candidates,
 )
 
 
@@ -86,6 +87,60 @@ class ActivitySceneTests(unittest.TestCase):
         self.assertIn(600_000,scene["timestamps_us"])
         self.assertEqual(scene["frames"],10)
         self.assertAlmostEqual(scene["low_fraction"],.9)
+
+    def test_full_sequences_cover_all_evaluation_splits_and_preserve_every_frame(self):
+        expected_counts = {("dsec", "semantic"): 3, ("dsec", "depth"): 4,
+                           ("m3ed", "semantic"): 2, ("m3ed", "depth"): 2}
+        for (dataset, task), count in expected_counts.items():
+            with self.subTest(dataset=dataset, task=task):
+                path, payload, eligible = self.manifest(dataset=dataset, task=task)
+                plan = select_full_sequences(path, dataset=dataset, task=task)
+                self.assertEqual(plan["status"], "complete")
+                self.assertEqual(plan["counts"], {"full_sequence": count})
+                self.assertEqual(plan["selection"]["eligible_sequences"], list(eligible))
+                self.assertEqual([s["sequence"] for s in plan["scenes"]], list(eligible))
+                for scene in plan["scenes"]:
+                    records = [r for r in payload["records"] if r["sequence"] == scene["sequence"]]
+                    self.assertEqual(scene["timestamps_us"], [r["timestamp"] for r in records])
+                    self.assertEqual(scene["warmup_frames_before_start"], 0)
+                    self.assertEqual(scene["start_us"], records[0]["timestamp"])
+                    self.assertEqual(scene["end_us"], records[-1]["timestamp"] + records[-1]["window_us"])
+                    shorter = dict(scene, timestamps_us=scene["timestamps_us"][:-1])
+                    with self.assertRaisesRegex(ValueError, "every native input"):
+                        validate_full_sequence(shorter, records)
+
+    def test_full_sequence_keeps_long_observed_intervals_and_weights_activity_by_observed_time(self):
+        first = eligible_sequences("dsec", "semantic")[0][0]
+        data = rows(first, [0, 40, 9], durations=[50_000, 400_000, 100_000])
+        path, _, _ = self.manifest(custom={first: data})
+        plan = select_full_sequences(path, dataset="dsec", task="semantic")
+        scene = plan["scenes"][0]
+        self.assertEqual(scene["timestamps_us"], [50_000, 450_000, 550_000])
+        self.assertEqual(scene["terminal_hold_us"], 100_000)
+        self.assertEqual(scene["end_us"], 650_000)
+        self.assertEqual(plan["selection"]["max_gap_seconds"], .4)
+        self.assertAlmostEqual(scene["low_fraction"], 50_000/550_000)
+        self.assertAlmostEqual(scene["high_fraction"], 500_000/550_000)
+
+    def test_full_sequence_rejects_missing_input_interval(self):
+        first = eligible_sequences("dsec", "semantic")[0][0]
+        data = rows(first, [1, 2, 3])
+        path, _, _ = self.manifest(custom={first: [data[0], data[2]]})
+        with self.assertRaisesRegex(ValueError, "Discontinuous input timeline"):
+            select_full_sequences(path, dataset="dsec", task="semantic")
+
+    def test_full_sequences_cli_rejects_partial_window_options(self):
+        path, _, _ = self.manifest()
+        output = self.directory / "full.json"
+        command = [sys.executable, "-S", str(ROOT / "tools/select_activity_scenes.py"),
+                   "--activity-manifest", str(path), "--dataset", "dsec", "--task", "semantic",
+                   "--full-sequences", "--output", str(output)]
+        failed = subprocess.run([*command, "--per-kind", "1"], text=True, capture_output=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertFalse(output.exists())
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(output.read_text())["counts"]["full_sequence"], 3)
 
     def test_duration_weighting_differs_from_frame_fraction(self):
         data = rows("sequence",[1,4,4,10,10],[100_000,400_000,400_000,100_000,100_000])

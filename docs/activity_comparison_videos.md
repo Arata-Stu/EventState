@@ -1,4 +1,42 @@
-# 活動量で選ぶ連続シーンのSemantic・Depth比較動画
+# Semantic・Depthの全評価動画とイベント活動量
+
+## 11月18日の全編レビュー
+
+1つの走行を先頭から最後のイベント入力まで再生し、同じ時刻のRGB、イベント画像、GT、
+E0 Encoder（z蒸留）、E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM、
+E1 Encoder＋LSTM（h蒸留）・ConvLSTMの予測を並べる。
+各モデルの状態は系列先頭で初期化し、GTのない時刻も更新する。GTがある時刻だけ正解とフレーム指標を表示する。
+
+| データセット・評価 | 全編動画の系列 | 本数 |
+| --- | --- | ---: |
+| DSEC Semantic・公式test | zurich_city_13_a、zurich_city_14_c、zurich_city_15_a | 3 |
+| DSEC Depth・公開val | interlaken_00_g、zurich_city_02_e、zurich_city_09_e、zurich_city_11_c | 4 |
+| M3ED Semantic・公開val | car_urban_day_rittenhouse、car_urban_day_ucity_small_loop | 2 |
+| M3ED Depth・公開val | 同じ2系列 | 2 |
+
+学習済み重み、既評価のhead、活動manifest、RGB・イベント・GTがある学習サーバーで、
+コードを同期した後に以下を実行する。利用するGPUは空き状況に合わせて指定する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+source env/bin/activate
+OMP_NUM_THREADS=1 python -u tools/render_full_evaluation.py --device cuda:0
+```
+
+出力は `outputs/full_sequence_review_20261118/`。各動画ができるたびにCSVの時刻列と
+MP4の表示時刻を元の全入力に照合し、検証を通った動画を `index.html` に加える。
+中断時は同じコマンドで再開できる。完了済みの系列は再検査し、途中の系列は先頭から新しい出力先へ生成する。
+手元で見るにはこのディレクトリごとコピーして `index.html` をブラウザで開く。
+MP4は相対パスで参照するため、コピー後もフォルダーの構成を保つ。
+
+閲覧画面ではデータセット・タスク・系列を選ぶ。折れ線の横軸は系列先頭からの秒、
+縦軸は各入力区間のイベント発生率（百万イベント/秒）。折れ線をクリックまたはドラッグすると
+対応する元フレームへ移動する。動画側のシークバーからも移動でき、再生位置は折れ線と連動する。
+グラフにフォーカスした状態の←/→、または前後のボタンで1コマずつ移動できる。
+M3EDで同じ走行のSemanticとDepthを切り替えると、元のフレーム時刻を引き継ぐ。
+表示中の時刻のイベント数・区間長・発生率と、対応するフレーム別CSVを確認できる。
+
+## 11月16日の低活動・高活動クリップ
 
 2026-11-16。ユーザー指定は「低活動frameだけを集めるのではなく、連続した数秒のscene」。
 活動基準は、まず既存5分位による画面全体のevent rateとする。
@@ -95,7 +133,7 @@ ffmpegはPATHまたは既存`imageio_ffmpeg`の実行ファイルを使う。
 動画依存は既存envのPyTorch/NumPy/Pillow/HDF5関連。Macへ依存を追加して実推論はしない。
 
 旧新DDPも並べる場合は`--conditions E0,E1,E2,E1_old_ddp,E1_new_ddp`を指定する。
-現在のConvLSTMは事前学習段階であり、対応するSemantic/Depth headが完成するまではこの動画へ追加しない。
+11月18日に両タスクのConvLSTM headが揃った。全編での種類比較は上記の全編レビューを使う。
 
 ## DSEC
 

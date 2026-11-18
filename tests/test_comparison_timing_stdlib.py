@@ -7,10 +7,11 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 import zlib
 
 from event_state.evaluation.comparison_timing import (
-    build_ffmpeg_command, validate_scene, write_concat,
+    build_ffmpeg_command, validate_scene, verify_video_timestamps, write_concat,
 )
 
 
@@ -127,6 +128,31 @@ class ComparisonTimingTests(unittest.TestCase):
             self.assertEqual(command[command.index(option) + 1], value)
         with self.assertRaises(ValueError):
             build_ffmpeg_command("ffmpeg", self.root / "same", self.root / "same")
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg unavailable")
+    def test_packet_validation_checks_all_native_pts_for_absolute_source_times(self):
+        ffmpeg = shutil.which("ffmpeg")
+        concat = write_concat(self.root / "frames.ffconcat", self.files, self.stamps, 250000)
+        output = self.root / "native.mp4"
+        subprocess.run(build_ffmpeg_command(ffmpeg, concat, output), check=True, capture_output=True, timeout=30)
+        start = 1_650_000_000_000_000
+        stamps = [start + delta for delta in self.stamps]
+        end = start + 250_000
+        for ffprobe in dict.fromkeys([shutil.which("ffprobe"), None]):
+            with self.subTest(ffprobe=ffprobe), patch("shutil.which", side_effect={"ffmpeg": ffmpeg, "ffprobe": ffprobe}.get):
+                report = verify_video_timestamps(output, stamps, end)
+                self.assertEqual(report["native_frames"], len(stamps))
+                self.assertEqual(report["encoded_packets"], len(stamps)+1)
+                self.assertEqual(report["first_pts_us"], 0)
+                self.assertEqual(report["terminal_pts_us"], 250_000)
+                shifted = stamps.copy()
+                shifted[2] += 1
+                with self.assertRaisesRegex(ValueError, "packet 2 PTS"):
+                    verify_video_timestamps(output, shifted, end)
+                with self.assertRaisesRegex(ValueError, "packet 5 PTS"):
+                    verify_video_timestamps(output, stamps, end+1)
+                with self.assertRaisesRegex(ValueError, "video packets"):
+                    verify_video_timestamps(output, stamps[:-1], end)
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe unavailable")
     def test_encoded_video_preserves_every_native_pts_and_end_marker(self):

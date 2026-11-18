@@ -1,4 +1,4 @@
-"""Select fixed-duration, continuous scenes from validated event activity.
+"""Select full evaluation sequences or fixed-duration activity windows.
 
 Selection uses the existing train-derived p20/p80 thresholds, never model
 predictions or GT scores. Every original input timestamp within [start,end)
@@ -133,6 +133,73 @@ def _overlaps(candidate, selected):
                and item["start_us"] < candidate["end_us"] for item in selected)
 
 
+def _selection_source(activity_manifest, dataset, task):
+    path = Path(activity_manifest).expanduser().resolve()
+    index = ActivityIndex.load(path)
+    identity = index.identity
+    if identity["source_contract"]["dataset"] != dataset:
+        raise ValueError("Activity manifest dataset mismatch")
+    allowed, split_source = eligible_sequences(dataset, task)
+    if set(allowed) & set(identity["reference"]["sequences"]):
+        raise ValueError("Scene split overlaps activity-reference train pool")
+    thresholds = {cut["percentile"]: cut["event_rate_hz"] for cut in identity["cutpoints"]}
+    return path, index, identity, allowed, split_source, thresholds
+
+
+def validate_full_sequence(scene, records):
+    """Verify full source coverage, continuity and the last frame's display hold."""
+    if not records:
+        raise ValueError("Full sequence has no input frames")
+    stamps = [r["timestamp"] for r in records]
+    terminal_hold = records[-1]["window_us"]
+    if (scene["timestamps_us"] != stamps or scene["frames"] != len(records)
+            or scene["start_us"] != stamps[0] or scene["end_us"] != stamps[-1] + terminal_hold
+            or scene["duration_us"] != scene["end_us"] - scene["start_us"]
+            or scene["terminal_hold_us"] != terminal_hold
+            or scene["warmup_frames_before_start"] != 0):
+        raise ValueError("Full scene must cover every native input timestamp, including both endpoints")
+    if (any(record["sequence"] != scene["sequence"] for record in records)
+            or any(current["previous_timestamp"] != previous["timestamp"]
+                   for previous, current in zip(records, records[1:]))):
+        raise ValueError(f"Discontinuous input timeline for {scene['sequence']}")
+
+
+def select_full_sequences(activity_manifest, *, dataset, task):
+    """Keep every native input for each official test/public validation recording."""
+    path, index, identity, allowed, split_source, cuts = _selection_source(activity_manifest, dataset, task)
+    scenes = []
+    max_window = 0
+    for sequence in allowed:
+        stamps = list(index.timestamps(sequence))
+        records = [index.lookup(sequence, stamp) for stamp in stamps]
+        max_window = max(max_window, max(r["window_us"] for r in records))
+        observed = sum(r["window_us"] for r in records)
+        low = sum(r["window_us"] for r in records if r["event_rate_hz"] <= cuts[20])
+        high = sum(r["window_us"] for r in records if r["event_rate_hz"] > cuts[80])
+        hold = records[-1]["window_us"]
+        end = stamps[-1] + hold
+        scene = dict(id=f"{dataset}_{task}_{sequence}", kind="full_sequence", sequence=sequence,
+                     start_us=stamps[0], end_us=end, duration_us=end-stamps[0],
+                     frames=len(stamps), timestamps_us=stamps, terminal_hold_us=hold,
+                     warmup_frames_before_start=0, state_policy="continuous_from_sequence_start",
+                     low_fraction=low/observed, high_fraction=high/observed,
+                     mean_event_rate_hz_interval_weighted=sum(r["event_count"] for r in records)*1e6/observed)
+        validate_full_sequence(scene, records)
+        scenes.append(scene)
+    return dict(format_version=1, dataset=dataset, task=task,
+                activity_manifest=str(path), activity_manifest_sha256=identity["manifest_sha256"],
+                selection=dict(mode="full_sequences", eligible_sequences=list(allowed),
+                               split_source=str(split_source),
+                               split_source_sha256=hashlib.sha256(split_source.read_bytes()).hexdigest(),
+                               interval_convention="[start_us,end_us)", anchor="original_input_timestamp",
+                               max_gap_seconds=max_window/1e6,
+                               terminal_hold="last observed RGB interval, display only",
+                               activity_weighting="duration of each observed input interval",
+                               low_threshold_hz=cuts[20], high_threshold_hz=cuts[80],
+                               all_input_frames_preserved=True),
+                status="complete", counts={"full_sequence": len(scenes)}, shortfalls=[], scenes=scenes)
+
+
 def select_scenes(activity_manifest, *, dataset, task, duration_seconds=10,
                   min_fraction=0.8, per_kind=1, max_gap_seconds=0.25):
     duration = _seconds(duration_seconds, "duration_seconds")
@@ -142,15 +209,7 @@ def select_scenes(activity_manifest, *, dataset, task, duration_seconds=10,
         raise ValueError("min_fraction must be in (0,1]")
     if isinstance(per_kind, bool) or not isinstance(per_kind, int) or per_kind <= 0:
         raise ValueError("per_kind must be a positive integer")
-    path = Path(activity_manifest).expanduser().resolve()
-    index = ActivityIndex.load(path)
-    identity = index.identity
-    if identity["source_contract"]["dataset"] != dataset:
-        raise ValueError("Activity manifest dataset mismatch")
-    allowed, split_source = eligible_sequences(dataset, task)
-    if set(allowed) & set(identity["reference"]["sequences"]):
-        raise ValueError("Scene split overlaps activity-reference train pool")
-    thresholds = {c["percentile"]: c["event_rate_hz"] for c in identity["cutpoints"]}
+    path, index, identity, allowed, split_source, thresholds = _selection_source(activity_manifest, dataset, task)
     pools = {"low": [], "high": []}
     timelines = {}
     block_count = 0
@@ -210,4 +269,5 @@ def select_scenes(activity_manifest, *, dataset, task, duration_seconds=10,
         counts=counts, shortfalls=shortfalls, scenes=scenes)
 
 
-__all__ = ["continuous_blocks", "eligible_sequences", "select_scenes", "window_candidates"]
+__all__ = ["continuous_blocks", "eligible_sequences", "select_full_sequences", "select_scenes",
+           "validate_full_sequence", "window_candidates"]
