@@ -1,9 +1,66 @@
 # DSEC Detectionのイベント活動分位別mAP
 
+## 共通Stage 1の9条件を比較する（2026-11-22）
+
+DSECの学習済みbackboneを凍結し、条件ごとに同じYOLOX型検出headを初期化して学習する。対象は下表の9条件。12層後のみのPatchwise E1は、時間モデルの種類比較と配置比較で同じ結果を使う。
+
+| 条件 | 検出に使う最終特徴 |
+| --- | --- |
+| E0 Encoder（z蒸留） | 12層通過後の `z` |
+| E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後） | `h` |
+| E1_convlstm　E1 Encoder＋LSTM（h蒸留）・ConvLSTM（12層後） | `h` |
+| E1_b3 / E1_b6 / E1_b9　E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（各1個、順に3・6・9層後） | 各配置で12層まで通した最終 `h` |
+| E1_b9_12 / E1_b6_9_12 / E1_b3_6_9_12　E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（2・3・4個） | 各配置で12層後のLSTMまで通した最終 `h` |
+
+共通Stage 1のtrain35系列はすべてDetectionのtrain41系列に含まれ、Detectionのval6・test13との重複は各0。物体ラベルがある41系列でheadを50 epoch学習し、val6全体のCOCO mAPが最大のepochを固定する。test13は固定済みheadで採点できる。過去のtrain41で事前学習したFrozen Detectionのスコアは実験結果台帳§2にある。[公式split](https://github.com/uzh-rpg/dsec-det/blob/master/config/train_val_test_split.yaml)
+
+各系列の最初で状態をリセットし、未採点フレームも含め時系列順に状態を更新する。評価は既存の `dsec-det` 設定で、native scaleのイベントカメラ座標（640×430）上のcar・pedestrianの2クラスを扱う。元ラベルのbus・truckもこの設定のcarに統合する。DAGRのサイズ・クラス条件を満たすラベルが連続した画像ペアの2枚目が採点対象。全体と活動量5群別にCOCO mAP@[.50:.95]・AP50・AP75を確認する。活動量の境界は共通Stage 1のtrain35系列のevents/sから決め、評価系列にも同じ値を適用する。[DSEC-Detectionデータ](https://dsec.ifi.uzh.ch/dsec-detection/)
+
+### sig-gpu5での起動
+
+GPU 0でSemanticが動いているとき、空きGPU 1・2をDetectionに割り当てる。サーバーへコードを同期後、以下のブロックで全9条件を実行できる。各条件の設定をvalに基づいて変更する場合は、まず `--phase val` まで実行し、設定を固定した後に `--phase test` を実行する。
+
+```bash
+(
+  set -e
+  cd /home/iASL/Arata_repo/EventState
+  git pull --ff-only
+  mkdir -p outputs
+  log="$PWD/outputs/dsec_detection_20261122.log"
+  nohup bash -e >>"$log" 2>&1 <<'RUN' &
+source env/bin/activate
+python -u tools/run_placement_detection.py --gpus 1,2 --phase val --execute
+python -u tools/run_placement_detection.py --gpus 1,2 --phase test --execute
+RUN
+  echo "Detection PID=$!  log=$log"
+)
+```
+
+経過は `tail -f outputs/dsec_detection_20261122.log` で確認する。既定の出力先は `outputs/stage2_placement_detection_20261122`。集計は `summary_val.json` と `summary_test.json`、個別のheadは `<条件ID>/head/best.pt` に保存される。事前に実データを点検するには該当フェーズの `--execute` を `--preflight` に替える。testはvalで確定済みのheadを必要とする。
+
+中断後は同じコマンドで再開できる。head学習を再開した場合、確定済みのepochまでの重みとoptimizerを復元し、再開したepochを結果に記録する。既存のtrainerはデータ順序とaugmentationの乱数状態を保存していないため、連続実行と再開後で学習軌跡に差が生じうる。
+
+特徴キャッシュが容量の大半を占める。旧h特徴1条件でrectified版約64 GiB・Detection座標版約61 GiBの記録がある（実験結果台帳§25の `du` 記録）。今回の必要容量は対象系列と実ファイル数で変わる。各条件で検証したDetection座標の特徴を保持し、その変換に使った専用の一時特徴を解放する。実行中のSemanticでも同じファイルシステムを使う場合は、その増加分も見込む。
+
+### Detectionの追加入力
+
+この実験は `/home/iASL/Arata_repo/dataset/DSEC/dsec_det_labels` の `tracks.npy`、系列別の画像時刻・較正、および `DSEC_cache/events/gep_rgb` のRGB間隔GEPを使う。Detectionのval6（zurich_city_16_a〜21_a）は物理的には追加配布のtrain、testのthun_02_aは追加配布のtestにある。Semantic・Depth用の評価系列とは異なる。追加配布rawがあり、これらのGEPだけが不足している場合の準備例は次のとおり。
+
+```bash
+data=/home/iASL/Arata_repo/dataset
+python tools/prepare_dsec.py --root "$data/DSEC" --layout dsec-det-extra \
+  --split train --sequences zurich_city_{16,17,18,19,20,21}_a \
+  --event-cache-dir "$data/DSEC_cache/events/gep_rgb"
+python tools/prepare_dsec.py --root "$data/DSEC" --layout dsec-det-extra \
+  --split test --sequences thun_02_a --event-cache-dir "$data/DSEC_cache/events/gep_rgb"
+```
+
+## 既存のDetection headに活動量別評価を追加する
+
 2026-11-10実装。ユーザー指定の「イベント量の下位20%ごとの5群」による追加評価。
 対象は学習済みDetection headの評価であり、新しい事前学習・head学習は起動しない。
 SemanticのmIoU・Depth指標にも同じdatasetのmanifestを使う経路を追加済み。
-現在はこちらが主対象であり、手順は [semantic_depth_activity.md](semantic_depth_activity.md) を参照する。
+Semantic・Depthの活動量別評価の手順は [semantic_depth_activity.md](semantic_depth_activity.md) を参照する。
 
 ## 区分と評価単位
 
@@ -29,8 +86,9 @@ Macではstdlibテスト・構文確認のみ。PyTorch/COCOを使うテスト�
 ```bash
 cd /home/iASL/Arata_repo/EventState
 source env/bin/activate
-python -m pytest -q tests/test_activity_quantiles_stdlib.py \
-  tests/test_detection_activity_stdlib.py tests/test_detection_activity_server.py
+CUDA_VISIBLE_DEVICES="" python -m pytest -q tests/test_activity_quantiles_stdlib.py \
+  tests/test_detection_activity_stdlib.py tests/test_detection_activity_server.py \
+  tests/test_detection.py tests/test_placement_detection{,_protocol}_stdlib.py
 ```
 
 ## 共通の活動manifestを一度だけ生成

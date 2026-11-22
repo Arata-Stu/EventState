@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-11-10
+最終更新: 2026-11-22
 
 2026-11-10ユーザー訂正：現在はSemantic segmentation・Depthが最優先、次に可能ならFlow。
 Detectionは過去に多数実験したが、現在の優先度は低い。活動5分位をSemantic/Depthにも接続する実装を依頼。
@@ -3020,3 +3020,10 @@ DSEC Semantic Q5の78frameという制約を併記する。
 - 今回のPatchwise対ConvLSTMの学習・追加評価・数値整理は完了。
   次の研究段階は既定のLSTM配置比較だが、方式選択を全task共通の勝者があるかのように扱わない。
   今回Macはstdlib解析・hash/集計整合確認のみで、新規学習・再推論・依存追加は行っていない。
+
+## 100. LSTM配置6条件のStage 1からSemanticへの移行報告（2026-11-22）
+
+- `sig-gpu5` で `--placement-suite --phase baseline --gpus 0,1,2 --seed 0` を使い、smoke → 本学習 → `--gpu 0` のSemanticを `bash -e` で順次起動。ユーザーから、下流段階に到達しGPU 0を使用中との報告。起動時の親PIDは564753、ログは `outputs/placement_20261118.log`。
+- 対象はE1 Encoder＋LSTM（h蒸留）・Patchwise LSTMの3層後、6層後、9層後、9＋12層後、6＋9＋12層後、3＋6＋9＋12層後の6配置。DSEC共通train35、M3ED共通train3。smokeは各99更新、本学習は各99,999更新。出力は `outputs/stage1_placement_smoke_20261118` と `outputs/stage1_placement_full_20261118`。
+- 起動スクリプトとユーザー報告に基づく段階判定。Stage 1は両データセット・全6配置の最終checkpointの存在を確認してから次の段階に進む。個別checkpointのSHAや各ジョブの完了ログは受領していない。
+- Semantic出力は `outputs/stage2_placement_semantic_20261118`。DSECは開発6/2→全8でrefit→公式test3、M3EDはtrain3/公開val2。実行中の条件名、完了件数、mIoUは未受領。

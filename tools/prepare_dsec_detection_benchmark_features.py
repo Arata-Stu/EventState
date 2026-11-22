@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from event_state.data.cache_metadata import canonical_json_sha256, sha256_file
 from event_state.detection.data import build_dagr_sampling_grid, find_rectify_map
 from event_state.detection.split import load_dsec_detection_split
 
@@ -86,7 +87,7 @@ def _atomic_write_json(payload: dict[str, Any], destination: Path) -> None:
 
 
 def _valid_existing(
-    path: Path, features: set[str], source_payload: dict[str, Any], scale: int
+    path: Path, features: set[str], source_payload: dict[str, Any], scale: int, warp_source_sha256: str
 ) -> bool:
     if not path.is_file():
         return False
@@ -103,6 +104,8 @@ def _valid_existing(
         and payload.get("benchmark_format_version") == FORMAT_VERSION
         and payload.get("coordinate_space") == "dsec_det_distorted"
         and payload.get("detection_scale") == scale
+        and payload.get("warp_source_sha256") == warp_source_sha256
+        and payload.get("state_policy") == source_payload.get("state_policy")
         and payload.get("checkpoint_sha256") == source_payload.get("checkpoint_sha256")
         and payload.get("timestamp") == source_payload.get("timestamp")
         and payload.get("frame_index") == source_payload.get("frame_index")
@@ -145,6 +148,7 @@ def _completed_sequence(
         "source_feature_cache",
         "source_input_size",
         "source_patch_size",
+        "warp_source_sha256",
     )
     if any(metadata.get(key) != expected_metadata.get(key) for key in identity_keys):
         return False
@@ -197,6 +201,15 @@ def main() -> None:
             (path for path in source_dir.glob("*.pt") if path.stem.isdecimal()),
             key=lambda path: int(path.stem),
         )
+        if (metadata.get("sequence_name") != sequence or metadata.get("official_role") != args.role
+                or not paths or len(paths) != metadata.get("frame_count")):
+            raise ValueError(f"Incomplete or different rectified feature sequence: {metadata_path}")
+        rectify_map_path = find_rectify_map(dataset_root, sequence)
+        # Bind each warped frame to the source state policy, event timeline,
+        # geometry and calibration, including when reusing an interrupted batch.
+        warp_source_sha256 = canonical_json_sha256({
+            "source_metadata": metadata, "rectify_map_sha256": sha256_file(rectify_map_path),
+        })
         destination_dir = output_root / sequence
         destination_dir.mkdir(parents=True, exist_ok=True)
         output_metadata = {
@@ -204,6 +217,7 @@ def main() -> None:
             "coordinate_space": "dsec_det_distorted",
             "detection_scale": args.scale,
             "benchmark_format_version": FORMAT_VERSION,
+            "warp_source_sha256": warp_source_sha256,
             "input_size": [430 // args.scale, 640 // args.scale],
             "patch_size": source_stride // args.scale,
             "features": sorted(features),
@@ -225,7 +239,7 @@ def main() -> None:
                 flush=True,
             )
             continue
-        with h5py.File(find_rectify_map(dataset_root, sequence), "r") as handle:
+        with h5py.File(rectify_map_path, "r") as handle:
             rectify_map = np.asarray(handle["rectify_map"], dtype=np.float32)
         grid = build_dagr_sampling_grid(
             rectify_map,
@@ -235,6 +249,7 @@ def main() -> None:
         ).to(device)
         written = 0
         preserved = 0
+        (destination_dir / "metadata.json").unlink(missing_ok=True)
         for start in tqdm(
             range(0, len(paths), args.batch_size),
             desc=f"{args.role}:{sequence}",
@@ -242,17 +257,19 @@ def main() -> None:
         ):
             batch_paths = paths[start : start + args.batch_size]
             payloads = [_safe_load(path) for path in batch_paths]
-            if any(
-                not isinstance(payload, dict) or not isinstance(payload.get("features"), dict)
-                for payload in payloads
-            ):
-                raise ValueError(f"Invalid source feature payload near {batch_paths[0]}")
+            for path, payload in zip(batch_paths, payloads):
+                if (not isinstance(payload, dict) or not isinstance(payload.get("features"), dict)
+                        or payload.get("timestamp") != int(path.stem)
+                        or any(payload.get(key) != metadata.get(key) for key in (
+                            "sequence_name", "state_policy", "checkpoint_sha256", "checkpoint_step",
+                            "event_window_us", "activity_format"))):
+                    raise ValueError(f"Source feature payload/metadata mismatch: {path}")
             pending = [
                 index
                 for index, path in enumerate(batch_paths)
                 if args.overwrite
                 or not _valid_existing(
-                    destination_dir / path.name, features, payloads[index], args.scale
+                    destination_dir / path.name, features, payloads[index], args.scale, warp_source_sha256
                 )
             ]
             preserved += len(batch_paths) - len(pending)
@@ -294,6 +311,7 @@ def main() -> None:
                 output["coordinate_space"] = "dsec_det_distorted"
                 output["detection_scale"] = args.scale
                 output["benchmark_format_version"] = FORMAT_VERSION
+                output["warp_source_sha256"] = warp_source_sha256
                 if warped_activity is not None:
                     output["event_activity"] = warped_activity[output_index].clone()
                 output["features"] = {

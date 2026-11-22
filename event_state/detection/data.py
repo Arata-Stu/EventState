@@ -496,12 +496,23 @@ class DSECDetectionFeatureDataset(Dataset[dict[str, Any]]):
                     sequence=sequence,
                     target_size=current_input_size,
                 )
+            matched_timestamps = set()
             for path in sorted(directory.glob("*.pt")):
                 if not path.stem.isdecimal():
                     continue
                 timestamp = int(path.stem)
                 if timestamp in targets:
+                    if protocol == "dsec-det" and timestamp in matched_timestamps:
+                        raise ValueError(f"Duplicate detection feature timestamp: {path}")
                     self.samples.append((sequence, timestamp, path, targets[timestamp]))
+                    matched_timestamps.add(timestamp)
+            if protocol == "dsec-det":
+                # targets contains only the second image of each consecutive
+                # valid label pair, so the initial RGB image is never required.
+                missing = targets.keys() - matched_timestamps
+                if missing:
+                    raise ValueError(f"{sequence}: missing features for {len(missing)} DSEC-Det "
+                                     f"target timestamp(s), first: {min(missing)}")
         if not self.samples:
             raise ValueError("No labeled DSEC-Detection feature frames were found")
         if source_input_size is None or source_patch_size is None:

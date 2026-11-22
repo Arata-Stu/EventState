@@ -1,6 +1,9 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-18
+最終更新: 2026-11-22
+
+2026-11-22、ユーザーから6配置のStage 1後にSemanticまで進み、GPU 0で実行中との報告（台帳§100）。
+既存のSemantic実行を継続し、空きGPU 1・2にDSEC Detectionを追加する。対象は共通Stage 1の基準3条件（E0・Patchwise E1・ConvLSTM E1）とPatchwise E1の6配置、計9条件。Detection用headは各条件で新規学習し、既存のStage 1最終重みを凍結する。新しいSemantic・Detectionスコアは未受領。起動手順は `docs/dsec_detection_activity.md`、既定の集計先は `outputs/stage2_placement_detection_20261122`。
 
 今後のGPU運用は、独立条件を空きGPUに1ジョブずつ割り当てる。Depthの下流タスクはDSEC・M3EDなどを合算して同時2件まで。
 今回の6配置はStage 1・SemanticともGPU 0/1/2が空いていれば最大3並列。すでに以前のコマンドで `--gpu 0` を指定した実行は1枚の指定として扱う。

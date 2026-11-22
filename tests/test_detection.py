@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
@@ -7,6 +9,7 @@ import torch
 
 from event_state.detection.data import (
     DSECDetectionEventDataset,
+    DSECDetectionFeatureDataset,
     build_dagr_sampling_grid,
     load_dagr_sequence_targets,
     rectify_xywh_boxes,
@@ -68,7 +71,7 @@ def test_dagr_targets_use_consecutive_valid_frames(tmp_path: Path) -> None:
     images = tmp_path / "dataset" / "train_images" / sequence / "images"
     labels.mkdir(parents=True)
     images.mkdir(parents=True)
-    (images / "timestamps.txt").write_text("100\n200\n300\n400\n", encoding="utf-8")
+    (images / "timestamps.txt").write_text("100\n200\n300\n400\n500\n", encoding="utf-8")
     dtype = np.dtype(
         [
             ("t", "<i8"),
@@ -85,6 +88,7 @@ def test_dagr_targets_use_consecutive_valid_frames(tmp_path: Path) -> None:
             (200, 24, 44, 40, 40, 2),
             (300, 24, 44, 40, 40, 1),
             (400, 28, 48, 40, 40, 2),
+            (500, 28, 48, 40, 40, 2),
         ],
         dtype=dtype,
     )
@@ -94,11 +98,83 @@ def test_dagr_targets_use_consecutive_valid_frames(tmp_path: Path) -> None:
         dataset_root=tmp_path / "dataset",
         sequence=sequence,
     )
-    assert set(targets) == {200}
+    assert set(targets) == {200, 500}
     torch.testing.assert_close(
         targets[200]["boxes"], torch.tensor([[24.0, 44.0, 64.0, 84.0]])
     )
     assert targets[200]["labels"].tolist() == [0]
+
+    cache = tmp_path / "warped" / sequence
+    cache.mkdir(parents=True)
+    (cache / "metadata.json").write_text(json.dumps(dict(
+        coordinate_space="dsec_det_distorted", patch_size=16, input_size=[430, 640], features=["h"])))
+    for stamp in (200, 500):
+        torch.save(dict(sequence_name=sequence, timestamp=stamp,
+                        features={"h": torch.zeros(2, 27, 40)}), cache / f"{stamp}.pt")
+    kwargs = dict(feature_cache_dir=cache.parent, labels_root=tmp_path / "labels",
+                  dataset_root=tmp_path / "dataset", sequences=[sequence], feature="h", protocol="dsec-det")
+    dataset = DSECDetectionFeatureDataset(**kwargs)
+    assert [dataset[i]["timestamp"] for i in range(len(dataset))] == [200, 500]
+    (cache / "500.pt").unlink()
+    with pytest.raises(ValueError, match="missing features for 1 DSEC-Det target timestamp.*500"):
+        DSECDetectionFeatureDataset(**kwargs)
+
+
+@pytest.mark.parametrize("policy, expected", [("continuous", [1, 2, 3]), ("frame", [1, 1, 1])])
+def test_detection_export_carries_nested_state_across_every_frame(tmp_path, monkeypatch, policy, expected):
+    from event_state.data.cache_metadata import canonical_json_sha256, frame_manifest_sha256
+    from tools import cache_dsec_detection_features as export
+
+    class NestedModel(torch.nn.Module):
+        event_encoder = SimpleNamespace(patch_size=2)
+
+        def forward(self, frame, state):
+            # Two (h, c) pairs, as returned by the two-insertion placement.
+            count = frame.new_ones(1) if state is None else state[1][0] + 1
+            tokens = count.expand(1, 1, 6, 1)
+            return dict(z=tokens * 0, h=tokens, state=((count, count), (count, count)))
+
+    checkpoint = tmp_path / "stage1.pt"
+    checkpoint.touch()
+    events, output = tmp_path / "events", tmp_path / "features"
+    sequences = ("seq_a", "seq_b")
+    monkeypatch.setattr(export, "load_dsec_detection_split", lambda _: SimpleNamespace(sequences=lambda _: sequences))
+    config = {"dataset": {"name": "dsec", "input_width": 6, "input_height": 4,
+                          "representation": {"normalize_mean": [0], "normalize_std": [1]}}}
+    monkeypatch.setattr(export, "load_checkpoint_config_metadata", lambda _: SimpleNamespace(config=config))
+    monkeypatch.setattr(export, "build_model", lambda *args, **kwargs: NestedModel())
+    monkeypatch.setattr(export, "load_checkpoint", lambda *args, **kwargs: SimpleNamespace(global_step=99))
+    monkeypatch.setattr(export, "parse_args", lambda: SimpleNamespace(
+        checkpoint=checkpoint, event_cache_dir=events, raw_event_root=None, output_dir=output, device="cpu",
+        split_manifest=None, num_shards=1, shard_index=0, role="val", features=["h"], teacher_checkpoint=None,
+        include_activity=False, state_policy=policy, overwrite=False))
+    timeline = [(1, 100, 200), (2, 200, 300), (3, 300, 400)]
+    for sequence in sequences:
+        source = events / sequence
+        source.mkdir(parents=True)
+        metadata = dict(frame_count=3, sequence_name=sequence, timestamp_manifest_sha256=frame_manifest_sha256(timeline))
+        (source / "metadata.json").write_text(json.dumps(metadata))
+        for i, lo, hi in timeline:
+            torch.save(dict(sequence_name=sequence, timestamp=hi, previous_timestamp=lo, frame_index=i,
+                            events=torch.ones(1, 4, 6), manifest_digest=canonical_json_sha256(metadata)), source / f"{hi}.pt")
+    export.main()
+    for sequence in sequences:
+        for (_, _, stamp), count in zip(timeline, expected):
+            payload = export._safe_load(output / sequence / f"{stamp}.pt")
+            torch.testing.assert_close(payload["features"]["h"], torch.full((1, 2, 3), count, dtype=torch.float16))
+
+
+def test_warp_resume_matches_state_and_source(tmp_path):
+    from tools import prepare_dsec_detection_benchmark_features as warp
+
+    path = tmp_path / "200.pt"
+    source = dict(checkpoint_sha256="backbone", timestamp=200, frame_index=1,
+                  state_policy="continuous", activity_format=None)
+    torch.save(dict(source, benchmark_format_version=warp.FORMAT_VERSION, coordinate_space="dsec_det_distorted",
+                    detection_scale=1, warp_source_sha256="source-a", features={"h": torch.zeros(1, 2, 3)}), path)
+    assert warp._valid_existing(path, {"h"}, source, 1, "source-a")
+    assert not warp._valid_existing(path, {"h"}, dict(source, state_policy="frame"), 1, "source-a")
+    assert not warp._valid_existing(path, {"h"}, source, 1, "source-b")
 
 
 def test_detection_event_dataset_uses_clips_for_train_and_stream_for_validation(

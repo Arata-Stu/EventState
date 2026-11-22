@@ -16,9 +16,12 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from event_state.detection.split import load_dsec_detection_split
+from event_state.data.cache_metadata import canonical_json_sha256, frame_manifest_sha256
 from event_state.data.transforms import PairedSequenceTransform
 from event_state.losses.activity_weighting import ACTIVITY_FORMAT
 from event_state.data.dsec_feature_source import RawGEPFeatureSource, validate_source
+from event_state.models.temporal import detach_temporal_state
+from event_state.models.tokens import patch_grid, tokens_to_map
 from event_state.training import build_model, load_checkpoint, load_checkpoint_config_metadata
 
 
@@ -221,8 +224,11 @@ def main() -> None:
                 )
                 if not frame_paths:
                     raise ValueError(f"No cached event frames found: {source_dir}")
+                if source_metadata.get("frame_count") != len(frame_paths):
+                    raise ValueError(f"Incomplete prepared event timeline: {source_dir}")
             destination_dir = output_root / sequence
             destination_dir.mkdir(parents=True, exist_ok=True)
+            source_digest = canonical_json_sha256(source_metadata)
             sequence_metadata = {
                 "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
                 "format_version": FORMAT_VERSION,
@@ -230,7 +236,7 @@ def main() -> None:
                 "official_role": args.role,
                 "features": sorted(requested_features),
                 "state_policy": args.state_policy,
-                    "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
+                "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
                 "checkpoint": str(checkpoint),
                 "checkpoint_sha256": checkpoint_digest,
                 "checkpoint_step": int(state.global_step),
@@ -256,6 +262,9 @@ def main() -> None:
                     raw_source.close()
                 continue
             recurrent_state = None
+            timeline = []
+            # A partially rewritten sequence must not look complete on restart.
+            (destination_dir / "metadata.json").unlink(missing_ok=True)
             written = 0
             preserved = 0
             for frame_path in tqdm(frame_paths, desc=f"{args.role}:{sequence}", unit="frame"):
@@ -265,6 +274,15 @@ def main() -> None:
                     raise ValueError(f"Invalid event cache payload: {frame_path}")
                 timestamp = int(event_payload.get("timestamp", -1))
                 frame_index = int(event_payload.get("frame_index", -1))
+                previous_timestamp = int(event_payload.get("previous_timestamp", -1))
+                if (timestamp != int(frame_path.stem) or frame_index != len(timeline) + 1
+                        or previous_timestamp < 0 or previous_timestamp >= timestamp
+                        or (timeline and previous_timestamp != timeline[-1][2])):
+                    raise ValueError(f"Missing or reordered event interval: {frame_path}")
+                if raw_source is None and (event_payload.get("sequence_name") != sequence
+                                           or event_payload.get("manifest_digest") != source_digest):
+                    raise ValueError(f"Prepared event payload/manifest mismatch: {frame_path}")
+                timeline.append((frame_index, previous_timestamp, timestamp))
                 identity = {
                     "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
                     "format_version": FORMAT_VERSION,
@@ -275,6 +293,7 @@ def main() -> None:
                     "checkpoint_step": int(state.global_step),
                     "state_policy": args.state_policy,
                     "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
+                    "source_event_metadata_sha256": source_digest,
                 }
                 destination = destination_dir / f"{timestamp}.pt"
                 # Continuous h requires replaying every frame even when its output exists.
@@ -288,35 +307,17 @@ def main() -> None:
                 if args.state_policy == "frame":
                     recurrent_state = None
                 outputs = model(normalized.unsqueeze(1), state=recurrent_state)
-                recurrent_state = outputs.get("state")
-                if recurrent_state is not None:
-                    recurrent_state = tuple(value.detach() for value in recurrent_state)
-                feature_maps: dict[str, torch.Tensor] = {}
-                grid_height = int(normalized.shape[-2]) // int(model.event_encoder.patch_size)
-                grid_width = int(normalized.shape[-1]) // int(model.event_encoder.patch_size)
-                if "z" in requested_features:
-                    feature_maps["z"] = (
-                        outputs["z"][0, 0]
-                        .reshape(grid_height, grid_width, -1)
-                        .permute(2, 0, 1)
-                        .cpu()
-                        .to(torch.float16)
-                        .contiguous()
-                    )
-                if "h" in requested_features:
-                    feature_maps["h"] = (
-                        outputs["h"][0, 0]
-                        .reshape(grid_height, grid_width, -1)
-                        .permute(2, 0, 1)
-                        .cpu()
-                        .to(torch.float16)
-                        .contiguous()
-                    )
+                recurrent_state = detach_temporal_state(outputs.get("state"))
+                grid = patch_grid(normalized.shape[-2:], model.event_encoder.patch_size, require_divisible=False)
+                feature_maps = {
+                    name: tokens_to_map(outputs[name][0, 0], grid).to(device="cpu", dtype=torch.float16)
+                    for name in requested_features
+                }
                 payload = {**identity, "features": feature_maps}
                 if args.include_activity:
                     if int(model.event_encoder.patch_size) != 16:
                         raise ValueError("ScaleEvent activity requires patch size 16")
-                    payload["event_activity"] = transformed[2][0].reshape(grid_height, grid_width)
+                    payload["event_activity"] = transformed[2][0].reshape(grid)
                 if not args.overwrite and _valid_existing(
                     destination, identity, requested_features
                 ):
@@ -324,6 +325,8 @@ def main() -> None:
                 else:
                     _atomic_save(payload, destination)
                     written += 1
+            if raw_source is None and frame_manifest_sha256(timeline) != source_metadata.get("timestamp_manifest_sha256"):
+                raise ValueError(f"Prepared event timestamp manifest mismatch: {source_dir}")
             _atomic_write_json(sequence_metadata, destination_dir / "metadata.json")
             print(f"{sequence}: {written} written, {preserved} preserved", flush=True)
 
