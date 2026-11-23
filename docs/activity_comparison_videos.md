@@ -1,43 +1,41 @@
 # Semantic・Depthの全評価動画とイベント活動量
 
-## 11月23日のSemantic配置比較の特徴動画
+## 11月23日のSemantic予測と特徴の配置比較
 
-Semanticを評価したDSEC公式testの3系列とM3ED公開valの2系列を、系列ごとに1本の動画で比較する。各行は独立に学習したモデルで、各列はViTの3・6・9・12層後に対応する。
+Semanticを評価したDSEC公式testの3系列とM3ED公開valの2系列を、系列ごとに1本の動画で比較する。動画上段は左から参照ラベル、12層後に1個のモデルの予測、4段モデルの予測。11クラスの色をそろえ、右に凡例を置く。DSECは公式ラベル、M3EDはInternImage疑似ラベルを使う。ラベルのない時刻はその欄に欠測を示し、両方の予測は表示する。下の2行は各モデルのRGB・イベント入力と3・6・9・12層後の特徴を示す。
 
-| 動画内の行 | 3・6・9層後 | 12層後 |
+| 特徴パネルの行 | 3・6・9層後 | 12層後 |
 | --- | --- | --- |
 | 上段 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後のみ） | 各ブロックの正規化済みViTパッチ特徴 | LSTMの射影出力 `h` |
 | 下段 E1_b3_6_9_12　E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（4段） | 各ブロック直後のLSTMの射影出力 `h` | LSTMの射影出力 `h` |
 
-どちらもseed 0・99,999更新のStage 1重みを固定し、GTがない時刻も含めて全イベント入力を先頭から処理する。左端に入力イベントと、取得できた時刻の対応RGBを置く。Semantic headのクラス予測は使用しない。
+どちらもseed 0・99,999更新のStage 1重みを固定し、GTがない時刻も含めて全イベント入力を先頭から処理する。左端に入力イベントと、取得できた時刻の対応RGBを置く。各モデルの12層後の `h` をその条件の評価済みSemantic headに入力し、各画素でスコア最大のクラスを表示する。DSECは開発セットで選んだエポック数で全学習系列に再適合した `final/last.pt`、M3EDは公開valで選んだ `h/best.pt`。両モデルのheadのSHA-256を評価記録と照合する。
 
-特徴のRGB表示は、同じ系列の同じ列で2モデルと全時刻に共通のPCAを使う。全入力を時系列順に一度流し、等間隔で選んだ最大32時刻の同じパッチ位置から両モデルを同数サンプルし、L2正規化後の特徴を合わせて3主成分を求める。各成分の色域をサンプルの1〜99パーセンタイルで固定する。その後、両モデルの状態を初期化して、もう一度系列の先頭から推論し全コマを書き出す。1マスは入力上の16画素間隔に対応する。セル状態 `c`、特徴のノルム、意味クラスの色は表示しない。
+特徴のRGB表示は、同じ系列の同じ列で2モデルと全時刻に共通のPCAを使う。全入力を時系列順に一度流し、等間隔で選んだ最大32時刻の同じパッチ位置から両モデルを同数サンプルし、L2正規化後の特徴を合わせて3主成分を求める。各成分の色域をサンプルの1〜99パーセンタイルで固定する。その後、両モデルの状態を初期化して、もう一度系列の先頭から推論し全コマを書き出す。1マスは入力上の16画素間隔に対応する。以前の特徴動画が完成している系列は、元の入力時刻・モデル重み・PCAファイルのハッシュが一致すれば、そのPCAを再利用して描画のための全編推論を1回行う。
 
 同一層の上下で物体の境界の位置や動き方を比較できる。異なるモデルの特徴チャネルを事後的に対応付ける処理は行わず、同じ色が同じ物体クラスを意味する保証はない。系列や層を替えるとPCA基底も変わる。各動画の `projection.json` に基底、色域、寄与率、使用したフレーム・パッチを記録する。
 
 ### sig-gpu5で生成する
 
-Macでコードをpushしてから、サーバーで以下を実行する。`--execute` を省くと5系列の名前と出力先を表示する。実行時は空いているGPUに1系列ずつ割り当て、検出などで指定GPUがすべて使用中なら空きができるまで待機する。
+Macでコードをpushしてから、サーバーで以下を実行する。`--execute` を省くと5系列の名前と出力先を表示する。次の例ではGPU 0・1・2のうち起動時に4096 MiB以上の空きVRAMがあるGPUに1系列ずつ割り当てる。
 
 ```bash
 (
   set -eo pipefail
   cd /home/iASL/Arata_repo/EventState
   mkdir -p outputs
-  log="$PWD/outputs/placement_feature_review_20261123.log"
+  log="$PWD/outputs/placement_feature_semantic_review_20261123.log"
   date -Is | tee -a "$log"
   git pull --ff-only 2>&1 | tee -a "$log"
-  nohup env/bin/python -u tools/render_placement_feature_review.py --gpus 0,1,2 --execute \
+  nohup env/bin/python -u tools/render_placement_feature_review.py --with-semantic --gpus 0,1,2 --share-gpus 4096 --execute \
     </dev/null >>"$log" 2>&1 &
   echo "動画生成 PID=$!  log=$log"
 )
 ```
 
-稼働中の学習と同じGPUで並行して描画する場合は、上の起動コマンドの引数を `--gpus 0,1,2 --share-gpus 4096 --execute` にする。起動のたびに指定GPUの空きVRAMを確認し、4096 MiB以上空いているGPUのうち空きが多い順に、動画を各GPU最大1本割り当てる。全台が閾値未満なら待機する。4096 MiBは起動判断用の目安で、描画が使う量は制限しない。学習のピークと重なると速度低下やメモリ不足が起き得る。
+学習とGPUを共有する場合の4096 MiBは起動時の空き容量の目安。専有したい場合は `--share-gpus 4096` を外す。以前の特徴のみの実行は `outputs/placement_feature_review_20261123/` を使い続けられる。新しいモードの出力先は別で、以前のMP4や実行中のワーカーを上書きしない。
 
-すでに従来の動画ランチャーが空き待ちなら、親ログの `Waiting for an idle GPU` と起動時の親PIDを確認し、その動画ランチャーだけを終了してから同じ出力先で共有モードを起動する。完了済みの系列は再検証して使用する。
-
-親ログで各系列の担当GPUとログパスが分かる。検証を通った動画から順に `outputs/placement_feature_review_20261123/index.html` に掲載し、5本すべてのMP4・CSVの時刻と重みを照合するとルートに `_SUCCESS` ができる。同じコマンドの再実行で検証済みの系列を再利用する。系列の途中で止まった場合はその系列を先頭から新しい試行先に描画する。
+親ログで各系列の担当GPUとログパスが分かる。検証を通った動画から順に `outputs/placement_feature_semantic_review_20261123/index.html` に掲載し、5本すべてのMP4・CSVの時刻と重みを照合するとルートに `_SUCCESS` ができる。同じコマンドの再実行で検証済みの系列を再利用する。系列の途中で止まった場合はその系列を先頭から新しい試行先に描画する。
 
 ### Macで見る
 
@@ -45,13 +43,13 @@ Macでコードをpushしてから、サーバーで以下を実行する。`--e
 
 ```bash
 cd /Users/at/project/research/EventState
-mkdir -p outputs/placement_feature_review_20261123
-rsync -av --partial sig-gpu5:/home/iASL/Arata_repo/EventState/outputs/placement_feature_review_20261123/ \
-  outputs/placement_feature_review_20261123/
-open outputs/placement_feature_review_20261123/index.html
+mkdir -p outputs/placement_feature_semantic_review_20261123
+rsync -av --partial sig-gpu5:/home/iASL/Arata_repo/EventState/outputs/placement_feature_semantic_review_20261123/ \
+  outputs/placement_feature_semantic_review_20261123/
+open outputs/placement_feature_semantic_review_20261123/index.html
 ```
 
-活動量の折れ線をクリックまたはドラッグすると対応フレームに移動する。左右キーや前後のボタンで1コマずつ比較できる。時刻は元のイベント入力に合わせ、各フレームのイベント数と区間長も `frames.csv` で確認できる。
+活動量の折れ線をクリックまたはドラッグすると対応フレームに移動する。左右キーや前後のボタンで1コマずつ比較できる。時刻は元のイベント入力に合わせ、各フレームのイベント数・区間長・参照ラベルの有無も `frames.csv` で確認できる。
 
 ## 11月18日の全編レビュー
 

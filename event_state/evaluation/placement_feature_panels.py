@@ -143,11 +143,14 @@ _TILE_WIDTH = 320
 _TITLE_HEIGHT = 42
 _ROW_HEADER = 54
 _FOOTER = 40
+_MASK_WIDTH = 480
+_MASK_HEADER = 36
 
 
-def panel_size(dataset):
+def panel_size(dataset, *, semantic=False):
     height = _GEOMETRY[dataset][1]
-    return _TILE_WIDTH * 5, _TITLE_HEIGHT + 2 * (_ROW_HEADER + height // 2) + _FOOTER
+    mask_row = _MASK_HEADER + height * 3 // 4 if semantic else 0
+    return _TILE_WIDTH * 5, _TITLE_HEIGHT + mask_row + 2 * (_ROW_HEADER + height // 2) + _FOOTER
 
 
 def select_panel_font(requested=None):
@@ -183,17 +186,51 @@ def _fonts(font_path):
             return ImageFont.load_default(), ImageFont.load_default()
 
 
-@lru_cache(maxsize=8)
-def _backdrop(dataset, sequence, font_path, has_rgb):
+@lru_cache(maxsize=1)
+def _class_palette():
+    import numpy as np
+    from tools.render_activity_comparison import semantic_color
+    from tools.visualize_dsec_semantic_sequences import DSEC_SEMANTIC_11_CLASSES
+
+    # Keep predictions, pseudo-labels, ignored pixels and legend on the evaluation palette.
+    rgb = semantic_color(np.arange(256, dtype=np.uint8))
+    return rgb.tobytes(), DSEC_SEMANTIC_11_CLASSES
+
+
+@lru_cache(maxsize=16)
+def _backdrop(dataset, sequence, font_path, has_rgb, semantic):
     from PIL import Image, ImageDraw
 
     main, small = _fonts(font_path)
-    canvas = Image.new("RGB", panel_size(dataset), "#101b20")
+    canvas = Image.new("RGB", panel_size(dataset, semantic=semantic), "#101b20")
     draw = ImageDraw.Draw(canvas)
     draw.text((12, 5), f"{dataset.upper()}   {sequence}", font=main, fill="#f3f8fa")
     tile_height = _GEOMETRY[dataset][1] // 2
+    feature_top = _TITLE_HEIGHT
+    if semantic:
+        mask_height = _GEOMETRY[dataset][1] * 3 // 4
+        if font_path:
+            target_name = "DSEC 正解ラベル" if dataset == "dsec" else "M3ED 疑似ラベル（InternImage）"
+            headings = [target_name, "E1  12層後 ｜ Semantic 予測", "E1_b3_6_9_12  4段 ｜ Semantic 予測",
+                        "クラス色"]
+        else:
+            target_name = "DSEC ground truth" if dataset == "dsec" else "M3ED pseudo-label (InternImage)"
+            headings = [target_name, "E1  Block 12 | Semantic prediction", "E1_b3_6_9_12  Four stages | Semantic prediction",
+                        "Mask colors"]
+        for col, heading in enumerate(headings):
+            draw.text((col * _MASK_WIDTH + 8, _TITLE_HEIGHT + 5), heading, font=small, fill="#f1f8fa")
+        palette, names = _class_palette()
+        legend = [*enumerate(names), (255, "除外画素" if font_path else "ignore")]
+        x = 3 * _MASK_WIDTH + 8
+        pitch = min(25, mask_height // len(legend))
+        for i, (class_id, name) in enumerate(legend):
+            y = _TITLE_HEIGHT + _MASK_HEADER + i * pitch
+            color = tuple(palette[3 * class_id:3 * class_id + 3])
+            draw.rectangle((x, y + 4, x + 15, y + 17), fill=color, outline="#98a5a8")
+            draw.text((x + 22, y), name.replace("_", " "), font=small, fill="#f1f8fa")
+        feature_top += _MASK_HEADER + mask_height
     for i, (model, label) in enumerate(CONDITIONS.items()):
-        y = _TITLE_HEIGHT + i * (_ROW_HEADER + tile_height)
+        y = feature_top + i * (_ROW_HEADER + tile_height)
         draw.rectangle((0, y, canvas.width, y + _ROW_HEADER - 1), fill="#1a3039")
         if not font_path:
             layers = "12" if i == 0 else "3, 6, 9, 12"
@@ -210,30 +247,59 @@ def _backdrop(dataset, sequence, font_path, has_rgb):
             else:
                 title = f"Block {block}   " + ("ViT features" if vit else "LSTM output h")
             draw.text((j * _TILE_WIDTH + 8, y + 26), title, font=small, fill="#d7e4e8")
-    legend = ("色は特徴の主成分（RGB＝PC1・2・3）。同じ系列の同じ列で両モデル共通。"
+    legend = ("特徴パネルの色は主成分（RGB＝PC1・2・3）。同じ系列の同じ列で両モデル共通。"
               "各マスは入力16画素間隔のパッチ。" if font_path else
-              "RGB = feature PCs 1, 2, 3. Both rows share one color projection per column for this recording. "
+              "Feature panels: RGB = PCs 1, 2, 3. Both rows share one color projection per block for this recording. "
               "Each patch spans 16 input pixels.")
     draw.text((12, canvas.height - 32), legend, font=small, fill="#d7e4e8")
     return canvas
 
 
 def draw_feature_frame(colors, *, dataset, sequence, timestamp_us, elapsed_s, event_rate_hz,
-                       events, rgb=None, font_path=None):
-    """Draw two model rows next to aligned reference images, without smoothing feature patches."""
+                       events, rgb=None, font_path=None, predictions=None, target=None):
+    """Draw aligned inputs, feature grids and optional evaluated Semantic outputs."""
     from PIL import Image, ImageDraw
 
     width, height = _GEOMETRY[dataset]
     tile_size = (_TILE_WIDTH, height // 2)
-    canvas = _backdrop(dataset, sequence, str(font_path) if font_path else None, rgb is not None).copy()
+    canvas = _backdrop(dataset, sequence, str(font_path) if font_path else None,
+                       rgb is not None, predictions is not None).copy()
     _, small = _fonts(str(font_path) if font_path else None)
     stamp = f"元時刻 {timestamp_us} µs" if font_path else f"source {timestamp_us} us"
     timing = f"t = {elapsed_s:.3f} s     {stamp}     {event_rate_hz/1e6:.3f} M events/s"
     draw = ImageDraw.Draw(canvas)
     draw.text((canvas.width - 12 - draw.textlength(timing, font=small), 10), timing, font=small, fill="#c3e2e6")
+    feature_top = _TITLE_HEIGHT
+    if predictions is not None:
+        import numpy as np
+
+        if predictions.keys() != CONDITIONS.keys():
+            raise ValueError("Expected a Semantic prediction from both placement models")
+        mask_height = height * 3 // 4
+        top = _TITLE_HEIGHT + _MASK_HEADER
+        palette, names = _class_palette()
+        for col, labels in enumerate([target, *(predictions[key] for key in CONDITIONS)]):
+            x = col * _MASK_WIDTH
+            if col == 0 and labels is None:
+                missing = "この時刻のラベルなし" if font_path else "No label at this timestamp"
+                draw.text((_MASK_WIDTH // 2, top + mask_height // 2), missing, anchor="mm", font=small, fill="#b9c7ca")
+                continue
+            labels = np.asarray(labels)
+            if labels.shape != (height, width) or not np.issubdtype(labels.dtype, np.integer):
+                raise ValueError(f"Invalid Semantic mask geometry or dtype: {labels.shape}, {labels.dtype}")
+            invalid = (labels < 0) | (labels >= len(names))
+            if col == 0:
+                invalid &= labels != 255
+            if invalid.any():
+                raise ValueError("Unexpected Semantic class ID in class mask")
+            tile = Image.fromarray(labels.astype(np.uint8, copy=False)).resize(
+                (_MASK_WIDTH, mask_height), Image.Resampling.NEAREST)
+            tile.putpalette(palette)
+            canvas.paste(tile.convert("RGB"), (x, top))
+        feature_top = top + mask_height
     patch_height = (height + 15) // 16
     for i, key in enumerate(CONDITIONS):
-        y = _TITLE_HEIGHT + (i + 1) * _ROW_HEADER + i * tile_size[1]
+        y = feature_top + (i + 1) * _ROW_HEADER + i * tile_size[1]
         reference = rgb if i == 0 else events
         if reference is not None:
             source = Image.fromarray(reference)

@@ -122,13 +122,26 @@ class SemanticTargets:
             raise FileNotFoundError(f'Missing Semantic HDF5 targets for {sequence}: {candidates}')
         return None
 
+    def _source(self, sequence):
+        if sequence not in self._sequences:
+            self._sequences[sequence] = self._dsec(sequence) if self.dataset == 'dsec' else self._m3ed(sequence)
+        return self._sequences[sequence]
+
+    def labeled_timestamps(self, sequence):
+        """Scored label timestamps; the first image has no preceding event interval."""
+        source = self._source(sequence)
+        if source is None:
+            return frozenset()
+        if self.dataset == 'dsec':
+            labeled = {int(path.stem) for path in source['directory'].glob('*.png') if path.stem.isdecimal()}
+            return frozenset(t for t, i in source['indices'].items() if i > 0 and i in labeled)
+        return frozenset(t for t, i in source['indices'].items() if i > 0 and source['valid'][i])
+
     def get(self, sequence, timestamp):
         import numpy as np
 
         timestamp = int(timestamp)
-        if sequence not in self._sequences:
-            self._sequences[sequence] = self._dsec(sequence) if self.dataset == 'dsec' else self._m3ed(sequence)
-        source = self._sequences[sequence]
+        source = self._source(sequence)
         if source is None or timestamp not in source['indices']:
             return None
         index = source['indices'][timestamp]

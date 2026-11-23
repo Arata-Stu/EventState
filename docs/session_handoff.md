@@ -2,6 +2,8 @@
 
 最終更新: 2026-11-23
 
+12層後に1個のE1 Encoder＋LSTM（h蒸留）と4段のE1_b3_6_9_12について、特徴に加え、学習済みSemantic headの予測も同じ動画で比較する。DSEC公式test 3系列・M3ED公開val 2系列で両予測を全入力時刻、参照ラベルを対応時刻に表示する。`tools/render_placement_feature_review.py --with-semantic --gpus 0,1,2 --share-gpus 4096 --execute`、出力は `outputs/placement_feature_semantic_review_20261123/index.html`。実データの動画生成はサーバーで要確認。[生成と閲覧手順](activity_comparison_videos.md)
+
 配置比較の特徴動画は、学習と同じGPUで並行実行できる。`--gpus 0,1,2 --share-gpus 4096 --execute` で、起動時に4096 MiB以上の空きVRAMがあるGPUに動画を1本ずつ割り当てる。共有は特徴動画だけに適用し、Depthの下流タスクは引き続き同時2件まで。
 
 sig-gpu5での初回の共有実行は、DSEC公式testの3系列をGPU 0・1・2に割り当てた後、GPU 0の子ワーカーが `Assigned physical GPU is unavailable: 0` で推論前に終了した。子にも共有設定を渡し、起動時に親と同じ空きVRAM基準で再確認するよう修正した。同じ出力先での再実行と、実動画の完了確認が次の作業。該当ログは `outputs/placement_feature_review_20261123/logs/f9df1f0f9d52439895c8dd0dd7322074/dsec_semantic_zurich_city_13_a.log`。

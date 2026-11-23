@@ -77,3 +77,34 @@ def test_dsec_panels_show_half_of_last_patch_row_without_interpolation(monkeypat
     assert np.all(pixels[y:y+216, x] == [0, 218, 0])
     assert np.all(pixels[y+216:y+220, x] == [139, 0, 0])
     assert tuple(pixels[y+220+panels._ROW_HEADER+1, 37]) == (57, 57, 57)
+
+
+@pytest.mark.parametrize(("dataset", "height"), [("dsec", 440), ("m3ed", 352)])
+def test_semantic_masks_share_colors_keep_model_order_and_handle_missing_labels(dataset, height):
+    from event_state.evaluation import placement_feature_panels as panels
+    from tools.visualize_dsec_semantic_sequences import PALETTE
+
+    grid = np.full(((height + 15) // 16, 40, 3), 99, dtype=np.uint8)
+    features = {key: dict.fromkeys(BLOCKS, grid) for key in CONDITIONS}
+    target = np.zeros((height, 640), dtype=np.uint8)
+    target[:, :320] = 3
+    target[:, 320:] = 255
+    predictions = {key: np.full_like(target, cls) for key, cls in zip(CONDITIONS, [3, 8])}
+    kwargs = dict(dataset=dataset, sequence="test", timestamp_us=100, elapsed_s=0, event_rate_hz=0,
+                  events=np.zeros((height, 640, 3), dtype=np.uint8), predictions=predictions)
+    first = draw_feature_frame(features, **kwargs, target=target)
+    missing = draw_feature_frame(features, **kwargs, target=None)
+    assert first.size == missing.size == panel_size(dataset, semantic=True)
+    assert all(value % 2 == 0 for value in first.size)
+    pixels, without = np.asarray(first), np.asarray(missing)
+    y = panels._TITLE_HEIGHT + panels._MASK_HEADER + 5
+    width = panels._MASK_WIDTH
+    assert np.array_equal(pixels[y, 4], PALETTE[3])
+    assert tuple(pixels[y, width - 4]) == (35, 35, 35)
+    assert np.array_equal(pixels[y, width + 4], PALETTE[3])
+    assert np.array_equal(pixels[y, width * 2 + 4], PALETTE[8])
+    assert np.array_equal(pixels[y:, width:], without[y:, width:])
+    assert np.any(pixels[y, :width] != without[y, :width])
+    predictions["E1"][0, 0] = 255
+    with pytest.raises(ValueError, match="Unexpected Semantic class"):
+        draw_feature_frame(features, **kwargs, target=None)

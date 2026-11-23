@@ -29,10 +29,11 @@ class FeatureWorkerTests(unittest.TestCase):
                 idle.assert_called_once_with(("2",))
                 shared.assert_not_called()
                 render.assert_not_called()
-                worker.main([*command, "--share-gpus", "8192"])
+                worker.main([*command, "--share-gpus", "8192", "--with-semantic"])
                 self.assertEqual(shared.call_args_list, [call(("2",), min_free_mib=8192)] * 2)
                 sleep.assert_called_once_with(5)
                 render.assert_called_once()
+                self.assertTrue(render.call_args.args[0].with_semantic)
                 self.assertEqual(idle.call_count, 1)
 
     def test_input_stream_cannot_skip_reorder_or_substitute_frames(self):
@@ -43,8 +44,7 @@ class FeatureWorkerTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "Feature and activity"):
                 list(worker.aligned_frames(SimpleNamespace(frames=lambda seq: iter(changed)), "S", records))
 
-    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg tools unavailable")
-    def test_full_recording_is_encoded_with_all_inputs_and_missing_rgb(self):
+    def _check_full_recording(self, *, with_semantic, expected_gt_frames=1, previous=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             seqs, _ = eligible_sequences("dsec", "semantic")
@@ -61,7 +61,8 @@ class FeatureWorkerTests(unittest.TestCase):
                 source_metadata_sha256={r["sequence"]: canonical_sha256(metadata) for r in all_records}))
             worker.save(root/sequence/"metadata.json", metadata)
             args = SimpleNamespace(scenes=root/"plan.json", sequence=sequence, output=root/"attempt",
-                                   project_root=root, device="cpu", font=None, worker_result=root/"result.json")
+                                   project_root=root, device="cpu", font=None, worker_result=root/"result.json",
+                                   with_semantic=with_semantic)
             worker.save(args.scenes, select_full_sequences(activity, dataset="dsec", task="semantic"))
             conditions = {"E1": "baseline", "E1_b3_6_9_12": "four"}
             seg = [row for row in all_records if row["sequence"] == sequence]
@@ -72,18 +73,59 @@ class FeatureWorkerTests(unittest.TestCase):
                                       BLOCKS=(3, 6, 9, 12))
             projection = SimpleNamespace(to_dict=lambda: {"axes": "fixture"}, render=Mock(side_effect=lambda x: x))
             calibration = SimpleNamespace(add=Mock(), fit=lambda: projection)
+            restored = Mock(side_effect=lambda metadata: SimpleNamespace(to_dict=lambda: metadata, render=projection.render))
             canvas = SimpleNamespace(size=(16, 16), tobytes=lambda: bytes(16*16*3))
             panels = SimpleNamespace(FeatureCalibration=lambda: calibration, calibration_indices=lambda n: (0, 2),
+                                     FeatureProjection=SimpleNamespace(from_dict=restored),
                                      draw_feature_frame=Mock(return_value=canvas), select_panel_font=lambda _: None)
+            scene_id = f"dsec_semantic_{sequence}"
+            if previous:
+                prior = root/"outputs/placement_feature_review_20261123/dsec"/sequence/"render-abcd"
+                prior_pca = prior/scene_id/"projection.json"
+                worker.save(prior_pca, {"axes": "from v1"})
+                plan = worker.read(args.scenes)
+                receipt = dict(status="complete", feature_review_version=1, dataset="dsec", task="semantic",
+                               conditions=list(conditions), blocks=list(runtime.BLOCKS), videos={scene_id: {}},
+                               checkpoint_sha256={k: v["backbone_sha256"] for k, v in pair.identity.items()},
+                               selection_sha256=canonical_sha256(plan), activity_manifest_sha256=plan["activity_manifest_sha256"],
+                               projection_sha256=worker.sha256_file(prior_pca))
+                if previous == "tampered":
+                    worker.save(prior_pca, {"axes": "changed"})
+                if previous == "another_checkpoint":
+                    receipt["checkpoint_sha256"]["E1"] = "f" * 64
+                worker.save(prior/"manifest.json", receipt)
+                if previous != "unfinished":
+                    (prior/"_SUCCESS").touch()
+            expected_masks = [{key: (key, t) for key in conditions} for t in stamps]
+            expected_targets = [None, object(), None]
+            head_hashes = {key: str(i + 4) * 64 for i, key in enumerate(conditions)}
+            semantic = SimpleNamespace(identity={key: {"head_sha256": digest} for key, digest in head_hashes.items()},
+                                       predict=Mock(side_effect=expected_masks), target=Mock(side_effect=expected_targets),
+                                       expected_gt_frames=expected_gt_frames, close=Mock())
+            semantic_module = SimpleNamespace(PlacementSemanticOutputs=Mock(return_value=semantic))
             with patch.dict(sys.modules, {"event_state.evaluation.placement_features": runtime,
-                                          "event_state.evaluation.placement_feature_panels": panels}), \
+                                          "event_state.evaluation.placement_feature_panels": panels,
+                                          "event_state.evaluation.placement_semantic_outputs": semantic_module}), \
                  patch.object(worker, "event_frame"), \
                  patch.object(worker, "rgb_frame", side_effect=[object(), None, object()]):
+                if with_semantic and expected_gt_frames != 1:
+                    with self.assertRaisesRegex(ValueError, "Incomplete Semantic coverage"):
+                        worker.render(args)
+                    semantic.close.assert_called_once()
+                    self.assertFalse((args.output/"_SUCCESS").exists())
+                    self.assertFalse(args.worker_result.exists())
+                    return
                 worker.render(args)
-            self.assertEqual(pair.frames.call_count, 2)
-            self.assertEqual([c.args for c in calibration.add.call_args_list], [(stamps[0], 0), (stamps[2], 2)])
+            if previous == "valid":
+                self.assertEqual(pair.frames.call_count, 1)
+                restored.assert_called_once_with({"axes": "from v1"})
+                calibration.add.assert_not_called()
+                prior_pca.unlink()
+            else:
+                self.assertEqual(pair.frames.call_count, 2)
+                restored.assert_not_called()
+                self.assertEqual([c.args for c in calibration.add.call_args_list], [(stamps[0], 0), (stamps[2], 2)])
             self.assertEqual([c.args[0] for c in projection.render.call_args_list], stamps)
-            scene_id = f"dsec_semantic_{sequence}"
             dest = args.output / scene_id
             manifest = worker.read(args.output/"manifest.json")
             self.assertTrue((args.output/"_SUCCESS").is_file())
@@ -96,3 +138,46 @@ class FeatureWorkerTests(unittest.TestCase):
                 rows = list(csv.DictReader(stream))
             self.assertEqual([int(r["source_timestamp_us"]) for r in rows], stamps)
             self.assertEqual([r["rgb_available"] for r in rows], ["True", "False", "True"])
+            if with_semantic:
+                semantic_module.PlacementSemanticOutputs.assert_called_once_with("dsec", root, pair, sequence)
+                semantic.close.assert_called_once()
+                self.assertEqual(semantic.predict.call_args_list, [call(t) for t in stamps])
+                self.assertEqual(semantic.target.call_args_list, [call(t) for t in stamps])
+                rendered = [c.kwargs for c in panels.draw_feature_frame.call_args_list]
+                self.assertEqual([r["predictions"] for r in rendered], expected_masks)
+                self.assertEqual([r["target"] for r in rendered], expected_targets)
+                self.assertEqual([r["gt_available"] for r in rows], ["False", "True", "False"])
+                self.assertEqual(manifest["feature_review_version"], 2)
+                if previous == "valid":
+                    self.assertEqual(manifest["projection_source"], dict(mode="reused", path=str(prior_pca),
+                                                                         sha256=receipt["projection_sha256"]))
+                    self.assertEqual(worker.read(dest/"projection.json"), {"axes": "from v1"})
+                else:
+                    self.assertEqual(manifest["projection_source"], {"mode": "calibrated"})
+                self.assertEqual(manifest["semantic_heads"], semantic.identity)
+                self.assertEqual(manifest["semantic_head_sha256"], head_hashes)
+                self.assertEqual(manifest["videos"][scene_id]["semantic_prediction_frames"], len(stamps))
+                self.assertEqual(manifest["videos"][scene_id]["gt_available_frames"], 1)
+            else:
+                semantic_module.PlacementSemanticOutputs.assert_not_called()
+                self.assertNotIn("gt_available", rows[0])
+                self.assertNotIn("semantic_head_sha256", manifest)
+                self.assertEqual(manifest["feature_review_version"], 1)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg tools unavailable")
+    def test_full_recording_is_encoded_with_all_inputs_and_missing_rgb(self):
+        self._check_full_recording(with_semantic=False)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg tools unavailable")
+    def test_semantic_predictions_cover_all_inputs_and_gt_is_timestamp_matched(self):
+        self._check_full_recording(with_semantic=True)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg tools unavailable")
+    def test_semantic_render_only_reuses_verified_pca_and_copies_it_into_its_own_output(self):
+        for previous in ("valid", "tampered", "unfinished", "another_checkpoint"):
+            with self.subTest(previous=previous):
+                self._check_full_recording(with_semantic=True, previous=previous)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg tools unavailable")
+    def test_missing_scored_target_prevents_publishing_semantic_movie(self):
+        self._check_full_recording(with_semantic=True, expected_gt_frames=2)

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Render one native-timestamp Semantic evaluation recording for two frozen LSTM placements."""
 import argparse
+from contextlib import ExitStack
 import csv
+import hashlib
 from itertools import chain, zip_longest
 import json
 import os
@@ -56,7 +58,42 @@ def aligned_frames(pair, sequence, records):
         yield i, frame, maps, row
 
 
+def previous_projection(project_root, scene, identity):
+    """Load only a completed feature-only run's PCA for these exact models and inputs."""
+    from event_state.evaluation.placement_feature_panels import FeatureProjection
+
+    old_root = project_root / "outputs/placement_feature_review_20261123"
+    folder = old_root / identity["dataset"] / scene["sequence"]
+    for marker in sorted(folder.glob("render-*/_SUCCESS"), reverse=True):
+        if not marker.is_file():
+            continue
+        run = marker.parent
+        path = run / scene["id"] / "projection.json"
+        try:
+            manifest = read(run / "manifest.json")
+            if (manifest["feature_review_version"] != 1 or manifest["status"] != "complete"
+                    or any(manifest[k] != v for k, v in identity.items())
+                    or set(manifest["videos"]) != {scene["id"]}):
+                continue
+            content = path.read_bytes()
+            digest = hashlib.sha256(content).hexdigest()
+            if digest != manifest["projection_sha256"]:
+                raise ValueError("PCA checksum mismatch")
+            projection = FeatureProjection.from_dict(json.loads(content))
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            print(f"[{scene['sequence']}] Skipping prior PCA at {run}: {exc}", flush=True)
+            continue
+        print(f"[{scene['sequence']}] Reusing verified PCA: {path}", flush=True)
+        return projection, {"mode": "reused", "path": str(path), "sha256": digest}
+    return None, {"mode": "calibrated"}
+
+
 def render(args):
+    with ExitStack() as resources:
+        _render(args, resources)
+
+
+def _render(args, resources):
     from event_state.evaluation.placement_features import PlacementFeaturePair, CONDITIONS, BLOCKS
     from event_state.evaluation.placement_feature_panels import (
         calibration_indices, draw_feature_frame, FeatureCalibration, select_panel_font,
@@ -73,43 +110,69 @@ def render(args):
     pair = PlacementFeaturePair(dataset, args.project_root, device=args.device)
     validate_activity_source(activity, sequence, read(pair.prepared_root / sequence / "metadata.json"))
     del activity
+    semantic = None
+    if args.with_semantic:
+        from event_state.evaluation.placement_semantic_outputs import PlacementSemanticOutputs
+        semantic = PlacementSemanticOutputs(dataset, args.project_root, pair, sequence)
+        resources.callback(semantic.close)
     print(f"[{sequence}] {len(records)} inputs | " + " / ".join(CONDITIONS.values()), flush=True)
 
-    indices = set(calibration_indices(len(records)))
-    calibration = FeatureCalibration()
-    for i, frame, maps, row in aligned_frames(pair, sequence, records):
-        if i in indices:
-            calibration.add(maps, i)
-        if (i + 1) % 500 == 0:
-            print(f"[{sequence}] PCA calibration {i+1}/{len(records)}", flush=True)
-    projection = calibration.fit()
-    del calibration
+    identity = dict(dataset=dataset, task="semantic", conditions=list(CONDITIONS), blocks=list(BLOCKS),
+                    checkpoint_sha256={k: pair.identity[k]["backbone_sha256"] for k in CONDITIONS},
+                    selection_sha256=canonical_sha256(plan), activity_manifest_sha256=plan["activity_manifest_sha256"])
+    projection, projection_source = None, {"mode": "calibrated"}
+    if semantic is not None:
+        projection, projection_source = previous_projection(args.project_root, scene, identity)
+    if projection is None:
+        indices = set(calibration_indices(len(records)))
+        calibration = FeatureCalibration()
+        for i, frame, maps, row in aligned_frames(pair, sequence, records):
+            if i in indices:
+                calibration.add(maps, i)
+            if (i + 1) % 500 == 0:
+                print(f"[{sequence}] PCA calibration {i+1}/{len(records)}", flush=True)
+        projection = calibration.fit()
+        del calibration
     projection_path = destination / "projection.json"
     save(projection_path, projection.to_dict())
 
-    rgb_count = 0
+    rgb_count = gt_count = prediction_count = 0
     csv_path = destination / "frames.csv"
     video = destination / "comparison.mp4"
     with csv_path.open("x", encoding="utf-8", newline="") as out:
         table = csv.writer(out)
-        table.writerow(("source_timestamp_us", "video_time_s", "event_count", "window_us",
-                        "event_rate_hz", "activity_group", "rgb_available"))
+        columns = ["source_timestamp_us", "video_time_s", "event_count", "window_us",
+                   "event_rate_hz", "activity_group", "rgb_available"]
+        if semantic is not None:
+            columns.append("gt_available")
+        table.writerow(columns)
 
         def canvases():
-            nonlocal rgb_count
+            nonlocal rgb_count, gt_count, prediction_count
             for i, frame, maps, row in aligned_frames(pair, sequence, records):
                 timestamp = row["timestamp"]
                 elapsed = (timestamp - scene["start_us"]) / 1e6
                 rgb = rgb_frame(dataset, "semantic", pair.cfg, pair.prepared_root, sequence, timestamp,
                                 missing_ok=True)
                 rgb_count += int(rgb is not None)
+                values = [timestamp, elapsed, row["event_count"], row["window_us"],
+                          row["event_rate_hz"], row["group"], rgb is not None]
+                predictions = target = None
+                if semantic is not None:
+                    predictions = semantic.predict(maps)
+                    if set(predictions) != set(CONDITIONS):
+                        raise ValueError(f"Missing Semantic prediction at {sequence}/{timestamp}")
+                    prediction_count += 1
+                    target = semantic.target(timestamp)
+                    values.append(target is not None)
+                    gt_count += int(target is not None)
                 canvas = draw_feature_frame(
                     projection.render(maps), dataset=dataset, sequence=sequence, timestamp_us=timestamp,
                     elapsed_s=elapsed, event_rate_hz=row["event_rate_hz"], rgb=rgb, font_path=font,
                     events=event_frame(frame["events"], dataset, "semantic"),
+                    predictions=predictions, target=target,
                 )
-                table.writerow((timestamp, elapsed, row["event_count"], row["window_us"],
-                                row["event_rate_hz"], row["group"], rgb is not None))
+                table.writerow(values)
                 if (i + 1) % 100 == 0:
                     print(f"[{sequence}] rendering {i+1}/{len(records)}", flush=True)
                 yield canvas
@@ -121,16 +184,22 @@ def render(args):
 
     timing = verify_video_timestamps(video, scene["timestamps_us"], scene["end_us"])
     manifest = dict(
-        status="complete", feature_review_version=1, dataset=dataset, task="semantic",
-        conditions=list(CONDITIONS), blocks=list(BLOCKS), models=pair.identity,
-        checkpoint_sha256={k: pair.identity[k]["backbone_sha256"] for k in CONDITIONS},
-        selection_sha256=canonical_sha256(plan), activity_manifest_sha256=plan["activity_manifest_sha256"],
+        **identity, status="complete", feature_review_version=2 if semantic is not None else 1, models=pair.identity,
         projection_sha256=sha256_file(projection_path), frames_csv_sha256=sha256_file(csv_path),
         panel_language="ja" if font else "en",
         video_sha256=sha256_file(video),
         videos={scene["id"]: dict(original_frames=len(records), video_size=list(first.size),
                                   rgb_available_frames=rgb_count, timing=timing)},
     )
+    if semantic is not None:
+        if prediction_count != len(records) or not gt_count or gt_count != semantic.expected_gt_frames:
+            raise ValueError(f"Incomplete Semantic coverage for {sequence}: {prediction_count}/{len(records)} "
+                             f"predictions, {gt_count}/{semantic.expected_gt_frames} targets")
+        manifest["semantic_heads"] = semantic.identity
+        manifest["projection_source"] = projection_source
+        manifest["semantic_head_sha256"] = {k: semantic.identity[k]["head_sha256"] for k in CONDITIONS}
+        manifest["videos"][scene["id"]].update(semantic_prediction_frames=prediction_count,
+                                                gt_available_frames=gt_count)
     save(args.output / "manifest.json", manifest)
     (args.output / "_SUCCESS").touch(exist_ok=False)
     if args.worker_result:
@@ -146,6 +215,7 @@ def main(argv=None):
     p.add_argument("--device", default="cuda")
     p.add_argument("--project-root", type=Path, default=ROOT)
     p.add_argument("--font", type=Path)
+    p.add_argument("--with-semantic", action="store_true", help="Show both Semantic predictions and timestamp-matched targets")
     p.add_argument("--worker-result", type=Path, help=argparse.SUPPRESS)
     p.add_argument("--share-gpus", type=int, metavar="MIN_FREE_MIB", help=argparse.SUPPRESS)
     args = p.parse_args(argv)

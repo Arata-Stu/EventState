@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render synchronized block features for the two trained Semantic placements."""
+"""Render synchronized block features and optional Semantic predictions for two trained LSTM placements."""
 import argparse
 import fcntl
 from functools import partial
@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 from event_state.dense.protocol import sha256_file
 from event_state.evaluation.activity_scenes import eligible_sequences
 from event_state.evaluation.placement_features import CONDITIONS, checkpoint_paths
+from event_state.evaluation.placement_semantic_outputs import semantic_head_paths
 from tools.common_depth_parallel import parse_gpus, run_parallel
 from tools.render_full_evaluation import prepare_plans, publish, review_page, review_video
 from tools.run_temporal_downstream import idle_gpus, shared_gpus
@@ -24,12 +25,21 @@ TASKS = (("dsec", "semantic"), ("m3ed", "semantic"))
 TITLE = "LSTM配置と特徴の変化"
 NOTE = ("特徴の色は同じ系列・同じ層の2モデルで共通のPCAです。層や系列が変わると色の対応も変わります。"
         "色は意味クラスを表しません。")
+SEMANTIC_TITLE = "LSTM配置によるSemantic予測と特徴の比較"
+SEMANTIC_NOTE = ("予測マスクと参照ラベルは共通の11クラス配色です。DSECは公式testのラベル、M3EDは公開valの"
+                 "疑似ラベルを同じ時刻に表示します。各層の特徴は系列・層ごとのPCAで色付けしています。")
 
 
-def checked_entry(output, run, plan, scene, checkpoints):
+def checked_entry(output, run, plan, scene, checkpoints, heads=None):
     manifest = json.loads((run / "manifest.json").read_text())
-    if manifest.get("feature_review_version") != 1 or manifest.get("checkpoint_sha256") != checkpoints:
+    if manifest.get("feature_review_version") != (2 if heads else 1) or manifest.get("checkpoint_sha256") != checkpoints:
         raise ValueError(f"Different feature protocol or checkpoint: {run}")
+    if heads:
+        video = manifest["videos"][scene["id"]]
+        count = len(scene["timestamps_us"])
+        if (manifest.get("semantic_head_sha256") != heads or video["semantic_prediction_frames"] != count
+                or not 0 < video["gt_available_frames"] <= count):
+            raise ValueError(f"Semantic heads or frame coverage differ from the requested review: {run}")
     folder = run / scene["id"]
     for file, key in (("projection.json", "projection_sha256"), ("frames.csv", "frames_csv_sha256"),
                       ("comparison.mp4", "video_sha256")):
@@ -46,6 +56,11 @@ def render(args, lock):
     checkpoints = {ds: {key: sha256_file(path) for key, path in checkpoint_paths(ds, args.project_root).items()}
                    for ds, _ in TASKS}
     identity = dict(feature_review_version=1, checkpoint_sha256=checkpoints, activity_dir=str(args.activity_dir))
+    heads = {}
+    if args.with_semantic:
+        heads = {ds: {key: sha256_file(path) for key, path in semantic_head_paths(ds, args.project_root).items()}
+                 for ds, _ in TASKS}
+        identity.update(feature_review_version=2, semantic_head_sha256=heads)
     if identity_path.exists():
         if json.loads(identity_path.read_text()) != identity:
             raise ValueError(f"Inputs changed; choose another --output: {output}")
@@ -65,7 +80,7 @@ def render(args, lock):
             for run in reversed(attempts):
                 if (run / "_SUCCESS").is_file():
                     try:
-                        entries[key] = checked_entry(output, run, plan, scene, checkpoints[ds])
+                        entries[key] = checked_entry(output, run, plan, scene, checkpoints[ds], heads.get(ds))
                         break
                     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
                         print(f"Previous video {run}: {error}", flush=True)
@@ -77,7 +92,8 @@ def render(args, lock):
 
     def write_index():
         review_page(output, template, [entries[k] for k in sources if k in entries], CONDITIONS,
-                    title=TITLE, note=NOTE)
+                    title=SEMANTIC_TITLE if args.with_semantic else TITLE,
+                    note=SEMANTIC_NOTE if args.with_semantic else NOTE)
 
     (output / "_SUCCESS").unlink(missing_ok=True)
     write_index()
@@ -86,6 +102,8 @@ def render(args, lock):
             cmd = [sys.executable, "-u", str(ROOT / "tools/render_placement_feature_sequence.py"),
                    "--scenes", str(job["plan"]), "--sequence", job["sequence"], "--output", str(job["run"]),
                    "--project-root", str(args.project_root), "--device", "cuda", "--worker-result", str(result)]
+            if args.with_semantic:
+                cmd.append("--with-semantic")
             if args.share_gpus is not None:
                 cmd += ["--share-gpus", str(args.share_gpus)]
             if args.font:
@@ -94,7 +112,8 @@ def render(args, lock):
 
         def completed(key, result):
             plan, scene = sources[key]
-            entries[key] = checked_entry(output, Path(result["run"]), plan, scene, checkpoints[plan["dataset"]])
+            ds = plan["dataset"]
+            entries[key] = checked_entry(output, Path(result["run"]), plan, scene, checkpoints[ds], heads.get(ds))
             write_index()
             print(f"[{len(entries)}/{len(sources)}] {scene['sequence']} → {output / 'index.html'}", flush=True)
 
@@ -116,6 +135,8 @@ def main(argv=None):
     parser.add_argument("--project-root", type=Path, default=ROOT)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--activity-dir", type=Path)
+    parser.add_argument("--with-semantic", action="store_true",
+                        help="Include both evaluated Semantic heads' predictions, exact-time GT and a class legend")
     parser.add_argument("--gpus", default="0,1,2")
     parser.add_argument("--share-gpus", nargs="?", type=int, const=4096, metavar="MIN_FREE_MIB",
                         help="Also use busy GPUs with this much free VRAM at dispatch (default when enabled: 4096 MiB)")
@@ -126,13 +147,16 @@ def main(argv=None):
         parser.error("--share-gpus requires a positive amount of free VRAM in MiB")
     args.project_root = args.project_root.expanduser().resolve()
     outputs = args.project_root / "outputs"
-    args.output = (args.output or outputs / "placement_feature_review_20261123").expanduser().resolve()
+    directory = "placement_feature_semantic_review_20261123" if args.with_semantic else "placement_feature_review_20261123"
+    args.output = (args.output or outputs / directory).expanduser().resolve()
     args.activity_dir = (args.activity_dir or outputs / "semantic_depth_activity_20261110/manifests").expanduser().resolve()
     args.gpus = parse_gpus(args.gpus)
     for ds, task in TASKS:
         names, _ = eligible_sequences(ds, task)
         print(f"{ds} {task} | {', '.join(names)}", flush=True)
     print(" / ".join(CONDITIONS.values()), flush=True)
+    if args.with_semantic:
+        print("Full sequences | block features + both Semantic predictions on every input + exact-time labels", flush=True)
     if args.share_gpus is not None:
         print(f"Shared GPUs {','.join(args.gpus)} | launch with >= {args.share_gpus} MiB free | "
               "one video worker per GPU", flush=True)
