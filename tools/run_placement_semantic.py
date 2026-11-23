@@ -62,23 +62,29 @@ def validate_config(config, dataset, condition):
     audit_common(config)
 
 
-def verified_metrics(dataset, condition, output, baseline):
+def verified_metrics(dataset, condition, output, baseline, *, feature="h", label=None, backbone_sha256=None):
     """Compare evaluation inputs/GT/support with the completed, single-GPU S4 reference."""
     if not (output / "_SUCCESS").is_file():
         raise ValueError(f"Semantic worker has not completed: {output}")
     report_path, head_path, role = (
         ("activity_test.json", "final/last.pt", "test") if dataset == "dsec" else
-        ("h/activity_groups.json", "h/best.pt", "validation"))
+        (f"{feature}/activity_groups.json", f"{feature}/best.pt", "validation"))
+    label = label or placement_label(condition)
     report = read(output / report_path)
     activity = report["activity_evaluation"]
-    if (report["role"] != role or report["feature"] != "h"
-            or activity["condition_label"] != placement_label(condition)
+    if (report["role"] != role or report["feature"] != feature
+            or activity["condition_label"] != label
             or activity["head_sha256"] != sha256_file(output / head_path)
             or activity["activity_manifest"]["manifest_sha256"] != baseline["manifest_sha256"]
             or activity["state_policy_by_sequence"] != baseline["state_policy_by_sequence"]
             or any(activity[key] != baseline[key] for key in COMPARISON_HASHES)
             or activity["groups"].keys() != baseline["groups"].keys()):
         raise ValueError(f"Head or evaluation set differs from the matched Semantic protocol: {output}")
+    if feature == "stages":
+        config = read((output / head_path).parent / "config.json")
+        if (not backbone_sha256 or any(source.get("backbone_sha256") != backbone_sha256
+                or source.get("stage_blocks") != [3, 6, 9, 12] for source in (config, report))):
+            raise ValueError(f"Frozen checkpoint or block order differs for the four-layer readout: {output}")
     scores = {}
     deltas = {}
     for group, source in baseline["groups"].items():
@@ -91,10 +97,14 @@ def verified_metrics(dataset, condition, output, baseline):
             raise ValueError(f"Invalid Semantic mIoU in {group}: {output}")
         scores[group] = score
         deltas[group] = 100 * (score - source["metrics"]["mIoU"])
-    result = dict(dataset=dataset, condition=condition, label=placement_label(condition),
-                  after_blocks=list(PLACEMENTS[condition]), role=role, head=str(output / head_path),
+    result = dict(dataset=dataset, condition=condition, label=label,
+                  after_blocks=[12] if condition == "E1" else list(PLACEMENTS[condition]), role=role, head=str(output / head_path),
                   head_sha256=activity["head_sha256"], report=str(output / report_path),
-                  mIoU=scores, delta_from_final_block_only_pp=deltas)
+                  mIoU=scores)
+    if feature == "stages":
+        result.update(feature=feature, stage_blocks=config["stage_blocks"])
+    else:
+        result["delta_from_final_block_only_pp"] = deltas
     if dataset == "dsec":
         epoch = read(output / "final/config.json")["selected_development_epoch"]
         metrics_path = output / "development/metrics.jsonl"
@@ -112,23 +122,28 @@ def verified_metrics(dataset, condition, output, baseline):
     return result
 
 
-def m3ed_command(a, ckpt, cache, output, condition):
+def m3ed_command(a, ckpt, cache, output, condition, *, feature="h", label=None):
     return [sys.executable, "-u", str(ROOT / "tools/run_common_m3ed_semantic.py"),
             "--checkpoint", str(ckpt), "--prepared-root", str(a.data / "m3ed_cache/half_dagr"),
             "--target-root", str(a.m3ed_target_root), "--statistics", str(a.statistics),
-            "--cache", str(cache), "--output", str(output), "--features", "h",
-            "--activity-manifest", str(a.activity_root / "m3ed.json"), "--condition-label", placement_label(condition)]
+            "--cache", str(cache), "--output", str(output), "--features", feature,
+            "--activity-manifest", str(a.activity_root / "m3ed.json"), "--condition-label", label or placement_label(condition)]
 
 
-def run_condition(a, ds, condition, baseline, lock_fd, status_callback=None):
+def run_condition(a, ds, condition, baseline, lock_fd, status_callback=None, *, feature="h", checkpoint=None, label=None):
     from event_state.training import load_checkpoint_config_metadata
 
     key = f"{ds}_{condition}"
-    checkpoint = a.stage1_root / f"{key}_w1/checkpoints/step_00099999.pt"
+    label = label or placement_label(condition)
+    checkpoint = checkpoint or a.stage1_root / f"{key}_w1/checkpoints/step_00099999.pt"
     metadata = load_checkpoint_config_metadata(checkpoint)
     if metadata.global_step != 99999:
         raise ValueError(f"Expected the final 99,999-update Stage 1 checkpoint: {checkpoint}")
-    validate_config(metadata.config, ds, condition)
+    if feature == "stages":
+        from event_state.evaluation.placement_features import placement_input_contract
+        placement_input_contract(metadata.config, ds, condition, metadata.global_step, ROOT)
+    else:
+        validate_config(metadata.config, ds, condition)
     checkpoint_sha = sha256_file(checkpoint)
     directory = a.output / key
     receipt = directory / "verified.json"
@@ -136,10 +151,11 @@ def run_condition(a, ds, condition, baseline, lock_fd, status_callback=None):
         saved = read(receipt)
         if saved["backbone_sha256"] != checkpoint_sha:
             raise ValueError(f"Existing run used another Stage 1 checkpoint: {receipt}; use a new --output")
-        measured = verified_metrics(ds, condition, directory / saved["attempt"], baseline)
+        measured = verified_metrics(ds, condition, directory / saved["attempt"], baseline,
+                                    feature=feature, label=label, backbone_sha256=checkpoint_sha)
         if any(saved[k] != v for k, v in measured.items()):
             raise ValueError(f"Retained metrics no longer match the saved report: {receipt}")
-        print(f"[{key}] {placement_label(condition)} | verified existing head", flush=True)
+        print(f"[{key}] {label} | verified existing head", flush=True)
         return saved
     # Distinct attempts preserve previous failures and any data from a differently named suite.
     attempt = "run-" + uuid4().hex[:12]
@@ -150,16 +166,16 @@ def run_condition(a, ds, condition, baseline, lock_fd, status_callback=None):
     if ds == "dsec":
         settings = copy(a)
         settings.output, settings.scratch = directory, cache.parent
-        job = build_semantic_job(settings, checkpoint=checkpoint, name=attempt, label=placement_label(condition))
+        job = build_semantic_job(settings, checkpoint=checkpoint, name=attempt, label=label, feature=feature)
         job["name"] = key
         if a.execute:
             a.scratch.mkdir(parents=True, exist_ok=True)
             if shutil.disk_usage(a.scratch).free < 1.1 * job["cache_bytes"]:
-                raise OSError(f"Insufficient disk for DSEC sparse h features: {cache}")
+                raise OSError(f"Insufficient disk for DSEC sparse {feature} features: {cache}")
             settings.parent_lock_fd = lock_fd
             run_semantic_job(settings, job, status_callback=status_callback)
     else:
-        command = m3ed_command(a, checkpoint, cache, output, condition)
+        command = m3ed_command(a, checkpoint, cache, output, condition, feature=feature, label=label)
         if not a.execute:
             command.append("--preflight")
         if lock_fd is not None:
@@ -168,11 +184,12 @@ def run_condition(a, ds, condition, baseline, lock_fd, status_callback=None):
             command.extend(("--worker-status", str(a.worker_status)))
         subprocess.run(command, cwd=ROOT, check=True, pass_fds=() if lock_fd is None else (lock_fd,))
     if a.execute:
-        result = verified_metrics(ds, condition, output, baseline)
+        result = verified_metrics(ds, condition, output, baseline, feature=feature, label=label,
+                                  backbone_sha256=checkpoint_sha)
         result.update(attempt=attempt, seed=0, global_step=metadata.global_step,
                       backbone=str(checkpoint), backbone_sha256=checkpoint_sha, cache=str(cache))
         save(receipt, result)
-        print(f"[{key}] {placement_label(condition)} | {result['role']} mIoU={100*result['mIoU']['all']:.3f}%", flush=True)
+        print(f"[{key}] {label} | {result['role']} mIoU={100*result['mIoU']['all']:.3f}%", flush=True)
         return result
 
 
@@ -196,12 +213,12 @@ def write_summary(a, baselines):
         (a.output / "_SUCCESS").touch()
 
 
-def cache_bytes(a, dataset, condition):
-    """All placements on the same dataset cache one fp16 h map per labeled frame."""
+def cache_bytes(a, dataset, condition, *, feature="h", checkpoint=None, label=None):
+    """Reserve one fp16 feature map per labeled frame on the native Semantic grid."""
     if dataset == "dsec":
-        checkpoint = a.stage1_root / f"dsec_{condition}_w1/checkpoints/step_00099999.pt"
+        checkpoint = checkpoint or a.stage1_root / f"dsec_{condition}_w1/checkpoints/step_00099999.pt"
         job = build_semantic_job(a, checkpoint=checkpoint, name="estimate-" + uuid4().hex,
-                                 label=placement_label(condition))
+                                 label=label or placement_label(condition), feature=feature)
         return job["cache_bytes"]
     import h5py
     import hdf5plugin  # Register the compressed filters used by the prepared M3ED targets.
@@ -212,7 +229,8 @@ def cache_bytes(a, dataset, condition):
     for seq in (*split["train"], *split["val"]):
         with h5py.File(a.m3ed_target_root / seq / "targets.h5") as targets:
             frames += int(np.count_nonzero(targets["semantics_frame_valid"][1:]))
-    return frames * (384 * 22 * 40 * 2 + 4096)
+    channels = {"h": 384, "stages": 1536}[feature]
+    return frames * (channels * 22 * 40 * 2 + 4096)
 
 
 def worker_command(a, job, status_path, result_path, lock_fd):

@@ -2,6 +2,8 @@
 
 最終更新: 2026-11-23
 
+2026-11-23、途中のLSTM出力にSemanticのクラス判別情報が残るという仮説を検証する実験を実装。DSEC・M3EDそれぞれで12層後のみのE1と4段のE1_b3_6_9_12を凍結し、既存最終層headに対する4層連結headの改善幅を比べる。新規学習はSemantic 4ジョブ。サーバー同期後に `env/bin/python -u tools/run_placement_semantic_readout.py --gpus 0,1,2 --execute`。全体と活動5群の改善幅の差を `outputs/stage2_placement_semantic_readout_20261123/summary.json` へ集計する。実データの新規mIoUは未測定。[実験条件と起動手順](lstm_placement_semantic.md#途中の特徴をsemantic-headが直接読めると配置差は縮まるか)
+
 2026-11-23、12層後の対照と6配置のStage 1本学習lossをDSEC・M3EDで受領（台帳§103、1万更新ごと全10区間）。両データセットで12層後1個が全区間の最小。12層後1個→4段で終盤train lossはDSEC 0.09552→0.1422、M3ED 0.06290→0.1067。下流headの学習前から最終出力の教師整合に差がある。Stage 1はtrain-only。Depth・多層Semantic headで途中の特徴を直接利用した場合の効果は未検証。[集計手順](lstm_placement_semantic.md#評価)
 
 12層後に1個のE1 Encoder＋LSTM（h蒸留）と4段のE1_b3_6_9_12について、特徴に加え、学習済みSemantic headの予測も同じ動画で比較する。DSEC公式test 3系列・M3ED公開val 2系列で両予測を全入力時刻、参照ラベルを対応時刻に表示する。`tools/render_placement_feature_review.py --with-semantic --gpus 0,1,2 --share-gpus 4096 --execute`、出力は `outputs/placement_feature_semantic_review_20261123/index.html`。実データの動画生成はサーバーで要確認。[生成と閲覧手順](activity_comparison_videos.md)

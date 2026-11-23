@@ -83,7 +83,7 @@ def _labels(root, role, sequence):
     return matches[0], len(files)
 
 
-def build_semantic_job(a, *, checkpoint=None, name="dsec_semantic", label=LABEL):
+def build_semantic_job(a, *, checkpoint=None, name="dsec_semantic", label=LABEL, feature="h"):
     """Validate a fresh job and return its plan without writing any files."""
     project = Path(a.project_root).resolve()
     config_path = _file(_resolve(project, a.baseline_semantic_config))
@@ -151,14 +151,13 @@ def build_semantic_job(a, *, checkpoint=None, name="dsec_semantic", label=LABEL)
             sources[sequence] = dict(role=role, labels=str(label_dir), label_files=n,
                                      event_metadata_sha256=canonical_sha256(metadata))
             count += n
-    # One h map per label, plus serialization/metadata overhead. Labels with no
-    # event interval are still reserved, so this is conservative.
-    cache_bytes = count * (384 * 28 * 40 * 2 + 16_384)
+    channels = {"h": 384, "stages": 1536}[feature]
+    cache_bytes = count * (channels * 28 * 40 * 2 + 16_384)
     identity = dict(backbone_sha256=_sha(checkpoint), baseline_config_sha256=_sha(config_path),
                     split_sha256=_sha(split_file), activity_manifest_sha256=activity.identity["manifest_sha256"],
                     activity_group_names=list(activity.groups),
                     labels_root=str(labels_root), sources=sources, seed=0,
-                    development_epochs=50, feature="h", head_type="linear", loss="ce")
+                    development_epochs=50, feature=feature, head_type="linear", loss="ce")
     return dict(name=name, kind="semantic", task="semantic", dataset="dsec", label=label,
                 backbone=str(checkpoint), checkpoint=str(checkpoint), output=str(output), head=str(output),
                 cache=str(cache), events=str(events), labels_root=str(labels_root), split=str(split_file),
@@ -179,6 +178,7 @@ def run_semantic_job(a, job, status_callback=None):
     """Run the unchanged two-fit wrapper, then the existing activity evaluator."""
     project = Path(a.project_root).resolve()
     output, cache = Path(job["output"]), Path(job["cache"])
+    feature = job["identity"]["feature"]
     gpu = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if not gpu.isdecimal():
         raise ValueError("Semantic worker requires exactly one numeric CUDA_VISIBLE_DEVICES GPU ID")
@@ -199,7 +199,7 @@ def run_semantic_job(a, job, status_callback=None):
     command = ["bash", str(project / "tools/run_dsec_semantic_frozen.sh"),
                "--checkpoint", job["backbone"], "--event-cache-dir", job["events"],
                "--labels-root", job["labels_root"], "--feature-cache-dir", str(cache),
-               "--output-dir", str(output), "--feature", "h", "--gpu", gpu,
+               "--output-dir", str(output), "--feature", feature, "--gpu", gpu,
                "--seed", "0", "--batch-size", "8", "--epochs", "50",
                "--num-workers", str(job["num_workers"]), "--head-width", str(job["head_width"]),
                "--head-type", "linear", "--loss", "ce",
@@ -210,7 +210,8 @@ def run_semantic_job(a, job, status_callback=None):
     for sequence in job["identity"]["sources"]:
         meta = _read(_file(cache / sequence / "metadata.json"))
         indices = meta.get("cached_frame_indices", [])
-        if (meta.get("state_policy") != "continuous" or meta.get("features") != ["h"]
+        if (meta.get("state_policy") != "continuous" or meta.get("features") != [feature]
+                or (feature == "stages" and meta.get("stage_blocks") != [3, 6, 9, 12])
                 or meta.get("checkpoint_sha256") != job["identity"]["backbone_sha256"]
                 or not indices or len(indices) != len(set(indices))):
             raise ValueError(f"Incomplete/different Semantic feature cache: {sequence}")
@@ -221,7 +222,7 @@ def run_semantic_job(a, job, status_callback=None):
     command = [sys.executable, "-u", str(project / "tools/evaluate_dsec_semantic.py"),
                "--checkpoint", str(output / "final/last.pt"), "--feature-cache-dir", str(cache),
                "--labels-root", job["labels_root"], "--split-manifest", job["split"],
-               "--role", "test", "--feature", "h", "--batch-size", "8",
+               "--role", "test", "--feature", feature, "--batch-size", "8",
                "--num-workers", str(job["num_workers"]), "--precision", "fp16", "--device", "cuda",
                "--activity-manifest", job["activity_manifest"], "--condition-label", job["label"],
                "--output", job["activity_report"]]
@@ -229,7 +230,7 @@ def run_semantic_job(a, job, status_callback=None):
     main, report = _read(output / "test_metrics.json"), _read(job["activity_report"])
     if any(not isinstance(r.get("mIoU"), (float, int)) or isinstance(r["mIoU"], bool)
            or not math.isfinite(r["mIoU"]) or not 0 <= r["mIoU"] <= 1
-           or r.get("role") != "test" or r.get("feature") != "h" for r in (main, report)):
+           or r.get("role") != "test" or r.get("feature") != feature for r in (main, report)):
         raise ValueError("Incomplete/different DSEC Semantic test report")
     activity = report.get("activity_evaluation", {})
     if (activity.get("condition_label") != job["label"]

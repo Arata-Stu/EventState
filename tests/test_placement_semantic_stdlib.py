@@ -224,6 +224,33 @@ slot.unlink()
         self.assertEqual(list(suite.read(a.output/"summary.json")["semantic"]), [key])
         self.assertFalse((a.output/"_SUCCESS").exists())
 
+    def test_four_layer_report_must_match_the_trained_head_and_requested_backbone(self):
+        for ds in suite.DATASETS:
+            directory = self.root / ds
+            old_path, report = self.make_report(ds, "E1_b3_6_9_12", directory)
+            if ds == "m3ed":
+                (directory/"h").rename(directory/"stages")
+                path = directory/"stages/activity_groups.json"
+            else:
+                path = old_path
+            config_path = path.parent/"config.json" if ds == "m3ed" else directory/"final/config.json"
+            config = suite.read(config_path) if config_path.exists() else {}
+            provenance = dict(backbone_sha256="frozen", stage_blocks=[3, 6, 9, 12])
+            suite.save(config_path, dict(config, **provenance))
+            report.update(feature="stages", **provenance)
+            report["activity_evaluation"]["condition_label"] = "four-block E1"
+            suite.save(path, report)
+
+            def measure():
+                return suite.verified_metrics(ds, "E1", directory, self.baselines[ds], feature="stages",
+                                              label="four-block E1", backbone_sha256="frozen")
+
+            self.assertEqual(measure()["after_blocks"], [12])
+            for field, wrong_value in (("backbone_sha256", "stale"), ("stage_blocks", [12, 9, 6, 3])):
+                suite.save(path, dict(report, **{field: wrong_value}))
+                with self.subTest(ds=ds, field=field), self.assertRaisesRegex(ValueError, "block order"):
+                    measure()
+
 
 if __name__ == "__main__":
     unittest.main()

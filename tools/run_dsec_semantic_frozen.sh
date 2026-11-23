@@ -28,7 +28,7 @@ Usage:
   bash tools/run_dsec_semantic_frozen.sh \
     --checkpoint PATH --event-cache-dir PATH --labels-root PATH \
     --feature-cache-dir PATH --output-dir PATH \
-    [--feature z|h|concat] [--teacher-checkpoint PATH] [--gpu N] \
+    [--feature z|h|concat|stages] [--teacher-checkpoint PATH] [--gpu N] \
     [--batch-size N] [--epochs N] [--num-workers N] [--seed N] \
     [--head-type linear|nonlinear|gep_patch] [--loss ce|ce-dice] \
     [--activity-active-weight FLOAT] [--activity-inactive-weight FLOAT]
@@ -70,8 +70,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$FEATURE" in
-  z|h|concat) ;;
-  *) fail "--feature must be z, h, or concat" ;;
+  z|h|concat|stages) ;;
+  *) fail "--feature must be z, h, concat, or stages" ;;
 esac
 case "$HEAD_TYPE" in
   linear|nonlinear|gep_patch) ;;
@@ -111,15 +111,14 @@ if [ "$FEATURE" = concat ]; then
 else
   FEATURES=("$FEATURE")
 fi
-TEACHER_ARGS=()
+CACHE_ARGS=(--state-policy continuous --device cuda)
 if [ -n "$TEACHER_CHECKPOINT" ]; then
   TEACHER_CHECKPOINT=$(cd "$(dirname "$TEACHER_CHECKPOINT")" && pwd -P)/$(basename "$TEACHER_CHECKPOINT")
-  TEACHER_ARGS=(--teacher-checkpoint "$TEACHER_CHECKPOINT")
+  CACHE_ARGS+=(--teacher-checkpoint "$TEACHER_CHECKPOINT")
 fi
 
-ACTIVITY_CACHE_ARGS=()
 if [ "$ACTIVITY_ACTIVE_WEIGHT" != "1.0" ] || [ "$ACTIVITY_INACTIVE_WEIGHT" != "1.0" ]; then
-  ACTIVITY_CACHE_ARGS=(--include-activity)
+  CACHE_ARGS+=(--include-activity)
 fi
 
 for ROLE in train val test; do
@@ -131,16 +130,13 @@ for ROLE in train val test; do
     --output-dir "$FEATURE_CACHE_DIR" \
     --role "$ROLE" \
     --features "${FEATURES[@]}" \
-    "${ACTIVITY_CACHE_ARGS[@]}" \
-    --state-policy continuous \
-    --device cuda \
-    "${TEACHER_ARGS[@]}" \
+    "${CACHE_ARGS[@]}" \
     >"$OUTPUT_DIR/logs/cache_${ROLE}.log" 2>&1
 done
 
-DEVELOPMENT_RESUME=()
+DEVELOPMENT_ARGS=(--device cuda)
 if [ -f "$OUTPUT_DIR/development/last.pt" ]; then
-  DEVELOPMENT_RESUME=(--resume "$OUTPUT_DIR/development/last.pt")
+  DEVELOPMENT_ARGS+=(--resume "$OUTPUT_DIR/development/last.pt")
   printf '[dsec-semantic] resuming development head from %s\n' \
     "$OUTPUT_DIR/development/last.pt"
 fi
@@ -161,14 +157,13 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --activity-inactive-weight "$ACTIVITY_INACTIVE_WEIGHT" \
   --seed "$SEED" \
   --precision fp16 \
-  --device cuda \
-  "${DEVELOPMENT_RESUME[@]}" \
+  "${DEVELOPMENT_ARGS[@]}" \
   >"$OUTPUT_DIR/logs/train.log" 2>&1
 
 [ -f "$OUTPUT_DIR/development/best.pt" ] || fail "best development head was not produced"
-FINAL_RESUME=()
+FINAL_ARGS=(--device cuda)
 if [ -f "$OUTPUT_DIR/final/last.pt" ]; then
-  FINAL_RESUME=(--resume "$OUTPUT_DIR/final/last.pt")
+  FINAL_ARGS+=(--resume "$OUTPUT_DIR/final/last.pt")
   printf '[dsec-semantic] resuming official final head from %s\n' \
     "$OUTPUT_DIR/final/last.pt"
 fi
@@ -189,8 +184,7 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --activity-inactive-weight "$ACTIVITY_INACTIVE_WEIGHT" \
   --seed "$SEED" \
   --precision fp16 \
-  --device cuda \
-  "${FINAL_RESUME[@]}" \
+  "${FINAL_ARGS[@]}" \
   >"$OUTPUT_DIR/logs/final_fit.log" 2>&1
 
 [ -f "$OUTPUT_DIR/final/last.pt" ] || fail "official final semantic head was not produced"

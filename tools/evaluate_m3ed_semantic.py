@@ -45,6 +45,8 @@ def evaluate_m3ed_semantic(*, checkpoint, feature_cache_dir, target_cache_dir, s
         feature_cache_dir=feature_cache_dir, target_cache_dir=target_cache_dir,
         sequences=split.validation, feature=feature, horizontal_flip_probability=0,
     )
+    if any(config.get(key) != value for key, value in dataset.readout_provenance.items()):
+        raise ValueError("Semantic stage head and feature cache provenance differ")
     index = load_activity_options(activity_manifest, condition_label, dataset="m3ed")
     classes, ignore = int(config["num_classes"]), int(config.get("ignore_index", 255))
     states = {}
@@ -115,6 +117,7 @@ def evaluate_m3ed_semantic(*, checkpoint, feature_cache_dir, target_cache_dir, s
     result = dict(dataset="m3ed", role="validation", feature=feature,
                   label_source="InternImage pseudo-labels mapped to DSEC-11",
                   split_sha256=sha256_file(split_manifest), head_sha256=sha256_file(checkpoint),
+                  **dataset.readout_provenance,
                   **_safe(evaluator.compute()))
     result["continuous_groups"] = {
         name: dict(frames=support[name], valid_pixels=int(meter.confusion.sum()),
@@ -132,7 +135,7 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path,
                         default=ROOT / "tools/manifests/m3ed_semantic_common_v1.yaml")
-    parser.add_argument("--feature", choices=("z", "h", "concat"), required=True)
+    parser.add_argument("--feature", choices=("z", "h", "concat", "stages"), required=True)
     parser.add_argument("--prepared-root", type=Path,
                         help="Original M3ED prepared events; required for activity provenance")
     parser.add_argument("--device", default="cuda")

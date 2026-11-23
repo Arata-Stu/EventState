@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-cache-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
-    parser.add_argument("--feature", choices=("z", "h", "concat"), required=True)
+    parser.add_argument("--feature", choices=("z", "h", "concat", "stages"), required=True)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--validate-every", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -179,16 +179,16 @@ def main() -> None:
             "in_channels": in_channels,
             "evaluation_role": "validation",
             "label_source": "M3ED InternImage pseudo-labels mapped to DSEC-11",
+            **train_dataset.readout_provenance,
         }
     )
-    (output_dir / "config.json").write_text(
-        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
     start_epoch = 0
     best_miou = -1.0
     if args.resume is not None:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
+        if any(checkpoint["config"].get(key) != value
+               for key, value in train_dataset.readout_provenance.items()):
+            raise ValueError("Cannot resume a Semantic head fitted on different four-block features")
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
@@ -196,6 +196,9 @@ def main() -> None:
         start_epoch = int(checkpoint["epoch"]) + 1
         best_miou = float(checkpoint.get("best_mIoU", -1.0))
 
+    (output_dir / "config.json").write_text(
+        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     metrics_path = output_dir / "metrics.jsonl"
     for epoch in range(start_epoch, args.epochs):
         model.train()

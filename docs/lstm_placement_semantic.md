@@ -64,3 +64,43 @@ python3 tools/summarize_training_logs.py --window-steps 10000 \
 - DSECは開発6系列・検証2系列でepochを選び、全8系列でheadを再学習して固定し、公式test 3系列のmIoUを報告する。
 - M3EDは3系列でheadを学習し、2系列の公開valで選んだbestを同じvalで報告する。正解には既存のInternImage疑似ラベルを使う。
 - 各配置について全体と、既存の訓練系列から固定したイベント発生率5群のmIoUを並べる。集約JSONのmIoUは0〜1、12層後のみの既存対照との差はパーセントポイント。DSECの配置選択に使う値は開発valとする。
+
+## 途中の特徴をSemantic headが直接読めると配置差は縮まるか
+
+2026-11-23に実装、実測前。§103のStage 1 train lossは両データセットで4段の方が高かった。最終層の蒸留後も中間層にクラス判別情報が残るかを、同じSemanticタスクで調べる。seed 0・99,999更新のStage 1を固定し、各データセットで次の4通りを比較する。
+
+| 凍結する条件ID・条件名 | 12層後だけを読む既存head | 3・6・9・12層を読む新規head |
+| --- | --- | --- |
+| E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後） | 12層後のLSTM出力 | 3・6・9層のViT特徴と12層後のLSTM出力 |
+| E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3・6・9・12層後） | 12層後のLSTM出力 | 3・6・9・12層後の各LSTM出力 |
+
+新規headは各層384チャネルを同一パッチ位置で連結し、1,536チャネルから11クラスを予測する1×1畳み込みと、従来と同じ双線形補間を使う。パッチ間隔は全層16画素。headの学習パラメータは4,235個から16,907個に増え、どちらのLSTM配置にも同じ増加がある。系列の先頭から全イベント窓で状態を更新し、ラベル時刻にだけFP16の特徴を保存する。
+
+DSECは50 epochの開発学習でepochを選んで公式train 8系列で再学習し、固定したheadを公式test 3系列で採点する。M3EDはtrain 3系列、公開val 2系列の疑似ラベルでbest headを選び、同じvalで採点する。既存headは保存済みの重みと活動別集計を再利用する。各比較でStage 1・headのSHA、同一評価時刻・正解・有効画素・クラス別支持数・活動群分けを照合する。
+
+`sig-gpu5` でコード同期後に実行する。4ジョブをGPU 0・1・2の空きに応じて並列実行する。空きがなければ待機する。大型の特徴キャッシュはデータ領域の `downstream_scratch/stage2_placement_semantic_readout_20261123` に残す。必要容量は対象ラベル数から起動時に計算し、同時に動くジョブの分も見込んで割り当てる。`--scratch` で別のディスクを指定できる。
+
+```bash
+(
+  set -e
+  cd /home/iASL/Arata_repo/EventState
+  git pull --ff-only
+  mkdir -p outputs
+  log="$PWD/outputs/placement_semantic_readout_20261123.log"
+  nohup env/bin/python -u tools/run_placement_semantic_readout.py \
+    --gpus 0,1,2 --execute </dev/null >>"$log" 2>&1 &
+  echo "PID=$!  log=$log"
+)
+```
+
+同じコマンドで完了済みのheadを照合して再利用し、未完了の条件は新しい試行先で学習する。必要に応じて `--execute` を `--preflight` に置き換えると、GPU学習前に実データ・対照・チェックポイントの整合性を調べられる。依存関係込みの特徴抽出の回帰テストはサーバーのリポジトリ内で `env/bin/python -m pytest -q tests/test_dsec_stage_readout_server.py tests/test_m3ed_semantic_readout_server.py` で実行できる。
+
+出力は `outputs/stage2_placement_semantic_readout_20261123/summary.json`。2データセットの比較が揃うと同じディレクトリに `_SUCCESS` ができる。データセット別に全体と活動量Q1〜Q5を読む。各headのmIoUは0〜1、次の差はすべてポイント。
+
+| `comparisons[dataset]` のキー | 符号の意味 |
+| --- | --- |
+| `gain_pp[条件ID]` | その配置での4層head − 最終層head。正なら中間特徴の追加で改善 |
+| `placement_gap_pp[h または stages]` | そのheadでの4段配置 − 12層後のみ。正なら4段が上 |
+| `interaction_pp` | 4段配置の改善幅 − 12層後のみの改善幅。正なら多層入力は4段側に相対的に有利 |
+
+主指標は各データセットの `interaction_pp["all"]`。これが正で、4段自身の `gain_pp["E1_b3_6_9_12"]["all"]` も正なら、中間層の直接利用で4段のクラス判別が改善したという解釈を支持する。両配置が同じだけ改善すれば、多層入力の利点は両者に共通する。活動5群はどの場面がこの差に寄与したかを調べるために併記する。時間記憶の持続時間や空間解像度への因果効果はこの単一seedの比較からは決まらない。

@@ -25,7 +25,8 @@ def checkpoint_paths(dataset, project_root):
     return {key: output / root / f"{dataset}_{key}_w1/checkpoints/step_00099999.pt" for key, root in roots.items()}
 
 
-def _input_contract(raw, dataset, condition, step, project_root):
+def placement_input_contract(raw, dataset, condition, step, project_root):
+    """Validate the frozen Semantic placement and its native input geometry."""
     ds, training = raw["dataset"], raw["training"]
     temporal, loss = raw["model"]["temporal"], raw["loss"]
     stages = condition == FOUR_STAGE
@@ -95,7 +96,7 @@ class PlacementFeaturePair:
         shared_input = None
         for condition, path in paths.items():
             meta = load_checkpoint_config_metadata(path)
-            contract = _input_contract(meta.config, dataset, condition, meta.global_step, root)
+            contract = placement_input_contract(meta.config, dataset, condition, meta.global_step, root)
             if shared_input is not None and contract != shared_input:
                 raise ValueError("Models use different Semantic input data, geometry or normalization")
             shared_input = contract

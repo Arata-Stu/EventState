@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Development best.pt; official-final trains from scratch for its selected epoch count",
     )
-    parser.add_argument("--feature", choices=("z", "h", "concat"), required=True)
+    parser.add_argument("--feature", choices=("z", "h", "concat", "stages"), required=True)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)
@@ -157,6 +157,10 @@ def main() -> None:
         load_activity=use_activity,
         **common,
     )
+    if args.selected_epochs_from is not None and train_dataset.readout_provenance:
+        expected = {"protocol": "development", "feature": "stages", **train_dataset.readout_provenance}
+        if any(selection["config"].get(key) != value for key, value in expected.items()):
+            raise ValueError("Development head and official-final stage cache provenance differ")
     validation_dataset = None
     if args.protocol == "development":
         validation_dataset = DSECSemanticFeatureDataset(
@@ -166,6 +170,8 @@ def main() -> None:
         )
         if train_dataset.label_size != validation_dataset.label_size:
             raise ValueError("Train and validation label sizes differ")
+        if train_dataset.readout_provenance != validation_dataset.readout_provenance:
+            raise ValueError("Train and validation Semantic stage caches use different backbones")
     generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_dataset,
@@ -222,12 +228,9 @@ def main() -> None:
             "selected_development_epoch": selected_development_epoch,
             "label_size": list(train_dataset.label_size),
             "in_channels": sample_channels,
+            **train_dataset.readout_provenance,
         }
     )
-    (output_dir / "config.json").write_text(
-        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
     start_epoch = 0
     best_miou = -1.0
     if args.resume is not None:
@@ -236,7 +239,7 @@ def main() -> None:
             if float(checkpoint.get("config", {}).get(key, 1.0)) != getattr(args, key):
                 raise ValueError(f"Resume activity loss weight changed: {key}")
         saved_config = checkpoint.get("config", {})
-        for key in ("protocol", "feature", "seed", "head_width", "head_type", "loss"):
+        for key in ("protocol", "feature", "seed", "head_width", "head_type", "loss", *train_dataset.readout_provenance):
             saved_value = saved_config.get(key, "ce" if key == "loss" else None)
             if saved_value != config.get(key):
                 raise ValueError(
@@ -255,6 +258,9 @@ def main() -> None:
         saved_best = checkpoint.get("best_mIoU")
         best_miou = float(saved_best) if saved_best is not None else -1.0
 
+    (output_dir / "config.json").write_text(
+        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     metrics_path = output_dir / "metrics.jsonl"
     for epoch in range(start_epoch, args.epochs):
         model.train()

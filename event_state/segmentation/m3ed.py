@@ -57,7 +57,7 @@ def _safe_torch_load(path: Path) -> Any:
 
 
 class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
-    """Labeled M3ED frames backed by sparse frozen z/h feature maps."""
+    """Labeled M3ED frames backed by sparse frozen patch feature maps."""
 
     def __init__(
         self,
@@ -69,8 +69,8 @@ class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
         horizontal_flip_probability: float = 0.0,
         load_activity: bool = False,
     ) -> None:
-        if feature not in {"z", "h", "concat"}:
-            raise ValueError("feature must be z, h, or concat")
+        if feature not in {"z", "h", "concat", "stages"}:
+            raise ValueError("feature must be z, h, concat, or stages")
         if not 0.0 <= horizontal_flip_probability <= 1.0:
             raise ValueError("horizontal-flip-probability must be in [0, 1]")
         self.load_activity = load_activity
@@ -81,6 +81,16 @@ class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
         self.samples: list[tuple[str, int, Path, Path]] = []
         feature_root = Path(feature_cache_dir).expanduser()
         target_root = Path(target_cache_dir).expanduser()
+        self.readout_provenance = {}
+        if feature == "stages":
+            from .stage_readout import STAGE_BLOCKS
+            identity = json.loads((feature_root / "identity.json").read_text())
+            digest = identity.get("checkpoint_sha256")
+            if (identity.get("stage_blocks") != list(STAGE_BLOCKS)
+                    or not isinstance(digest, str) or len(digest) != 64
+                    or any(char not in "0123456789abcdef" for char in digest)):
+                raise ValueError(f"Invalid four-block Semantic cache identity: {feature_root}")
+            self.readout_provenance = {"stage_blocks": list(STAGE_BLOCKS), "backbone_sha256": digest}
 
         for sequence in sequences:
             feature_dir = feature_root / sequence
@@ -94,6 +104,8 @@ class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
             required = {"z", "h"} if feature == "concat" else {feature}
             if not required <= set(metadata.get("features", [])):
                 raise ValueError(f"{metadata_path} does not contain {sorted(required)}")
+            if self.readout_provenance and not self._matches_readout(metadata):
+                raise ValueError(f"Four-block Semantic sequence metadata mismatch: {metadata_path}")
             size_value = metadata.get("label_size")
             if not (
                 isinstance(size_value, list)
@@ -144,6 +156,11 @@ class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
     def __len__(self) -> int:
         return len(self.samples)
 
+    def _matches_readout(self, source: dict[str, Any]) -> bool:
+        return (source.get("stage_blocks") == self.readout_provenance["stage_blocks"]
+                and source.get("checkpoint_sha256") == self.readout_provenance["backbone_sha256"]
+                and source.get("state_policy") == "continuous")
+
     def __getitem__(self, index: int) -> dict[str, Any]:
         sequence, frame_index, feature_path, targets_path = self.samples[index]
         payload = _safe_torch_load(feature_path)
@@ -167,6 +184,12 @@ class M3EDSemanticFeatureDataset(Dataset[dict[str, Any]]):
             timestamp = int(source["timestamps"][frame_index])
         if tuple(label.shape) != self.label_size:
             raise ValueError(f"Semantic label size mismatch: {targets_path}")
+        if self.readout_provenance:
+            shape = (384 * len(self.readout_provenance["stage_blocks"]),
+                     *(dim // self.patch_size for dim in self.label_size))
+            if (not self._matches_readout(payload) or payload.get("timestamp") != timestamp
+                    or value.shape != shape or value.dtype != torch.float16):
+                raise ValueError(f"Four-block Semantic feature mismatch: {feature_path}")
         activity = None
         if self.load_activity:
             from event_state.losses.activity_weighting import require_activity

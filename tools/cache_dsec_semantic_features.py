@@ -17,6 +17,7 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from event_state.segmentation import find_semantic_label_dir, load_dsec_semantic_split
+from event_state.segmentation.stage_readout import STAGE_BLOCKS, stage_feature_map
 from event_state.data.activity import scale_event_activation
 from event_state.losses.activity_weighting import ACTIVITY_FORMAT
 from event_state.models.temporal import detach_temporal_state
@@ -30,7 +31,7 @@ DEFAULT_SPLIT = Path(__file__).parent / "manifests" / "dsec_semantic_split.yaml"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Cache EventState z/h only at DSEC-Semantic labeled frames"
+        description="Cache frozen EventState features at DSEC-Semantic labeled frames"
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--event-cache-dir", type=Path)
@@ -39,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--role", choices=("train", "val", "test"), required=True)
-    parser.add_argument("--features", nargs="+", choices=("z", "h"), default=("h",))
+    parser.add_argument("--features", nargs="+", choices=("z", "h", "stages"), default=("h",))
     parser.add_argument("--state-policy", choices=("continuous", "frame"), default="continuous")
     parser.add_argument("--num-classes", type=int, choices=(11, 19), default=11)
     parser.add_argument("--device", default="cuda")
@@ -140,6 +141,7 @@ def _complete(destination: Path, expected: dict[str, Any], frame_indices: set[in
         "checkpoint_step",
         "state_policy",
         "features",
+        "stage_blocks",
         "num_classes",
         "label_size",
         "input_size",
@@ -163,6 +165,11 @@ def _complete(destination: Path, expected: dict[str, Any], frame_indices: set[in
 
 def main() -> None:
     args = parse_args()
+    requested = set(args.features)
+    if "stages" in requested and requested != {"stages"}:
+        raise ValueError("Extract the stages readout in its own feature cache")
+    if "stages" in requested and args.state_policy != "continuous":
+        raise ValueError("The four-block Semantic readout requires continuous state")
     if args.num_shards <= 0 or not 0 <= args.shard_index < args.num_shards:
         raise ValueError("shard-index must be in [0, num-shards)")
     checkpoint = args.checkpoint.expanduser().resolve()
@@ -194,7 +201,6 @@ def main() -> None:
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     digest = _sha256(checkpoint)
-    requested = set(args.features)
     input_size = [
         int(OmegaConf.select(config, "dataset.input_height")),
         int(OmegaConf.select(config, "dataset.input_width")),
@@ -246,7 +252,7 @@ def main() -> None:
                 "label_crop": {"top": 0, "left": 0, "height": 440, "width": 640},
                 "features": sorted(requested),
                 "state_policy": args.state_policy,
-                    "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
+                "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
                 "checkpoint": str(checkpoint),
                 "checkpoint_sha256": digest,
                 "checkpoint_step": int(state.global_step),
@@ -264,6 +270,8 @@ def main() -> None:
                 "patch_size": int(model.event_encoder.patch_size),
                 "labeled_frame_indices": sorted(labeled_indices),
             }
+            if "stages" in requested:
+                sequence_metadata["stage_blocks"] = list(STAGE_BLOCKS)
             if not args.overwrite and _complete(
                 destination_dir, sequence_metadata, labeled_indices
             ):
@@ -288,22 +296,29 @@ def main() -> None:
                 normalized = _semantic_transform(events, config).to(device)
                 if args.state_policy == "frame":
                     recurrent_state = None
-                outputs = model(normalized.unsqueeze(1), state=recurrent_state)
-                recurrent_state = detach_temporal_state(outputs.get("state"))
+                if "stages" in requested:
+                    levels, recurrent_state = model.forward_depth_stages(normalized.unsqueeze(1), recurrent_state)
+                else:
+                    outputs = model(normalized.unsqueeze(1), state=recurrent_state)
+                    recurrent_state = outputs.get("state")
+                recurrent_state = detach_temporal_state(recurrent_state)
                 if frame_index not in labeled_indices:
                     continue
                 grid_height = normalized.shape[-2] // model.event_encoder.patch_size
                 grid_width = normalized.shape[-1] // model.event_encoder.patch_size
                 feature_maps: dict[str, torch.Tensor] = {}
-                for feature in requested:
-                    feature_maps[feature] = (
-                        outputs[feature][0, 0]
-                        .reshape(grid_height, grid_width, -1)
-                        .permute(2, 0, 1)
-                        .cpu()
-                        .to(torch.float16)
-                        .contiguous()
-                    )
+                if "stages" in requested:
+                    feature_maps["stages"] = stage_feature_map(levels, (grid_height, grid_width))
+                else:
+                    for feature in requested:
+                        feature_maps[feature] = (
+                            outputs[feature][0, 0]
+                            .reshape(grid_height, grid_width, -1)
+                            .permute(2, 0, 1)
+                            .cpu()
+                            .to(torch.float16)
+                            .contiguous()
+                        )
                 destination = destination_dir / f"{frame_index:06d}.pt"
                 identity = {
                     "activity_format": ACTIVITY_FORMAT if args.include_activity else None,
@@ -318,6 +333,8 @@ def main() -> None:
                     "event_window_us": OmegaConf.select(config, "dataset.event_window_us"),
                     "features": feature_maps,
                 }
+                if "stages" in requested:
+                    identity["stage_blocks"] = list(STAGE_BLOCKS)
                 if args.include_activity:
                     if events.shape[0] != 3 or int(model.event_encoder.patch_size) != 16:
                         raise ValueError("ScaleEvent activity requires GEP RGB with patch size 16")
@@ -349,6 +366,7 @@ def main() -> None:
                             )
                         )
                         and requested <= set(existing.get("features", {}))
+                        and ("stages" not in requested or existing.get("stage_blocks") == list(STAGE_BLOCKS))
                         and (not args.include_activity or isinstance(existing.get("event_activity"), torch.Tensor))
                     )
                     if valid:

@@ -67,13 +67,16 @@ def main():
         p.add_argument('--'+k,type=Path,required=True)
     p.add_argument('--statistics', type=Path, help='Original common Stage 1 train statistics JSON')
     p.add_argument('--extra-target-root',type=Path,help='Prefer available semantic targets here (e.g. additionally prepared Rittenhouse)')
-    p.add_argument('--features',nargs='+',choices=['z','h','concat'],default=['z','h','concat'])
+    p.add_argument('--features',nargs='+',choices=['z','h','concat','stages'],default=['z','h','concat'])
     p.add_argument('--device',default='cuda')
     p.add_argument('--preflight',action='store_true')
     p.add_argument('--parent-lock-fd', type=int, help=argparse.SUPPRESS)
     p.add_argument('--worker-status', type=Path, help=argparse.SUPPRESS)
     add_activity_arguments(p)
     a=p.parse_args()
+    stage_readout = 'stages' in a.features
+    if stage_readout and a.features != ['stages']:
+        p.error('Use --features stages alone to extract the four-block readout')
     inherited = () if a.parent_lock_fd is None else (a.parent_lock_fd,)
     if inherited:
         os.fstat(a.parent_lock_fd)
@@ -83,6 +86,7 @@ def main():
     import hdf5plugin
     import numpy as np
     from event_state.segmentation import load_m3ed_semantic_split
+    from event_state.segmentation.stage_readout import STAGE_BLOCKS
     from event_state.dense.common_features import CommonFeatures
     from event_state.dense.source import prepared_frames,input_geometry
     from event_state.dense.runtime import atomic_save
@@ -108,6 +112,8 @@ def main():
         raise ValueError('Invalid train event-rate threshold')
     targets={}; paths={}; sizes=0
     identity=dict(low_rate_p10_hz=threshold,checkpoint_sha256=sha256_file(a.checkpoint),features=keys,split_sha256=sha256_file(MANIFEST),sources={})
+    stage_metadata = {'stage_blocks': list(STAGE_BLOCKS)} if stage_readout else {}
+    identity.update(stage_metadata)
     for seq in (*split.train,*split.validation):
         raw=a.prepared_root/seq/'metadata.json'
         for base in (a.extra_target_root,a.target_root):
@@ -131,7 +137,8 @@ def main():
         for seq in split.validation:
             validate_activity_source(activity_index,seq,json.loads((a.prepared_root/seq/'metadata.json').read_text()))
             for timestamp in targets[seq].values(): activity_index.lookup(seq,timestamp)
-    estimate=sizes*(len(keys)*384*22*40*2+4096)
+    maps_per_frame = len(STAGE_BLOCKS) if stage_readout else len(keys)
+    estimate=sizes*(maps_per_frame*384*22*40*2+4096)
     print(f'{sizes} labeled samples; approx {estimate/2**30:.1f} GiB feature storage',flush=True)
     if a.preflight: return
     if a.output.exists(): raise FileExistsError(a.output)
@@ -141,7 +148,7 @@ def main():
     else:
         a.cache.parent.mkdir(exist_ok=True,parents=True)
         if shutil.disk_usage(a.cache.parent).free < estimate*1.1: raise OSError('Insufficient feature cache space')
-        net=CommonFeatures(a.checkpoint,'m3ed',a.device)
+        net=CommonFeatures(a.checkpoint,'m3ed',a.device,stage_readout=stage_readout)
         a.cache.mkdir()
         for seq,expected in targets.items():
             dest=a.cache/seq;dest.mkdir();net.state=None; seen=[]; clock=LowActivityClock(); durations={}
@@ -153,13 +160,14 @@ def main():
                 if i not in expected: continue
                 if expected[i]!=frame['timestamp']: raise ValueError('Misaligned semantic target')
                 atomic_save(dict(task='m3ed_semantic',features=maps,sequence_name=seq,frame_index=i,
-                                 timestamp=expected[i],state_policy='continuous',checkpoint_sha256=identity['checkpoint_sha256']),dest/f'{i:06d}.pt')
+                                 timestamp=expected[i],state_policy='continuous',checkpoint_sha256=identity['checkpoint_sha256'],
+                                 **stage_metadata),dest/f'{i:06d}.pt')
                 seen.append(i); durations[i]=duration
             if seen!=list(expected): raise ValueError(f'{seq}: incomplete labels')
             (dest/'low_duration_us.json').write_text(json.dumps(durations))
             (dest/'metadata.json').write_text(json.dumps(dict(task='m3ed_semantic',features=keys,label_size=[352,640],patch_size=16,
                 sequence_name=seq,checkpoint_sha256=identity['checkpoint_sha256'],state_policy='continuous',cached_frame_indices=seen,
-                source_event_cache_metadata=json.loads((a.prepared_root/seq/'metadata.json').read_text()))))
+                source_event_cache_metadata=json.loads((a.prepared_root/seq/'metadata.json').read_text()),**stage_metadata)))
         del net
         (a.cache/'identity.json').write_text(json.dumps(identity))
         (a.cache/'_SUCCESS').touch()

@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--labels-root", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT)
     parser.add_argument("--role", choices=("val", "test"), default="test")
-    parser.add_argument("--feature", choices=("z", "h", "concat"), required=True)
+    parser.add_argument("--feature", choices=("z", "h", "concat", "stages"), required=True)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", default="cuda")
@@ -68,6 +68,8 @@ def main() -> None:
         feature=args.feature,
         num_classes=int(config.get("num_classes", 11)),
     )
+    if any(config.get(key) != value for key, value in dataset.readout_provenance.items()):
+        raise ValueError("Semantic stage head and evaluation cache provenance differ")
     activity_index = load_activity_options(args.activity_manifest, args.condition_label, dataset="dsec")
     activity_states = None
     if activity_index is not None:
@@ -119,6 +121,7 @@ def main() -> None:
     metrics = {
         "role": args.role,
         "feature": args.feature,
+        **dataset.readout_provenance,
         "classes": config.get("classes"),
         **evaluator.compute(),
     }

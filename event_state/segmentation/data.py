@@ -13,6 +13,8 @@ from PIL import Image
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from .stage_readout import STAGE_BLOCKS
+
 
 DSEC_SEMANTIC_11_CLASSES = (
     "background",
@@ -81,7 +83,7 @@ def load_semantic_label(path: str | Path, *, num_classes: int = 11) -> Tensor:
 
 
 class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
-    """Sparse labeled frames backed by frozen z/h feature maps."""
+    """Sparse labeled frames backed by frozen feature maps."""
 
     def __init__(
         self,
@@ -95,8 +97,8 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
         horizontal_flip_probability: float = 0.0,
         load_activity: bool = False,
     ) -> None:
-        if feature not in {"z", "h", "concat"}:
-            raise ValueError("feature must be z, h, or concat")
+        if feature not in {"z", "h", "concat", "stages"}:
+            raise ValueError("feature must be z, h, concat, or stages")
         if not 0.0 <= horizontal_flip_probability <= 1.0:
             raise ValueError("horizontal_flip_probability must be in [0, 1]")
         self.feature_cache_dir = Path(feature_cache_dir).expanduser()
@@ -106,6 +108,7 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
         self.horizontal_flip_probability = float(horizontal_flip_probability)
         self.label_size: tuple[int, int] | None = None
         self.patch_size: int | None = None
+        self.readout_provenance: dict[str, Any] = {}
         self.samples: list[tuple[str, int, Path, Path]] = []
 
         for sequence in sequences:
@@ -120,6 +123,18 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
             required = {"z", "h"} if feature == "concat" else {feature}
             if not required <= available:
                 raise ValueError(f"{metadata_path} does not contain {sorted(required)}")
+            if feature == "stages":
+                digest = metadata.get("checkpoint_sha256")
+                if (metadata.get("stage_blocks") != list(STAGE_BLOCKS)
+                        or metadata.get("state_policy") != "continuous"
+                        or metadata.get("input_size") != [448, 640] or metadata.get("patch_size") != 16
+                        or not isinstance(digest, str) or len(digest) != 64
+                        or any(char not in "0123456789abcdef" for char in digest)):
+                    raise ValueError(f"Invalid four-block Semantic cache: {metadata_path}")
+                provenance = {"stage_blocks": list(STAGE_BLOCKS), "backbone_sha256": digest}
+                if self.readout_provenance and provenance != self.readout_provenance:
+                    raise ValueError(f"Semantic stage caches use different backbones: {metadata_path}")
+                self.readout_provenance = provenance
             current_size = metadata.get("label_size")
             if not (
                 isinstance(current_size, list)
@@ -176,6 +191,13 @@ class DSECSemanticFeatureDataset(Dataset[dict[str, Any]]):
             value = features[self.feature]
         if not isinstance(value, Tensor) or value.ndim != 3:
             raise ValueError(f"Feature must have shape [C, H, W]: {feature_path}")
+        if self.readout_provenance and (
+            payload.get("stage_blocks") != self.readout_provenance["stage_blocks"]
+            or payload.get("checkpoint_sha256") != self.readout_provenance["backbone_sha256"]
+            or payload.get("state_policy") != "continuous"
+            or value.shape != (384 * len(STAGE_BLOCKS), 28, 40) or value.dtype != torch.float16
+        ):
+            raise ValueError(f"Four-block Semantic feature mismatch: {feature_path}")
         label = load_semantic_label(label_path, num_classes=self.num_classes)
         if tuple(label.shape) != self.label_size:
             raise ValueError(f"Label size mismatch: {label_path}")
