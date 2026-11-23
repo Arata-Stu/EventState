@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -137,7 +138,7 @@ def render(args):
     print(f"[{sequence}] verified {len(records)} frames: {video}", flush=True)
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scenes", type=Path, required=True)
     p.add_argument("--sequence", required=True)
@@ -146,14 +147,25 @@ def main():
     p.add_argument("--project-root", type=Path, default=ROOT)
     p.add_argument("--font", type=Path)
     p.add_argument("--worker-result", type=Path, help=argparse.SUPPRESS)
-    args = p.parse_args()
+    p.add_argument("--share-gpus", type=int, metavar="MIN_FREE_MIB", help=argparse.SUPPRESS)
+    args = p.parse_args(argv)
+    if args.share_gpus is not None and (args.share_gpus <= 0 or not args.worker_result):
+        p.error("--share-gpus requires a positive MiB threshold and a launcher-assigned worker")
     if args.output.exists():
         p.error(f"Existing render attempt: {args.output}; choose a fresh output")
     if args.worker_result:
-        from tools.run_temporal_downstream import idle_gpus
+        from tools.run_temporal_downstream import idle_gpus, shared_gpus
         gpu = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-        if args.device != "cuda" or not gpu.isdecimal() or not idle_gpus((gpu,)):
+        if args.device != "cuda" or not gpu.isdecimal():
+            raise RuntimeError(f"Invalid CUDA assignment: device={args.device}, physical GPU={gpu!r}")
+        if args.share_gpus is None and not idle_gpus((gpu,)):
             raise RuntimeError(f"Assigned physical GPU is unavailable: {gpu}")
+        if args.share_gpus is not None and not shared_gpus((gpu,), min_free_mib=args.share_gpus):
+            print(f"[{args.sequence}] Waiting for {args.share_gpus} MiB free on shared GPU {gpu}", flush=True)
+            while True:
+                time.sleep(5)
+                if shared_gpus((gpu,), min_free_mib=args.share_gpus):
+                    break
     render(args)
 
 

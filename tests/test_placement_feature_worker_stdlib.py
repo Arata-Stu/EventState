@@ -1,12 +1,13 @@
 """Verify both causal passes and native-timestamp output without checkpoints or a GPU."""
 import csv
+import os
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from event_state.activity_quantiles import build_activity_manifest, canonical_sha256
 from event_state.evaluation.activity_scenes import eligible_sequences, select_full_sequences
@@ -14,6 +15,26 @@ from tools import render_placement_feature_sequence as worker
 
 
 class FeatureWorkerTests(unittest.TestCase):
+    def test_worker_rechecks_its_assigned_gpu_before_rendering(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, CUDA_VISIBLE_DEVICES="2"):
+            root = Path(folder)
+            command = ["--scenes", str(root/"plan"), "--sequence", "sample", "--output", str(root/"video"),
+                       "--worker-result", str(root/"result")]
+            with (patch("tools.run_temporal_downstream.idle_gpus", return_value=()) as idle,
+                  patch("tools.run_temporal_downstream.shared_gpus", side_effect=[[], ["2"]]) as shared,
+                  patch.object(worker.time, "sleep") as sleep,
+                  patch.object(worker, "render") as render):
+                with self.assertRaises(RuntimeError):
+                    worker.main(command)
+                idle.assert_called_once_with(("2",))
+                shared.assert_not_called()
+                render.assert_not_called()
+                worker.main([*command, "--share-gpus", "8192"])
+                self.assertEqual(shared.call_args_list, [call(("2",), min_free_mib=8192)] * 2)
+                sleep.assert_called_once_with(5)
+                render.assert_called_once()
+                self.assertEqual(idle.call_count, 1)
+
     def test_input_stream_cannot_skip_reorder_or_substitute_frames(self):
         records = [dict(sequence="S", timestamp=i+1, previous_timestamp=i, event_count=i) for i in range(3)]
         frames = [(dict(row, sequence_name="S"), {}) for row in records]

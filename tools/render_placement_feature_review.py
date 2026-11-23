@@ -18,31 +18,12 @@ from event_state.evaluation.activity_scenes import eligible_sequences
 from event_state.evaluation.placement_features import CONDITIONS, checkpoint_paths
 from tools.common_depth_parallel import parse_gpus, run_parallel
 from tools.render_full_evaluation import prepare_plans, publish, review_page, review_video
-from tools.run_temporal_downstream import idle_gpus
+from tools.run_temporal_downstream import idle_gpus, shared_gpus
 
 TASKS = (("dsec", "semantic"), ("m3ed", "semantic"))
 TITLE = "LSTM配置と特徴の変化"
 NOTE = ("特徴の色は同じ系列・同じ層の2モデルで共通のPCAです。層や系列が変わると色の対応も変わります。"
         "色は意味クラスを表しません。")
-
-
-def shared_gpus(requested, *, min_free_mib):
-    """Rank the candidate physical GPUs by currently free memory, including busy GPUs."""
-    inventory = subprocess.run(
-        ["nvidia-smi", "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
-        capture_output=True, text=True, check=True,
-    )
-    free = {}
-    for row in inventory.stdout.splitlines():
-        index, memory = (field.strip() for field in row.split(","))
-        if index in requested:
-            if not memory.isdecimal():
-                raise ValueError(f"Cannot read free GPU memory (MiB): {row}")
-            free[index] = int(memory)
-    unknown = set(requested) - free.keys()
-    if unknown:
-        raise ValueError(f"Unknown physical GPU IDs: {sorted(unknown)}")
-    return sorted((gpu for gpu in requested if free[gpu] >= min_free_mib), key=free.get, reverse=True)
 
 
 def checked_entry(output, run, plan, scene, checkpoints):
@@ -105,6 +86,8 @@ def render(args, lock):
             cmd = [sys.executable, "-u", str(ROOT / "tools/render_placement_feature_sequence.py"),
                    "--scenes", str(job["plan"]), "--sequence", job["sequence"], "--output", str(job["run"]),
                    "--project-root", str(args.project_root), "--device", "cuda", "--worker-result", str(result)]
+            if args.share_gpus is not None:
+                cmd += ["--share-gpus", str(args.share_gpus)]
             if args.font:
                 cmd += ["--font", str(args.font)]
             return cmd

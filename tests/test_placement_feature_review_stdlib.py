@@ -1,6 +1,7 @@
 """The review catalog must only publish complete, correctly identified paired feature movies."""
 import csv
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from tools import render_placement_feature_review as review
+from tools import render_placement_feature_sequence as worker
 from event_state.activity_quantiles import canonical_sha256
 
 
@@ -34,6 +36,20 @@ class PlacementReviewTests(unittest.TestCase):
                 job = jobs[0]
                 cmd = kwargs["worker_command"](job, root/"status", root/"result")
                 self.assertIn("--worker-result", cmd)
+                # Exercise the actual worker CLI with the parent's options and physical GPU assignment.
+                with (patch.dict(os.environ, CUDA_VISIBLE_DEVICES="2"),
+                      patch("tools.run_temporal_downstream.idle_gpus",
+                            return_value=("2",) if args.share_gpus is None else ()) as idle,
+                      patch("tools.run_temporal_downstream.shared_gpus", return_value=["2"]) as shared,
+                      patch.object(worker, "render") as render):
+                    worker.main(cmd[3:])
+                    render.assert_called_once()
+                    if args.share_gpus is None:
+                        idle.assert_called_once_with(("2",))
+                        shared.assert_not_called()
+                    else:
+                        shared.assert_called_once_with(("2",), min_free_mib=args.share_gpus)
+                        idle.assert_not_called()
                 run = job["run"]
                 folder = run / scene["id"]
                 folder.mkdir(parents=True)

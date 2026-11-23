@@ -81,6 +81,25 @@ def idle_gpus(requested, *, run=subprocess.run):
     return tuple(gpu for gpu in requested if devices[gpu] not in busy)
 
 
+def shared_gpus(requested, *, min_free_mib):
+    """Rank the candidate physical GPUs by currently free memory, including busy GPUs."""
+    inventory = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True,
+    )
+    free = {}
+    for row in inventory.stdout.splitlines():
+        index, memory = (field.strip() for field in row.split(","))
+        if index in requested:
+            if not memory.isdecimal():
+                raise ValueError(f"Cannot read free GPU memory (MiB): {row}")
+            free[index] = int(memory)
+    unknown = set(requested) - free.keys()
+    if unknown:
+        raise ValueError(f"Unknown physical GPU IDs: {sorted(unknown)}")
+    return sorted((gpu for gpu in requested if free[gpu] >= min_free_mib), key=free.get, reverse=True)
+
+
 def _statistics(a, dataset):
     path = a.statistics / f'{dataset}_common.json'
     value = read(file(path))
