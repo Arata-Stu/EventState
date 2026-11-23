@@ -1,6 +1,10 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-22
+最終更新: 2026-11-23
+
+2026-11-23、6配置×DSEC・M3EDのSemantic全12ジョブの完了ログを受領（台帳§101）。M3EDの `E1_b3_6_9_12` E1 Encoder＋LSTM（h蒸留）・Patchwise LSTMの最良headは公開val mIoU 29.519%。12条件の数値は `outputs/stage2_placement_semantic_20261118/summary.json` の `semantic` から回収できる。Depthの種類比較は完了済み、6配置のDepthは保留。DSEC Detection 9条件の終了は別runの `summary_val.json`・`summary_test.json` の各9件と `_SUCCESS_val`・`_SUCCESS_test` で確認する。今回の貼付範囲ではDetectionの成否は未確認。
+
+同日のDetection確認ではval・testとも0/9、完了印False。続報でランチャーが見つからず、既定の出力ディレクトリと親ログも存在しなかった（台帳§101）。Semanticが終了したため、次のDetection起動はGPU 0・1・2から空きを選び、9条件のvalからtestまで進める。同期時の失敗も残せるよう、`git pull` の前に親ログを作成する手順を `docs/dsec_detection_activity.md` に記載した。
 
 2026-11-22、ユーザーから6配置のStage 1後にSemanticまで進み、GPU 0で実行中との報告（台帳§100）。
 既存のSemantic実行を継続し、空きGPU 1・2にDSEC Detectionを追加する。対象は共通Stage 1の基準3条件（E0・Patchwise E1・ConvLSTM E1）とPatchwise E1の6配置、計9条件。Detection用headは各条件で新規学習し、既存のStage 1最終重みを凍結する。新しいSemantic・Detectionスコアは未受領。起動手順は `docs/dsec_detection_activity.md`、既定の集計先は `outputs/stage2_placement_detection_20261122`。

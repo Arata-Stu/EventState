@@ -18,20 +18,23 @@ DSECの学習済みbackboneを凍結し、条件ごとに同じYOLOX型検出hea
 
 ### sig-gpu5での起動
 
-GPU 0でSemanticが動いているとき、空きGPU 1・2をDetectionに割り当てる。サーバーへコードを同期後、以下のブロックで全9条件を実行できる。各条件の設定をvalに基づいて変更する場合は、まず `--phase val` まで実行し、設定を固定した後に `--phase test` を実行する。
+Semanticの完了後はGPU 0・1・2を候補とし、各フェーズ開始時に空いているGPUで別々の条件を並列実行する。GPU 0を別タスク用に確保する場合は `--gpus 1,2` を指定する。以下は全9条件のvalが成功するとtestへ進む。valを見て設定を変更する場合は、フェーズを分けて起動する。
 
 ```bash
 (
-  set -e
+  set -eo pipefail
   cd /home/iASL/Arata_repo/EventState
-  git pull --ff-only
   mkdir -p outputs
   log="$PWD/outputs/dsec_detection_20261122.log"
-  nohup bash -e >>"$log" 2>&1 <<'RUN' &
-source env/bin/activate
-python -u tools/run_placement_detection.py --gpus 1,2 --phase val --execute
-python -u tools/run_placement_detection.py --gpus 1,2 --phase test --execute
-RUN
+  date -Is | tee -a "$log"
+  git pull --ff-only 2>&1 | tee -a "$log"
+  nohup bash -ec '
+    git rev-parse --short HEAD
+    for phase in val test; do
+      echo "DSEC Detection $phase"
+      env/bin/python -u tools/run_placement_detection.py --gpus 0,1,2 --phase "$phase" --execute
+    done
+  ' </dev/null >>"$log" 2>&1 &
   echo "Detection PID=$!  log=$log"
 )
 ```

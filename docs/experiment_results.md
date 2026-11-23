@@ -1,6 +1,6 @@
 # EventState 実験結果台帳
 
-最終更新: 2026-11-22
+最終更新: 2026-11-23
 
 2026-11-10ユーザー訂正：現在はSemantic segmentation・Depthが最優先、次に可能ならFlow。
 Detectionは過去に多数実験したが、現在の優先度は低い。活動5分位をSemantic/Depthにも接続する実装を依頼。
@@ -3027,3 +3027,15 @@ DSEC Semantic Q5の78frameという制約を併記する。
 - 対象はE1 Encoder＋LSTM（h蒸留）・Patchwise LSTMの3層後、6層後、9層後、9＋12層後、6＋9＋12層後、3＋6＋9＋12層後の6配置。DSEC共通train35、M3ED共通train3。smokeは各99更新、本学習は各99,999更新。出力は `outputs/stage1_placement_smoke_20261118` と `outputs/stage1_placement_full_20261118`。
 - 起動スクリプトとユーザー報告に基づく段階判定。Stage 1は両データセット・全6配置の最終checkpointの存在を確認してから次の段階に進む。個別checkpointのSHAや各ジョブの完了ログは受領していない。
 - Semantic出力は `outputs/stage2_placement_semantic_20261118`。DSECは開発6/2→全8でrefit→公式test3、M3EDはtrain3/公開val2。実行中の条件名、完了件数、mIoUは未受領。
+
+## 101. 配置6条件のSemantic全12ジョブ完了（2026-11-23）
+
+ユーザーが `Completed 12 requested Semantic jobs: /home/iASL/Arata_repo/EventState/outputs/stage2_placement_semantic_20261118/summary.json` を報告。§100の6配置すべてでDSEC公式testとM3ED公開valの評価が終了した。seed 0、凍結したStage 1の最終重み（99,999更新）、特徴 `h`。DSECは6系列で学習・2系列でepoch選択後、全8系列で再学習し公式test 3系列を採点。M3EDは3系列で学習し、公開val 2系列で最良headを選択・採点。各評価の全体と活動5群のmIoUは同じsummaryの `semantic` に集約される。
+
+- `m3ed_E1_b3_6_9_12` E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3・6・9・12層後）の最良headの公開val全体mIoUは **29.519%**（ログ表示精度）。同一splitの既存対照E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後）の38.700944%に対し、約9.18ポイント低い。
+- 同じ条件のepoch 49（50/50）の学習ログはtrain CE 0.21728296364642163、val mIoU 0.29497959547329394、mean class accuracy 0.4063899942459729、pixel accuracy 0.6671723106913978、評価5,079,348,727画素。最良headの採用epoch・mIoUの未丸め値、他11件のスコアは今回の貼付範囲外。
+- 前回の種類比較のDepthは両データセットで完了済み（§99）。今回の6配置のDepthは§100の起動対象外。DSEC Detection 9条件は別run `outputs/stage2_placement_detection_20261122`。val・testの完了印と集計は今回未受領。
+
+同日、上記Detection（seed 0、公式train 41／val 6／test 13系列）の状態確認コマンドの出力を受領。val・testとも「0/9 条件, 完了印=False」。このコマンドは集計ファイルが見つからない場合にも0件を表示する。実際のファイル名・親ログ・プロセス・条件別ログは未受領。新たなmAPや終了原因は確定していない。
+
+続く `sig-gpu5` での確認では、ランチャー検索は該当なし、既定の `outputs/stage2_placement_detection_20261122` はディレクトリとして見つからず、`outputs/dsec_detection_20261122.log` もファイルとして見つからなかった。従来の起動手順はPythonの開始前に親ログを開く。既定の場所に学習開始や異常終了を示す記録はなく、計算済みのDetection条件数・mAPは引き続き不明。
