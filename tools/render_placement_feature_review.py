@@ -2,6 +2,7 @@
 """Render synchronized block features for the two trained Semantic placements."""
 import argparse
 import fcntl
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,25 @@ TASKS = (("dsec", "semantic"), ("m3ed", "semantic"))
 TITLE = "LSTM配置と特徴の変化"
 NOTE = ("特徴の色は同じ系列・同じ層の2モデルで共通のPCAです。層や系列が変わると色の対応も変わります。"
         "色は意味クラスを表しません。")
+
+
+def shared_gpus(requested, *, min_free_mib):
+    """Rank the candidate physical GPUs by currently free memory, including busy GPUs."""
+    inventory = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True,
+    )
+    free = {}
+    for row in inventory.stdout.splitlines():
+        index, memory = (field.strip() for field in row.split(","))
+        if index in requested:
+            if not memory.isdecimal():
+                raise ValueError(f"Cannot read free GPU memory (MiB): {row}")
+            free[index] = int(memory)
+    unknown = set(requested) - free.keys()
+    if unknown:
+        raise ValueError(f"Unknown physical GPU IDs: {sorted(unknown)}")
+    return sorted((gpu for gpu in requested if free[gpu] >= min_free_mib), key=free.get, reverse=True)
 
 
 def checked_entry(output, run, plan, scene, checkpoints):
@@ -95,8 +115,12 @@ def render(args, lock):
             write_index()
             print(f"[{len(entries)}/{len(sources)}] {scene['sequence']} → {output / 'index.html'}", flush=True)
 
+        devices, waiting_for = idle_gpus, "an idle GPU"
+        if args.share_gpus is not None:
+            devices = partial(shared_gpus, min_free_mib=args.share_gpus)
+            waiting_for = f"a GPU with at least {args.share_gpus} MiB free"
         run_parallel(pending, args.gpus, scratch=output, state_dir=output / "logs" / uuid4().hex,
-                     worker_command=command, on_complete=completed, idle_devices=idle_gpus,
+                     worker_command=command, on_complete=completed, idle_devices=devices, waiting_for=waiting_for,
                      lock_fd=lock.fileno(), poll_interval=5)
     if set(entries) != set(sources):
         raise RuntimeError("Incomplete full-sequence feature review")
@@ -110,9 +134,13 @@ def main(argv=None):
     parser.add_argument("--output", type=Path)
     parser.add_argument("--activity-dir", type=Path)
     parser.add_argument("--gpus", default="0,1,2")
+    parser.add_argument("--share-gpus", nargs="?", type=int, const=4096, metavar="MIN_FREE_MIB",
+                        help="Also use busy GPUs with this much free VRAM at dispatch (default when enabled: 4096 MiB)")
     parser.add_argument("--font", type=Path)
     parser.add_argument("--execute", action="store_true", help="Generate the full videos on the learning server")
     args = parser.parse_args(argv)
+    if args.share_gpus is not None and args.share_gpus <= 0:
+        parser.error("--share-gpus requires a positive amount of free VRAM in MiB")
     args.project_root = args.project_root.expanduser().resolve()
     outputs = args.project_root / "outputs"
     args.output = (args.output or outputs / "placement_feature_review_20261123").expanduser().resolve()
@@ -122,6 +150,9 @@ def main(argv=None):
         names, _ = eligible_sequences(ds, task)
         print(f"{ds} {task} | {', '.join(names)}", flush=True)
     print(" / ".join(CONDITIONS.values()), flush=True)
+    if args.share_gpus is not None:
+        print(f"Shared GPUs {','.join(args.gpus)} | launch with >= {args.share_gpus} MiB free | "
+              "one video worker per GPU", flush=True)
     if not args.execute:
         print(f"Output: {args.output} | use --execute to render")
         return

@@ -18,7 +18,7 @@ class PlacementReviewTests(unittest.TestCase):
             out = root / "videos"
             out.mkdir()
             args = SimpleNamespace(project_root=root, output=out, activity_dir=root,
-                                   gpus=("1", "2"), font=None)
+                                   gpus=("1", "2"), font=None, share_gpus=None)
             checkpoints = review.checkpoint_paths("dsec", root)
             for key, path in checkpoints.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,11 +60,15 @@ class PlacementReviewTests(unittest.TestCase):
                   patch("event_state.evaluation.comparison_timing.verify_video_timestamps"),
                   patch.object(review, "run_parallel", side_effect=dispatch) as launch):
                 review.render(args, lock)
+                self.assertIs(launch.call_args.kwargs["idle_devices"], review.idle_gpus)
+                args.share_gpus = 4096
                 review.render(args, lock)
                 self.assertEqual(launch.call_count, 1)
                 (created[0]/"projection.json").write_text('{"tampered":true}')
                 review.render(args, lock)
                 self.assertEqual(launch.call_count, 2)
+                self.assertIs(launch.call_args.kwargs["idle_devices"].func, review.shared_gpus)
+                self.assertEqual(launch.call_args.kwargs["idle_devices"].keywords, {"min_free_mib": 4096})
                 self.assertTrue((out/"_SUCCESS").exists())
                 page = (out/"index.html").read_text()
                 self.assertIn(created[-1].relative_to(out).as_posix(), page)
@@ -82,3 +86,14 @@ class PlacementReviewTests(unittest.TestCase):
                 for seq in review.eligible_sequences(ds, task)[0]:
                     self.assertIn(seq, out.getvalue())
             self.assertFalse((Path(tmp)/"outputs").exists())
+
+    def test_shared_gpus_recheck_free_vram_and_only_consider_requested_devices(self):
+        inventories = ["0, 10000\n1, 4095\n2, 4096", "0, 10000\n1, 7050\n2, 4096", "1, 14\n2, 20"]
+        requested = ("2", "1")
+        with patch.object(review.subprocess, "run", side_effect=[SimpleNamespace(stdout=s) for s in inventories]) as smi:
+            for expected in (["2"], ["1", "2"], []):
+                self.assertEqual(review.shared_gpus(requested, min_free_mib=4096), expected)
+            self.assertTrue(all("--query-gpu=index,memory.free" in call.args[0] for call in smi.call_args_list))
+        with patch.object(review.subprocess, "run", return_value=SimpleNamespace(stdout="1, 10000")):
+            with self.assertRaisesRegex(ValueError, "Unknown physical GPU"):
+                review.shared_gpus(requested, min_free_mib=4096)

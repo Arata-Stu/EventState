@@ -2,6 +2,8 @@
 
 最終更新: 2026-11-23
 
+配置比較の特徴動画は、学習と同じGPUで並行実行できる。`--gpus 0,1,2 --share-gpus 4096 --execute` で、起動時に4096 MiB以上の空きVRAMがあるGPUに動画を1本ずつ割り当てる。共有は特徴動画だけに適用し、Depthの下流タスクは引き続き同時2件まで。
+
 2026-11-23、配置比較の定性評価として、E1 Encoder＋LSTM（h蒸留、12層後のみ）とE1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、4段）の特徴を比較する。対象はDSEC Semantic公式test 3系列・M3ED公開val 2系列の全入力。層3・6・9・12を同時刻で並べ、各層の共通PCAで表示する。サーバー用ランチャーは `tools/render_placement_feature_review.py`、閲覧先は `outputs/placement_feature_review_20261123/index.html`。この時点で実データの動画生成は未確認。[起動と閲覧手順](activity_comparison_videos.md)
 
 2026-11-23、6配置×DSEC・M3EDのSemantic全12ジョブの全体mIoUと活動5群の数値を受領（台帳§101・§102）。比較した7配置では、E1 Encoder＋LSTM（h蒸留）・Patchwise LSTMの12層後のみが両データセットの全体と全5群で首位。全体はDSEC公式test 60.483%、M3ED公開val 38.701%。新規6配置の首位はともに9層後のみ（59.220%／37.523%）。集計原本は `outputs/stage2_placement_semantic_20261118/summary.json`。Depthの種類比較は完了済み、6配置のDepthは保留。DSEC Detection 9条件の終了は別runの `summary_val.json`・`summary_test.json` の各9件と `_SUCCESS_val`・`_SUCCESS_test` で確認する。

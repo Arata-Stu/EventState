@@ -109,7 +109,7 @@ def _start_worker(job, gpu, slot, state_dir, worker_command, popen_factory, lock
 
 def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None,
                  poll_interval=2.0, popen_factory=None, disk_free=None, sleep=None,
-                 on_complete=None, idle_devices=None):
+                 on_complete=None, idle_devices=None, waiting_for="an idle GPU"):
     """Run condition workers with exclusive GPUs and aggregate scratch reservations.
 
     Across datasets, at most two workers with kind='depth' can run together.
@@ -172,7 +172,7 @@ def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None
                 candidates = idle_devices(tuple(available)) if idle_devices else available
                 if not candidates:
                     if last_waiting != 'busy GPUs':
-                        print(f"Waiting for an idle GPU among {', '.join(available)}", flush=True)
+                        print(f"Waiting for {waiting_for} among {', '.join(available)}", flush=True)
                         last_waiting = 'busy GPUs'
                     break
                 active_jobs = [entry['job'] for entry in active.values()]
