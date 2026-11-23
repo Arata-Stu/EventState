@@ -77,12 +77,22 @@ canvas { display: block; width: 100%; height: 100%; }
   <p class="hint">波形をクリック・ドラッグして移動。波形を選んで ← → で1コマ、Home / End で先頭・末尾。</p>
 </section>
 <p id="conditions" class="conditions"></p>
+<p id="note" class="hint" hidden></p>
 </main>
 <script id="review-data" type="application/json">__REVIEW_DATA__</script>
 <script>
 "use strict";
 const data = JSON.parse(document.getElementById("review-data").textContent);
 const byId = id => document.getElementById(id);
+if (data.title) {
+  document.title = data.title;
+  document.querySelector("h1").textContent = data.title;
+  byId("player").setAttribute("aria-label", data.title);
+}
+if (data.note) {
+  byId("note").textContent = data.note;
+  byId("note").hidden = false;
+}
 const player = byId("player"), plot = byId("plot"), canvas = byId("chart");
 const sets = byId("dataset"), tasks = byId("task"), sequences = byId("sequence");
 const margin = {left: 52, right: 12, top: 10, bottom: 26};

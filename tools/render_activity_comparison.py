@@ -57,11 +57,13 @@ def cjk_font(path=None):
     raise FileNotFoundError('Japanese font required: pass --font /path/to/NotoSansCJK-Regular.ttc')
 
 
-def rgb_frame(dataset, task, cfg, prepared_root, sequence, timestamp):
+def rgb_frame(dataset, task, cfg, prepared_root, sequence, timestamp, *, missing_ok=False):
     from PIL import Image
     import numpy as np
     if dataset == 'm3ed':
         path = prepared_root / sequence / 'aligned_rgb' / f'{timestamp}.png'
+        if missing_ok and not path.is_file():
+            return None
         with Image.open(path) as source:
             image = source.convert('RGB')
             if image.size == (640, 360):
@@ -70,7 +72,9 @@ def rgb_frame(dataset, task, cfg, prepared_root, sequence, timestamp):
                 raise ValueError(f'Unexpected aligned RGB geometry: {path}')
     else:
         from tools.visualize_dsec_semantic_sequences import _find_aligned_rgb
-        path = _find_aligned_rgb(Path(cfg.dataset.root), sequence, timestamp)
+        path = _find_aligned_rgb(Path(cfg.dataset.root), sequence, timestamp, missing_ok=missing_ok)
+        if path is None:
+            return None
         with Image.open(path) as source:
             image = source.convert('RGB')
             if image.size != (640, 480):

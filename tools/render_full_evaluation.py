@@ -31,11 +31,11 @@ def publish(path, content):
     temporary.replace(path)
 
 
-def prepare_plans(output, activity_dir):
+def prepare_plans(output, activity_dir, tasks=TASKS):
     directory = output / "plans"
     directory.mkdir(exist_ok=True)
     plans = []
-    for dataset, task in TASKS:
+    for dataset, task in tasks:
         path = directory / f"{dataset}_{task}.json"
         plan = select_full_sequences(activity_dir / f"{dataset}.json", dataset=dataset, task=task)
         if path.exists():
@@ -47,12 +47,12 @@ def prepare_plans(output, activity_dir):
     return plans
 
 
-def review_video(root, run, plan, scene):
+def review_video(root, run, plan, scene, conditions=CONDITIONS):
     from event_state.evaluation.comparison_timing import verify_video_timestamps
 
     manifest = json.loads((run / "manifest.json").read_text())
     if (manifest["status"] != "complete" or manifest["dataset"] != plan["dataset"]
-            or manifest["task"] != plan["task"] or manifest["conditions"] != list(CONDITIONS)
+            or manifest["task"] != plan["task"] or manifest["conditions"] != list(conditions)
             or manifest["selection_sha256"] != canonical_sha256(plan)
             or set(manifest["videos"]) != {scene["id"]} or not (run / "_SUCCESS").is_file()):
         raise ValueError(f"Incomplete video or mismatched source/conditions: {run}")
@@ -80,9 +80,9 @@ def review_video(root, run, plan, scene):
                 event_counts=counts, window_us=windows, rates_hz=rates)
 
 
-def review_page(root, template, videos):
+def review_page(root, template, videos, conditions=CONDITIONS, *, title=None, note=None):
     # Inline the data so a downloaded directory opens directly from file://.
-    data = json.dumps(dict(conditions=list(CONDITIONS.values()), videos=videos),
+    data = json.dumps(dict(conditions=list(conditions.values()), videos=videos, title=title, note=note),
                       ensure_ascii=False, allow_nan=False, separators=(",", ":")).replace("<", "\\u003c")
     publish(root / "index.html", template.replace("__REVIEW_DATA__", data))
 

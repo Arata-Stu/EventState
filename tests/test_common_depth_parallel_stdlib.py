@@ -124,6 +124,21 @@ class ParallelDepthSchedulerTest(unittest.TestCase):
                 self.assertEqual(results[job['name']]['condition'], job['label'])
                 self.assertTrue((root/'state'/(job['name'] + '.log')).is_file())
 
+    def test_render_waits_for_idle_device_and_leaves_busy_device_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events, command = self.fixture(root)
+            probes = []
+            def idle_devices(devices):
+                probes.append(devices)
+                return () if len(probes) == 1 else ("2",)
+
+            parallel.run_parallel([dict(self.job("feature"), kind="features")], ("0", "2"),
+                                  scratch=root, state_dir=root/"state", worker_command=command,
+                                  idle_devices=idle_devices, poll_interval=.01)
+            self.assertEqual(probes, [("0", "2"), ("0", "2")])
+            self.assertEqual([e["gpu"] for e in events_at(events)], ["2", "2"])
+
     def test_two_depth_workers_across_datasets_leave_third_gpu_for_semantic(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

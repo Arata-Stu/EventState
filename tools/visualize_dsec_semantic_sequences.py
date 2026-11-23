@@ -214,7 +214,7 @@ def _event_image(event_cache_dir: Path, sequence: str, timestamp: int) -> Image.
     return Image.fromarray(array, mode="RGB")
 
 
-def _find_aligned_rgb(dataset_root: Path, sequence: str, timestamp: int) -> Path:
+def _find_aligned_rgb(dataset_root: Path, sequence: str, timestamp: int, *, missing_ok=False) -> Path | None:
     relative = Path(sequence) / "images" / "left" / "aligned_event" / f"{timestamp}.png"
     candidates = (
         dataset_root / "train_images" / relative,
@@ -223,6 +223,8 @@ def _find_aligned_rgb(dataset_root: Path, sequence: str, timestamp: int) -> Path
         dataset_root / "dsec_det_extra" / "test" / relative,
     )
     matches = [path for path in candidates if path.is_file()]
+    if not matches and missing_ok:
+        return None
     if len(matches) != 1:
         detail = "none" if not matches else ", ".join(str(path) for path in matches)
         raise FileNotFoundError(

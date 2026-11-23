@@ -1,5 +1,54 @@
 # Semantic・Depthの全評価動画とイベント活動量
 
+## 11月23日のSemantic配置比較の特徴動画
+
+Semanticを評価したDSEC公式testの3系列とM3ED公開valの2系列を、系列ごとに1本の動画で比較する。各行は独立に学習したモデルで、各列はViTの3・6・9・12層後に対応する。
+
+| 動画内の行 | 3・6・9層後 | 12層後 |
+| --- | --- | --- |
+| 上段 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後のみ） | 各ブロックの正規化済みViTパッチ特徴 | LSTMの射影出力 `h` |
+| 下段 E1_b3_6_9_12　E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（4段） | 各ブロック直後のLSTMの射影出力 `h` | LSTMの射影出力 `h` |
+
+どちらもseed 0・99,999更新のStage 1重みを固定し、GTがない時刻も含めて全イベント入力を先頭から処理する。左端に入力イベントと、取得できた時刻の対応RGBを置く。Semantic headのクラス予測は使用しない。
+
+特徴のRGB表示は、同じ系列の同じ列で2モデルと全時刻に共通のPCAを使う。全入力を時系列順に一度流し、等間隔で選んだ最大32時刻の同じパッチ位置から両モデルを同数サンプルし、L2正規化後の特徴を合わせて3主成分を求める。各成分の色域をサンプルの1〜99パーセンタイルで固定する。その後、両モデルの状態を初期化して、もう一度系列の先頭から推論し全コマを書き出す。1マスは入力上の16画素間隔に対応する。セル状態 `c`、特徴のノルム、意味クラスの色は表示しない。
+
+同一層の上下で物体の境界の位置や動き方を比較できる。異なるモデルの特徴チャネルを事後的に対応付ける処理は行わず、同じ色が同じ物体クラスを意味する保証はない。系列や層を替えるとPCA基底も変わる。各動画の `projection.json` に基底、色域、寄与率、使用したフレーム・パッチを記録する。
+
+### sig-gpu5で生成する
+
+Macでコードをpushしてから、サーバーで以下を実行する。`--execute` を省くと5系列の名前と出力先を表示する。実行時は空いているGPUに1系列ずつ割り当て、検出などで指定GPUがすべて使用中なら空きができるまで待機する。
+
+```bash
+(
+  set -eo pipefail
+  cd /home/iASL/Arata_repo/EventState
+  mkdir -p outputs
+  log="$PWD/outputs/placement_feature_review_20261123.log"
+  date -Is | tee -a "$log"
+  git pull --ff-only 2>&1 | tee -a "$log"
+  nohup env/bin/python -u tools/render_placement_feature_review.py --gpus 0,1,2 --execute \
+    </dev/null >>"$log" 2>&1 &
+  echo "動画生成 PID=$!  log=$log"
+)
+```
+
+親ログで各系列の担当GPUとログパスが分かる。検証を通った動画から順に `outputs/placement_feature_review_20261123/index.html` に掲載し、5本すべてのMP4・CSVの時刻と重みを照合するとルートに `_SUCCESS` ができる。同じコマンドの再実行で検証済みの系列を再利用する。系列の途中で止まった場合はその系列を先頭から新しい試行先に描画する。
+
+### Macで見る
+
+サーバー名 `sig-gpu5` でSSH接続できるMacのターミナルで、更新された閲覧フォルダーをまとめてコピーする。
+
+```bash
+cd /Users/at/project/research/EventState
+mkdir -p outputs/placement_feature_review_20261123
+rsync -av --partial sig-gpu5:/home/iASL/Arata_repo/EventState/outputs/placement_feature_review_20261123/ \
+  outputs/placement_feature_review_20261123/
+open outputs/placement_feature_review_20261123/index.html
+```
+
+活動量の折れ線をクリックまたはドラッグすると対応フレームに移動する。左右キーや前後のボタンで1コマずつ比較できる。時刻は元のイベント入力に合わせ、各フレームのイベント数と区間長も `frames.csv` で確認できる。
+
 ## 11月18日の全編レビュー
 
 1つの走行を先頭から最後のイベント入力まで再生し、同じ時刻のRGB、イベント画像、GT、
