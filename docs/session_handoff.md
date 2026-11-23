@@ -2,6 +2,8 @@
 
 最終更新: 2026-11-23
 
+2026-11-23、12層後の対照と6配置のStage 1本学習lossをDSEC・M3EDで受領（台帳§103、1万更新ごと全10区間）。両データセットで12層後1個が全区間の最小。12層後1個→4段で終盤train lossはDSEC 0.09552→0.1422、M3ED 0.06290→0.1067。下流headの学習前から最終出力の教師整合に差がある。Stage 1はtrain-only。Depth・多層Semantic headで途中の特徴を直接利用した場合の効果は未検証。[集計手順](lstm_placement_semantic.md#評価)
+
 12層後に1個のE1 Encoder＋LSTM（h蒸留）と4段のE1_b3_6_9_12について、特徴に加え、学習済みSemantic headの予測も同じ動画で比較する。DSEC公式test 3系列・M3ED公開val 2系列で両予測を全入力時刻、参照ラベルを対応時刻に表示する。`tools/render_placement_feature_review.py --with-semantic --gpus 0,1,2 --share-gpus 4096 --execute`、出力は `outputs/placement_feature_semantic_review_20261123/index.html`。実データの動画生成はサーバーで要確認。[生成と閲覧手順](activity_comparison_videos.md)
 
 配置比較の特徴動画は、学習と同じGPUで並行実行できる。`--gpus 0,1,2 --share-gpus 4096 --execute` で、起動時に4096 MiB以上の空きVRAMがあるGPUに動画を1本ずつ割り当てる。共有は特徴動画だけに適用し、Depthの下流タスクは引き続き同時2件まで。

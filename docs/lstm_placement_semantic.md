@@ -50,6 +50,17 @@ Semanticの実行結果は `<semantic_root>/summary.json` に順次集約され�
 
 ## 評価
 
+配置の解釈では最初にStage 1の終盤の蒸留lossを比較する。DSECとM3EDを分け、各データセットで12層後の対照と6配置をそろえる。学習サーバーで保存済みログを読み取るだけでよい。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+python3 tools/summarize_training_logs.py --window-steps 10000 \
+  outputs/stage1_joined_baseline_full_20261107/logs/{dsec,m3ed}_E1_w1.log \
+  outputs/stage1_placement_full_20261118/logs/*_E1_b*_w1.log
+```
+
+全条件ともStage 1はvalidationなしの固定99,999更新。ログはstep 1と20更新おきなので、完走時の最後のlossはstep 99,980。表の `loss直近` は最後の10,000更新に記録された500点の平均。曲線の原本は各runの `tensorboard/` にある。蒸留lossは最終特徴 `h` を蒸留用projectorに通して教師と比較し、下流のSemantic headはprojectorを通す前の `h` を使う。FP16の総skip回数は各runの `training_summary.json` の `optimizer_skips` を参照する。
+
 - DSECは開発6系列・検証2系列でepochを選び、全8系列でheadを再学習して固定し、公式test 3系列のmIoUを報告する。
 - M3EDは3系列でheadを学習し、2系列の公開valで選んだbestを同じvalで報告する。正解には既存のInternImage疑似ラベルを使う。
 - 各配置について全体と、既存の訓練系列から固定したイベント発生率5群のmIoUを並べる。集約JSONのmIoUは0〜1、12層後のみの既存対照との差はパーセントポイント。DSECの配置選択に使う値は開発valとする。
