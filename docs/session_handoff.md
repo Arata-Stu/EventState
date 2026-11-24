@@ -1,6 +1,14 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-23
+最終更新: 2026-11-24
+
+2026-11-24、4層連結Semantic headはE1 Encoder＋LSTM（h蒸留、12層後）のDSEC・M3EDが完了した。残るE1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、4段）の2件はscratch空き15.8 GiBのため未起動（実験台帳§106）。次は同じ `outputs/stage2_placement_semantic_readout_20261123` を使い、既定のscratchに空きを確保するか、余裕のある別ディスクの専用ディレクトリを `--scratch` に指定して再開する。DSEC・M3EDを同時に開始する予約は約158 GiB。完了2件のmIoUは親ログに含まれていない。
+
+2026-11-24、DSEC Detectionの9条件についてval・test各9/9、両完了印Trueと活動別mAPを受領した（実験台帳§105）。test全体はE1 Encoder＋LSTM（h蒸留、Patchwise・12層後）38.77%、E0 Encoder（z蒸留）38.68%、E1_convlstm E1 Encoder＋LSTM（h蒸留、ConvLSTM）38.59%。E1_b3_6_9_12の4段は21.93%で、12層後との差は−16.84ポイント。全活動5群で4段が低い。今回のDetection headは最終特徴だけを受け取り、中間層の直接利用は別の4層Semantic head実験で検証する。
+
+修士論文は [master_thesis のTeX原稿](../../master_thesis/mthesis.tex) で執筆する。第1章は少子高齢化と地域交通の運転者不足から自動運転の必要性を述べ、車載カメラの撮影間隔や露光に伴う制約、EVSの可能性、低活動時の認識へつなぐ。第2章「基本的事項」ではEVSの発生原理・極性・時間窓・発生率を定義する。第3章は関連研究、第4章は提案手法、第5章は評価実験、第6章はおわりに。社会的背景と実走行データ上で検証した範囲は区別する。
+
+修士論文の初稿を [イベントが少ない場面での認識に向けた時系列特徴の蒸留](thesis/EventState_修士論文草稿.docx) にまとめた。教授への説明では自然な低イベント群での意味分割を主結果とし、M3ED深度における反例と、同じ車を認識し続けた時間が未測定であることを併記する。本文の実験値は台帳§39・41・83・85・88・99・102〜104を参照。
 
 2026-11-23、Semantic予測付きの特徴動画をMacの `~/Downloads/placement_feature_semantic_review_20261123/` で確認。DSEC公式test 3系列・M3ED公開val 2系列の全29,423時刻について、両配置の既存最終層headの予測・参照ラベルあり。5本の動画・CSV・投影JSONをmanifestと照合した。定性例の系列・時刻は実験台帳§104、閲覧はコピー内の `index.html`。4層連結headの比較は別実験。
 
@@ -18,7 +26,7 @@ sig-gpu5での初回の共有実行は、DSEC公式testの3系列をGPU 0・1・
 
 2026-11-23、6配置×DSEC・M3EDのSemantic全12ジョブの全体mIoUと活動5群の数値を受領（台帳§101・§102）。比較した7配置では、E1 Encoder＋LSTM（h蒸留）・Patchwise LSTMの12層後のみが両データセットの全体と全5群で首位。全体はDSEC公式test 60.483%、M3ED公開val 38.701%。新規6配置の首位はともに9層後のみ（59.220%／37.523%）。集計原本は `outputs/stage2_placement_semantic_20261118/summary.json`。Depthの種類比較は完了済み、6配置のDepthは保留。DSEC Detection 9条件の終了は別runの `summary_val.json`・`summary_test.json` の各9件と `_SUCCESS_val`・`_SUCCESS_test` で確認する。
 
-同日のDetection確認ではval・testとも0/9、完了印False。続報でランチャーが見つからず、既定の出力ディレクトリと親ログも存在しなかった（台帳§101）。Semanticが終了したため、次のDetection起動はGPU 0・1・2から空きを選び、9条件のvalからtestまで進める。同期時の失敗も残せるよう、`git pull` の前に親ログを作成する手順を `docs/dsec_detection_activity.md` に記載した。
+11月23日時点のDetection確認では、既定の出力ディレクトリと親ログが見つからずval・testとも0/9と表示された（台帳§101）。翌日に同じ出力先から全9条件の結果を受領した（台帳§105）。起動手順は `docs/dsec_detection_activity.md` にある。
 
 2026-11-22、ユーザーから6配置のStage 1後にSemanticまで進み、GPU 0で実行中との報告（台帳§100）。
 既存のSemantic実行を継続し、空きGPU 1・2にDSEC Detectionを追加する。対象は共通Stage 1の基準3条件（E0・Patchwise E1・ConvLSTM E1）とPatchwise E1の6配置、計9条件。Detection用headは各条件で新規学習し、既存のStage 1最終重みを凍結する。新しいSemantic・Detectionスコアは未受領。起動手順は `docs/dsec_detection_activity.md`、既定の集計先は `outputs/stage2_placement_detection_20261122`。

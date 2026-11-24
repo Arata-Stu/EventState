@@ -165,4 +165,4 @@ manifestにはtrain系列、区分境界、分位法、trainの各群件数、�
 モデル間の差を取る前にrole・protocol・座標系、`samples_targets_sha256`、`activity_assignments_sha256`、
 活動manifest identityが一致することを確認する。群別mAPの単純平均で全体mAPを再構成しない。
 
-実データの活動manifest生成・head推論・COCO採点はサーバー未検証。新しいmAP値はまだない。
+2026-11-24に共通Stage 1の凍結9条件について、サーバーでのval・test各9/9の完了印と全体・活動5群のCOCO mAPを受領した。[実験結果台帳 §105](experiment_results.md) に両splitの数値を収録している。

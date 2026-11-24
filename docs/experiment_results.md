@@ -3040,6 +3040,8 @@ DSEC Semantic Q5の78frameという制約を併記する。
 
 続く `sig-gpu5` での確認では、ランチャー検索は該当なし、既定の `outputs/stage2_placement_detection_20261122` はディレクトリとして見つからず、`outputs/dsec_detection_20261122.log` もファイルとして見つからなかった。従来の起動手順はPythonの開始前に親ログを開く。既定の場所に学習開始や異常終了を示す記録はなく、計算済みのDetection条件数・mAPは引き続き不明。
 
+2026-11-24に同じDSEC Detectionの学習・評価の終了報告、続いてval・test各9条件の集計値と完了印を受領。全結果は§105に記録した。
+
 ## 102. Patchwise LSTMの配置とSemantic mIoU（2026-11-23）
 
 §101で完了を確認した全12ジョブについて、ユーザーが `sig-gpu5` の `/home/iASL/Arata_repo/EventState/outputs/stage2_placement_semantic_20261118/summary.json` から出力した集計表を受領した。各表は新規6配置と既存の12層後の対照を含む。全行がE1 Encoder＋LSTM（h蒸留）・Patchwise LSTM。条件名の数字はLSTMを置くViTブロックの番号で、各ブロックの直後に1個ずつ挿入する。
@@ -3127,3 +3129,56 @@ seed 0・99,999更新のE1 Encoder＋LSTM（h蒸留、12層後に1個）とE1_b3
 DSEC公式testの13_a・14_c・15_aは各378、1,190、1,238時刻。M3ED公開valのRittenhouse・UCity small loopは各9,751、16,866時刻。計29,423入力時刻に両予測と参照ラベル（M3EDはInternImage疑似ラベル）がある。5本のMP4・フレームCSV・投影JSONのSHA-256を各生成manifestと照合した。件数は元の入力時刻に基づき、動画用の末尾複製を含まない。
 
 各系列の時間中央を選んだ目視例。DSEC 14_cの29.750秒（Q2）で、右側の歩行者は両モデルが捉える。その右の柱は12層後モデルで上部まで続き、4段では根元付近の短い断片になる。M3ED Rittenhouseの195.000秒（Q4）では、疑似ラベルの左手前の車領域は歩道内に孤立し、12層後モデルも同じ位置に孤立した領域を描く。4段は車領域を奥までつなげている。この目視例の発生頻度、中間層からのクラス識別性、新規4層headの改善量は未測定。
+
+## 105. DSEC Detectionの9条件とイベント活動量別mAP（2026-11-24）
+
+ユーザーが `sig-gpu5` で表示した集計表で、val・testとも9/9条件、完了印Trueを確認した。集計元は `/home/iASL/Arata_repo/EventState/outputs/stage2_placement_detection_20261122/` の `summary_val.json` と `summary_test.json`。以下は端末に表示された小数第2位までの百分率。val・testのhead SHA一致数を出力する最終行と元JSONは今回未受領。
+
+seed 0。DSEC共通train35系列で99,999更新したStage 1を凍結し、YOLOX型headをDetection公式train 41系列で50 epoch学習する。条件ごとにval 6系列の全体mAPが最高のepochのheadを選び、test 13系列で評価する。対象クラスはcar・pedestrian。E0は最終特徴z、E1各条件は最終特徴hを使う。全体はCOCO mAP@[.50:.95]、AP50とAP75は各IoU閾値のAP。Q1〜Q5は、Stage 1 train35系列から決めたイベント発生率の境界で低い側から高い側へ分け、各群の予測と正解から計算したmAP。[実験プロトコル](dsec_detection_activity.md)
+
+### 検証セット（val、6系列、単位 %）
+
+| 条件ID・条件名（層はLSTMの挿入位置） | 全体mAP | AP50 | AP75 | Q1 | Q2 | Q3 | Q4 | Q5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 34.85 | 63.87 | 32.94 | 33.18 | 33.60 | 37.36 | 32.75 | 28.07 |
+| E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後） | 35.75 | 65.48 | 34.68 | 33.37 | 36.01 | 37.98 | 34.41 | 26.08 |
+| E1_convlstm E1 Encoder＋LSTM（h蒸留）・ConvLSTM（12層後） | 36.63 | 67.34 | 36.06 | 34.43 | 36.51 | 38.05 | 36.90 | 26.29 |
+| E1_b3 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3層後） | 21.56 | 44.56 | 17.49 | 15.34 | 20.71 | 24.45 | 20.52 | 21.03 |
+| E1_b6 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（6層後） | 28.07 | 52.44 | 27.06 | 24.76 | 28.18 | 29.72 | 26.58 | 22.92 |
+| E1_b9 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（9層後） | 34.25 | 63.66 | 31.61 | 31.14 | 33.71 | 35.25 | 36.98 | 25.26 |
+| E1_b9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（9・12層後） | 33.76 | 63.13 | 30.61 | 33.09 | 32.66 | 34.04 | 33.64 | 27.04 |
+| E1_b6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（6・9・12層後） | 29.39 | 56.69 | 27.21 | 26.44 | 28.41 | 31.94 | 27.30 | 22.76 |
+| E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3・6・9・12層後） | 19.00 | 39.38 | 15.39 | 13.16 | 18.38 | 22.16 | 16.95 | 18.41 |
+
+### テストセット（test、13系列、単位 %）
+
+| 条件ID・条件名（層はLSTMの挿入位置） | 全体mAP | AP50 | AP75 | Q1 | Q2 | Q3 | Q4 | Q5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| E0 Encoder（z蒸留） | 38.68 | 68.25 | 38.14 | 33.80 | 38.47 | 41.36 | 40.43 | 45.71 |
+| E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後） | 38.77 | 69.57 | 38.18 | 33.89 | 38.24 | 43.43 | 40.81 | 45.25 |
+| E1_convlstm E1 Encoder＋LSTM（h蒸留）・ConvLSTM（12層後） | 38.59 | 68.93 | 38.94 | 33.75 | 39.07 | 42.60 | 40.69 | 46.44 |
+| E1_b3 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3層後） | 24.97 | 47.07 | 23.58 | 19.43 | 24.37 | 26.41 | 27.58 | 29.37 |
+| E1_b6 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（6層後） | 32.16 | 57.72 | 31.67 | 26.22 | 33.06 | 36.53 | 34.05 | 34.57 |
+| E1_b9 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（9層後） | 36.41 | 65.70 | 36.67 | 31.58 | 37.07 | 40.38 | 36.95 | 39.11 |
+| E1_b9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（9・12層後） | 37.25 | 66.84 | 37.34 | 32.71 | 37.46 | 41.61 | 38.26 | 43.04 |
+| E1_b6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（6・9・12層後） | 31.90 | 60.73 | 30.19 | 26.49 | 32.29 | 38.00 | 31.53 | 34.24 |
+| E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3・6・9・12層後） | 21.93 | 42.65 | 20.13 | 15.42 | 21.25 | 25.06 | 26.31 | 26.74 |
+
+![DSEC Detection testの全体・活動量別mAPと、同じ群の12層後Patchwise E1との差](evaluation_records/20261124_dsec_detection_activity.png)
+
+Patchwise LSTM 1個を3→6→9→12層後と深い位置に置く順に、全体mAPはvalとtestの両方で高くなった。12層後のみから9・12、6・9・12、3・6・9・12と前段に追加すると、testは38.77→37.25→31.90→21.93%。4段は12層後のみより全体で16.84ポイント、Q1〜Q5でも順に18.47、16.99、18.37、14.50、18.51ポイント低い。DSEC Semanticで観察した12層後のみと4段の差（§102）に方向が一致する。今回の検出headも最終層だけを直接読むため、中間層を直接読んだ場合の利用可能性は未測定。
+
+基準3条件のtest全体はE0が38.68%、12層後のPatchwise E1が38.77%、ConvLSTM E1が38.59%。単一seedで範囲は0.18ポイント。val全体の最高はConvLSTM E1（36.63%）、test全体の最高はPatchwise E1（38.77%）。test Q1におけるPatchwise E1とE0の差は+0.09ポイントで、今回の最低活動群の集計で大きな改善は観測されなかった。
+
+## 106. 4層連結Semantic headは2/4条件完了、残りはscratch容量不足で未起動（2026-11-24）
+
+`sig-gpu5` の親ログ `outputs/placement_semantic_readout_20261123.log` を受領した。対象はseed 0・99,999更新のStage 1を凍結し、3・6・9・12層の特徴を連結して学習するSemantic head。DSECは6系列で学習・2系列でepoch選択後に8系列で再学習し、公式test 3系列で評価する。M3EDは3系列で学習し、公開val 2系列の疑似ラベルで選んだheadを同じvalで評価する。
+
+| 条件ID・条件名 | DSEC | M3ED |
+| --- | --- | --- |
+| E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後） | GPU 0で完了 | GPU 1で完了 |
+| E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3・6・9・12層後） | 未起動 | 未起動 |
+
+実行ログのディレクトリは `outputs/stage2_placement_semantic_readout_20261123/logs/498a2d155551407eae8eca523bd9e058/`。この実行の起動時はscratch空き159.4 GiB、全4条件の特徴キャッシュ見積もりは287.2 GiB。最初の2件が完了した時点で空き15.8 GiBとなり、残るDSECの起動に必要な38.6 GiBにも届かず、親が終了した。M3EDの予約は119.4 GiB。親ログに完了2件のmIoUは含まれず、配置による改善幅の差はまだ算出できない。
+
+次は `outputs/stage2_placement_semantic_readout_20261123` を引き続き使い、残り2件分の空き容量を確保して再実行する。別ディスクなら `--scratch` だけを変更できる。両条件を同時に開始する予約の合計は約158 GiB。再開時に既存の `verified.json`、重み、評価レポートを照合する。
