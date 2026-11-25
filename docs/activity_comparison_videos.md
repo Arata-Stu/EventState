@@ -1,5 +1,29 @@
 # Semantic・Depthの全評価動画とイベント活動量
 
+## UCityの低活動直前にE1の状態を一度だけ初期化する比較
+
+M3ED公開valの `car_urban_day_ucity_small_loop` で、低活動50.64秒とその前後各5秒を同じ時刻で比較する。対象はE1 Encoder＋LSTM（h蒸留、Patchwise LSTM、12層後）の同一backboneと同一Semantic head。元の全編レビューの重み・活動manifestのSHA-256を照合する。[UCityの選定記録](evaluation_records/20261125_semantic_low_activity_intervals.json)
+
+系列先頭から6,313入力を処理してから表示を開始する。ソース時刻257,560,000 µsに終わる窓までは同じ予測を両側に表示する。その次の窓 (257,560,000, 257,600,000] µs を処理する直前に片側のLSTMのhとcを初期化する。以後は同じ入力を両側に順に与え、それぞれの状態を低活動終了後まで引き継ぐ。元動画で257.52秒が低活動の開始、本クリップでは5.00秒が介入境界、5.04秒が介入を反映する最初の予測となる。
+
+### サーバーでの生成
+
+ローカル変更をサーバーに同期後、`sig-gpu5` で実行する。Gitで同期する場合はMacでpush後にサーバーで `git pull --ff-only` を実行する。GPU 0・1・2のうち空いた1枚を使う。進捗は今回の起動専用ログに記録する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+mkdir -p outputs
+log="outputs/ucity_e1_onset_reset_$(date +%Y%m%d_%H%M%S).log"
+nohup env OMP_NUM_THREADS=1 env/bin/python -u tools/render_ucity_state_reset.py \
+  --gpus 0,1,2 --execute </dev/null >"$log" 2>&1 &
+echo "PID=$!  log=$log"
+tail -f "$log"
+```
+
+出力は `outputs/ucity_e1_onset_reset_20261125/comparison.mp4`。上段はRGB・イベント・InternImage疑似ラベル、下段は状態保持・1回リセット・予測クラスの不一致（白）。右下の割合は全画素を分母とする。各予測のframe mIoUは疑似ラベルの有効画素で計算する。`frames.csv` に各時刻の指標・イベント量・リセットした入力窓を保存する。`manifest.json` に重みのSHA-256と時刻検査結果を記録し、1,516コマの元時刻と終端の表示保持を検証して `_SUCCESS` を作成する。2回目以降の生成では新しい `--output` を指定できる。
+
+入力には従来の全編レビューと同じprepared events・aligned RGB・Semantic targets・学習済み重み・E1特徴キャッシュの系列メタデータを使う。表示区間はストリームでエンコードする。`--execute` を外すとGPUを使わずに実際の活動manifestと表示区間を照合する。
+
 ## 11月23日のSemantic予測と特徴の配置比較
 
 Semanticを評価したDSEC公式testの3系列とM3ED公開valの2系列を、系列ごとに1本の動画で比較する。動画上段は左から参照ラベル、12層後に1個のモデルの予測、4段モデルの予測。11クラスの色をそろえ、右に凡例を置く。DSECは公式ラベル、M3EDはInternImage疑似ラベルを使う。ラベルのない時刻はその欄に欠測を示し、両方の予測は表示する。下の2行は各モデルのRGB・イベント入力と3・6・9・12層後の特徴を示す。

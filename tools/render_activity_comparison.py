@@ -148,7 +148,7 @@ def activity_chart(width, scene, records, cutpoints, ymax):
 
 def draw_frame(task, rgb, events, target, valid, predictions, labels, scene, timestamp,
                activity_record, activity_records, cutpoints, font_path, depth_max, activity_ymax,
-               *, chart=None):
+               *, chart=None, extra_panel=None, target_label=None):
     import numpy as np
     from PIL import Image, ImageDraw
     height, width = rgb.shape[:2]
@@ -160,7 +160,7 @@ def draw_frame(task, rgb, events, target, valid, predictions, labels, scene, tim
         ImageDraw.Draw(missing).text((20, 30), 'GT unavailable at this timestamp', font=small, fill='white')
         panels.append(('GT unavailable', np.asarray(missing)))
     else:
-        panels.append(('GT (invalid pixels = gray)' if task == 'semantic' else 'GT (invalid pixels = black)',
+        panels.append((target_label or ('GT (invalid pixels = gray)' if task == 'semantic' else 'GT (invalid pixels = black)'),
                        semantic_color(target) if task == 'semantic' else depth_color(target, valid, depth_max)))
     metrics = []
     for prediction, label in zip(predictions, labels):
@@ -171,6 +171,8 @@ def draw_frame(task, rgb, events, target, valid, predictions, labels, scene, tim
             description = f'frame mIoU={100*value:.2f}%' if task == 'semantic' else f'frame MAE={value:.3f}m'
         panels.append((label + ' | ' + description,
                        semantic_color(prediction) if task == 'semantic' else depth_color(prediction, maximum=depth_max)))
+    if extra_panel is not None:
+        panels.append(extra_panel)
     columns, rows = 3, math.ceil(len(panels)/3)
     total_width = columns * width
     canvas = Image.new('RGB', (total_width, rows*(height+header)+footer), '#141414')

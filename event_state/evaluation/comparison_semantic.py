@@ -309,6 +309,15 @@ class SemanticBackend:
         self._timestamp = None
         self._frame_index = 0
 
+    def fork_without_history(self):
+        """Start a fresh recurrent state at the next input, sharing weights and target reader.
+
+        The original backend owns the shared resources and must outlive the branch.
+        """
+        branch = copy.copy(self)
+        branch.state = None
+        return branch
+
     def step(self, frame_dict, predict=True):
         torch, np = self._torch, self._np
         sequence = frame_dict['sequence_name']

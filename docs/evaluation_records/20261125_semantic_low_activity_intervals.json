@@ -1,0 +1,235 @@
+{
+  "source": "full_sequence_review_20261118",
+  "task": "semantic",
+  "e1_reference": {
+    "manifest": "m3ed/semantic/car_urban_day_ucity_small_loop/render-001/manifest.json",
+    "activity_manifest_sha256": "a891fd384731471af0b53ecd3b9fd0e3a6f6b8981f8d6e47e7cd0dfa12cbbda8",
+    "backbone_sha256": "73e8b6c1f41b2f7732d4681177fd111e874412445f652ae1c45db7ad3a7f4399",
+    "head_sha256": "7d1d9a8ec7988f7517e71954d6c993d14f46348bc5c94c7739b0b9e9ad19565b"
+  },
+  "selection": {
+    "group": "p00_20",
+    "minimum_continuous_seconds": 10,
+    "series_boundary": "keep for counting; exclude boundary-touching episodes when selecting clips",
+    "time_reference": "elapsed from first displayed event-window end; intervals use physical window start/end, so the first interval may start before video time 0",
+    "clip_selection": "longest interior episode per M3ED sequence (earliest in a tie), plus 5 seconds before and after"
+  },
+  "sequences": [
+    {
+      "dataset": "dsec",
+      "sequence": "zurich_city_13_a",
+      "frames_csv": "dsec/semantic/zurich_city_13_a/render-001/dsec_semantic_zurich_city_13_a/frames.csv",
+      "frames": 378,
+      "q1_upper_events_per_s": 5933582.5819221465,
+      "episodes": []
+    },
+    {
+      "dataset": "dsec",
+      "sequence": "zurich_city_14_c",
+      "frames_csv": "dsec/semantic/zurich_city_14_c/render-001/dsec_semantic_zurich_city_14_c/frames.csv",
+      "frames": 1190,
+      "q1_upper_events_per_s": 5933582.5819221465,
+      "episodes": []
+    },
+    {
+      "dataset": "dsec",
+      "sequence": "zurich_city_15_a",
+      "frames_csv": "dsec/semantic/zurich_city_15_a/render-001/dsec_semantic_zurich_city_15_a/frames.csv",
+      "frames": 1238,
+      "q1_upper_events_per_s": 5933582.5819221465,
+      "episodes": []
+    },
+    {
+      "dataset": "m3ed",
+      "sequence": "car_urban_day_rittenhouse",
+      "frames_csv": "m3ed/semantic/car_urban_day_rittenhouse/render-001/m3ed_semantic_car_urban_day_rittenhouse/frames.csv",
+      "frames": 9751,
+      "q1_upper_events_per_s": 1549875.0,
+      "episodes": [
+        {
+          "start_us": 74120000,
+          "end_us": 96400000,
+          "video_start_s": 74.0,
+          "video_end_s": 96.28,
+          "duration_s": 22.28,
+          "frames": 557,
+          "mean_events_per_s": 395796.32,
+          "interior": true
+        },
+        {
+          "start_us": 255840000,
+          "end_us": 285880000,
+          "video_start_s": 255.72,
+          "video_end_s": 285.76,
+          "duration_s": 30.04,
+          "frames": 751,
+          "mean_events_per_s": 464471.9,
+          "interior": true
+        },
+        {
+          "start_us": 310640000,
+          "end_us": 322920000,
+          "video_start_s": 310.52,
+          "video_end_s": 322.8,
+          "duration_s": 12.28,
+          "frames": 307,
+          "mean_events_per_s": 219295.36,
+          "interior": true
+        },
+        {
+          "start_us": 371000000,
+          "end_us": 390120000,
+          "video_start_s": 370.88,
+          "video_end_s": 390.0,
+          "duration_s": 19.12,
+          "frames": 478,
+          "mean_events_per_s": 221586.51,
+          "interior": false
+        }
+      ],
+      "clip": {
+        "path": "outputs/m3ed_low_activity_review_20261125/rittenhouse.mp4",
+        "from_video_s": 250.72,
+        "to_video_s": 290.76,
+        "q1_source_start_us": 255840000,
+        "q1_source_end_us": 285880000
+      }
+    },
+    {
+      "dataset": "m3ed",
+      "sequence": "car_urban_day_ucity_small_loop",
+      "frames_csv": "m3ed/semantic/car_urban_day_ucity_small_loop/render-001/m3ed_semantic_car_urban_day_ucity_small_loop/frames.csv",
+      "frames": 16866,
+      "q1_upper_events_per_s": 1549875.0,
+      "episodes": [
+        {
+          "start_us": 0,
+          "end_us": 36640000,
+          "video_start_s": -0.04,
+          "video_end_s": 36.6,
+          "duration_s": 36.64,
+          "frames": 916,
+          "mean_events_per_s": 227736.93,
+          "interior": false
+        },
+        {
+          "start_us": 49200000,
+          "end_us": 70800000,
+          "video_start_s": 49.16,
+          "video_end_s": 70.76,
+          "duration_s": 21.6,
+          "frames": 540,
+          "mean_events_per_s": 155167.22,
+          "interior": true
+        },
+        {
+          "start_us": 141160000,
+          "end_us": 161840000,
+          "video_start_s": 141.12,
+          "video_end_s": 161.8,
+          "duration_s": 20.68,
+          "frames": 517,
+          "mean_events_per_s": 202485.54,
+          "interior": true
+        },
+        {
+          "start_us": 162360000,
+          "end_us": 180360000,
+          "video_start_s": 162.32,
+          "video_end_s": 180.32,
+          "duration_s": 18.0,
+          "frames": 450,
+          "mean_events_per_s": 480021.22,
+          "interior": true
+        },
+        {
+          "start_us": 257560000,
+          "end_us": 308200000,
+          "video_start_s": 257.52,
+          "video_end_s": 308.16,
+          "duration_s": 50.64,
+          "frames": 1266,
+          "mean_events_per_s": 361743.56,
+          "interior": true
+        },
+        {
+          "start_us": 321440000,
+          "end_us": 342120000,
+          "video_start_s": 321.4,
+          "video_end_s": 342.08,
+          "duration_s": 20.68,
+          "frames": 517,
+          "mean_events_per_s": 181326.5,
+          "interior": true
+        },
+        {
+          "start_us": 410960000,
+          "end_us": 453360000,
+          "video_start_s": 410.92,
+          "video_end_s": 453.32,
+          "duration_s": 42.4,
+          "frames": 1060,
+          "mean_events_per_s": 185301.42,
+          "interior": true
+        },
+        {
+          "start_us": 506600000,
+          "end_us": 517520000,
+          "video_start_s": 506.56,
+          "video_end_s": 517.48,
+          "duration_s": 10.92,
+          "frames": 273,
+          "mean_events_per_s": 422024.63,
+          "interior": true
+        },
+        {
+          "start_us": 537920000,
+          "end_us": 561680000,
+          "video_start_s": 537.88,
+          "video_end_s": 561.64,
+          "duration_s": 23.76,
+          "frames": 594,
+          "mean_events_per_s": 271349.24,
+          "interior": true
+        },
+        {
+          "start_us": 561960000,
+          "end_us": 589960000,
+          "video_start_s": 561.92,
+          "video_end_s": 589.92,
+          "duration_s": 28.0,
+          "frames": 700,
+          "mean_events_per_s": 236646.46,
+          "interior": true
+        },
+        {
+          "start_us": 609160000,
+          "end_us": 626680000,
+          "video_start_s": 609.12,
+          "video_end_s": 626.64,
+          "duration_s": 17.52,
+          "frames": 438,
+          "mean_events_per_s": 408269.18,
+          "interior": true
+        },
+        {
+          "start_us": 627160000,
+          "end_us": 667760000,
+          "video_start_s": 627.12,
+          "video_end_s": 667.72,
+          "duration_s": 40.6,
+          "frames": 1015,
+          "mean_events_per_s": 271466.01,
+          "interior": true
+        }
+      ],
+      "clip": {
+        "path": "outputs/m3ed_low_activity_review_20261125/ucity_small_loop.mp4",
+        "from_video_s": 252.52,
+        "to_video_s": 313.16,
+        "q1_source_start_us": 257560000,
+        "q1_source_end_us": 308200000
+      }
+    }
+  ]
+}

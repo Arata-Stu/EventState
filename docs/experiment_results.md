@@ -3170,15 +3170,51 @@ Patchwise LSTM 1個を3→6→9→12層後と深い位置に置く順に、全�
 
 基準3条件のtest全体はE0が38.68%、12層後のPatchwise E1が38.77%、ConvLSTM E1が38.59%。単一seedで範囲は0.18ポイント。val全体の最高はConvLSTM E1（36.63%）、test全体の最高はPatchwise E1（38.77%）。test Q1におけるPatchwise E1とE0の差は+0.09ポイントで、今回の最低活動群の集計で大きな改善は観測されなかった。
 
-## 106. 4層連結Semantic headは2/4条件完了、残りはscratch容量不足で未起動（2026-11-24）
+## 106. 4層連結Semantic headは2/4条件完了、空き容量確保後に残り2件を起動（2026-11-24）
 
 `sig-gpu5` の親ログ `outputs/placement_semantic_readout_20261123.log` を受領した。対象はseed 0・99,999更新のStage 1を凍結し、3・6・9・12層の特徴を連結して学習するSemantic head。DSECは6系列で学習・2系列でepoch選択後に8系列で再学習し、公式test 3系列で評価する。M3EDは3系列で学習し、公開val 2系列の疑似ラベルで選んだheadを同じvalで評価する。
 
 | 条件ID・条件名 | DSEC | M3ED |
 | --- | --- | --- |
 | E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（12層後） | GPU 0で完了 | GPU 1で完了 |
-| E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3・6・9・12層後） | 未起動 | 未起動 |
+| E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（3・6・9・12層後） | 再開時にGPU 0で特徴抽出フェーズに移行 | 再開時にGPU 1でワーカー起動 |
 
 実行ログのディレクトリは `outputs/stage2_placement_semantic_readout_20261123/logs/498a2d155551407eae8eca523bd9e058/`。この実行の起動時はscratch空き159.4 GiB、全4条件の特徴キャッシュ見積もりは287.2 GiB。最初の2件が完了した時点で空き15.8 GiBとなり、残るDSECの起動に必要な38.6 GiBにも届かず、親が終了した。M3EDの予約は119.4 GiB。親ログに完了2件のmIoUは含まれず、配置による改善幅の差はまだ算出できない。
 
-次は `outputs/stage2_placement_semantic_readout_20261123` を引き続き使い、残り2件分の空き容量を確保して再実行する。別ディスクなら `--scratch` だけを変更できる。両条件を同時に開始する予約の合計は約158 GiB。再開時に既存の `verified.json`、重み、評価レポートを照合する。
+停止時の再開方針は、同じ `outputs/stage2_placement_semantic_readout_20261123` を使い、残り2件分の空き容量を確保すること。両条件を同時に開始する予約の合計は約158 GiB。
+
+同日、§105のDetection 9条件について、`summary_test.json` の各 `cache` から `official_role=train` の系列を選び、`du -skx` で測った結果を受領した。`dataset/downstream_scratch/dsec-det-676dc4979cee40c29d6eef305e13de1f/<条件ID>/benchmark` のtrain部分は全条件とも41系列・41.0 GiB（表示値）。4条件分の整理で約164 GiBを回収する見込みだった。個別の削除結果は未受領。
+
+同日、親PID `2592352` の再開ログを受領。既定のscratch空きは179.8 GiB、残り2件の特徴キャッシュ見積もりは143.6 GiB。両データセットで12層後のE1は `verified existing head` と表示された。4段配置はDSECがGPU 0で特徴抽出フェーズに移行し、M3EDはGPU 1でワーカー起動まで確認した。個別ログは同じ出力の `logs/6c746ce81ae946a9957aaf7fa662c89b/` にある。貼付範囲に4段配置の完了やmIoUは含まれていない。
+
+## 107. Semanticの4層連結でLSTM配置間の差は約0.2ポイント縮小（2026-11-25）
+
+`sig-gpu5` の親ログで、新規4層head全4件と対応する既存の最終層head全4件の比較完了を確認した。集計元は `/home/iASL/Arata_repo/EventState/outputs/stage2_placement_semantic_readout_20261123/summary.json`。以下は全評価フレームに対する端末表示値で、活動量Q1〜Q5の値は未受領。
+
+seed 0。DSEC共通train 35系列、M3ED共通train 3系列で99,999更新した各Stage 1を凍結。既存の最終層headはブロック12の後の384チャネル、新規headはブロック3・6・9・12の特徴を連結した1,536チャネルを読む。両方とも線形Semantic head。DSECは6系列で学習・2系列でepochを選択後、公式train全8系列で再学習し、公式test 3系列で採点した。M3EDはtrain 3系列で学習し、公開val 2系列のInternImage疑似ラベルでbestを選び、同じvalで採点した。[実験条件](lstm_placement_semantic.md#途中の特徴をsemantic-headが直接読めると配置差は縮まるか)
+
+| 評価split | 条件ID・条件名（Patchwise LSTMの配置） | 最終層head mIoU（%） | 4層連結head mIoU（%） | 変化（ポイント） |
+| --- | --- | ---: | ---: | ---: |
+| DSEC 公式test | E1 Encoder＋LSTM（h蒸留、12層後） | 60.483 | 60.367 | −0.116 |
+| DSEC 公式test | E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、3・6・9・12層後） | 50.990 | 51.066 | +0.076 |
+| M3ED 公開val | E1 Encoder＋LSTM（h蒸留、12層後） | 38.701 | 39.261 | +0.560 |
+| M3ED 公開val | E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、3・6・9・12層後） | 29.519 | 30.242 | +0.722 |
+
+4層連結による変化量の差（4段配置の変化 − 12層後のみの変化）は、DSEC **+0.191ポイント**、M3ED **+0.163ポイント**。これらはランチャーが丸める前のmIoUから計算して表示した値を採った。12層後のみが4段配置を上回る幅は、DSECで約9.49→9.30ポイント、M3EDで約9.18→9.02ポイントだった。
+
+4段配置のmIoUは両データセットで上がった。M3EDでは12層後のみの配置にも改善があり、DSECでは4段配置自身の改善は0.076ポイントにとどまった。今回の線形headで中間特徴を直接利用しても、両データセットで約9ポイントの配置差が残った。単一seedの全体集計から、小さな改善の再現性や低活動群への寄与は判断できない。
+
+## 108. 画面全体の低イベントが続く区間の抽出とM3EDの交差点例（2026-11-25）
+
+全編レビュー `full_sequence_review_20261118` のSemantic動画・`frames.csv` を再利用した。DSEC公式test 3系列とM3ED公開val 2系列について、各入力窓のイベント数を実時間で割り、trainで固定したQ1上限以下の窓が、途切れず10秒以上続く区間を数えた。Q1上限はDSEC約593.36万、M3ED約154.99万 events/s。CSVの全入力窓について時刻の連続性と保存されたQ1割当を照合した。以前の「10秒のうち80%以上が低活動」の窓選択とは条件が異なる。[判定条件と全区間](evaluation_records/20261125_semantic_low_activity_intervals.json)
+
+DSECの13_a・14_c・15_aは各0区間。M3EDはRittenhouse 4区間、UCity small loop 12区間だった。件数には系列端に接する区間も含む。前後が観測できる区間のうち、各系列で最も長い1例を予測結果を使わず選び、既存動画から前後各5秒を含めて切り出した。下表の時刻は元動画先頭を0としたイベント窓の開始・終了時刻。各クリップの開始5秒後に低活動区間が始まる。
+
+| M3ED公開val系列 | 元動画での低活動区間（秒） | 継続時間 | 区間平均（events/s） |
+| --- | ---: | ---: | ---: |
+| car_urban_day_rittenhouse | 255.72–285.76 | 30.04秒 | 464,472 |
+| car_urban_day_ucity_small_loop | 257.52–308.16 | 50.64秒 | 361,744 |
+
+Macの `outputs/m3ed_low_activity_review_20261125/` に両クリップとUCityの抜粋画像を保存した。映像はseed 0の既存Semantic評価（E0 Encoder（z蒸留）、12層後のE1 Encoder＋LSTM（h蒸留）のPatchwise LSTMとConvLSTM）。系列先頭から推論した動画を切り出した。参照はInternImage疑似ラベル。動画下端の活動時間割合と時刻は元の全系列に対する表示。
+
+Rittenhouseは横断歩道の手前で背景の位置がほぼ一定になり、人が横断する。UCityでは正面の車の後方で構図が安定し、交差方向の交通が動く。信号待ちの候補として使えるが、信号現示や停止の理由は未確認。UCityクリップ25秒（元動画277.52秒）では、RGBと疑似ラベルに正面の車があり、GEPでは交差方向の動く車が目立つ。E1（Patchwise）の画面全体のframe mIoUは21.16%、E0は16.65%だが、E1も正面の車体中央付近を道路と予測する。この1時刻の目視から個別車両の保持時間や一般的なモデル順位は決まらない。

@@ -1,8 +1,14 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-24
+最終更新: 2026-11-25
 
-2026-11-24、4層連結Semantic headはE1 Encoder＋LSTM（h蒸留、12層後）のDSEC・M3EDが完了した。残るE1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、4段）の2件はscratch空き15.8 GiBのため未起動（実験台帳§106）。次は同じ `outputs/stage2_placement_semantic_readout_20261123` を使い、既定のscratchに空きを確保するか、余裕のある別ディスクの専用ディレクトリを `--scratch` に指定して再開する。DSEC・M3EDを同時に開始する予約は約158 GiB。完了2件のmIoUは親ログに含まれていない。
+2026-11-25、UCityの低活動50.64秒で、E1 Encoder＋LSTM（h蒸留、12層後）の状態保持と、最初の低活動窓の直前にh/cを1回だけ初期化した予測を並べるコードを追加した。`tools/render_ucity_state_reset.py --gpus 0,1,2 --execute` で既存の重みから再推論する。出力は `outputs/ucity_e1_onset_reset_20261125/comparison.mp4`。元動画と同じ前後各5秒付きで、5.04秒に分岐後の最初の予測が見える。実データの動画生成と介入結果は未確認。[実行手順](activity_comparison_videos.md#サーバーでの生成)
+
+2026-11-25、車両を先に手で探す負担を減らすため、画面全体のイベント発生率から低活動区間を抽出してM3EDの定性評価を先行。既存Semantic動画でQ1が連続10秒以上の区間はM3ED公開valに16件、DSEC公式test 3系列に0件。M3EDの各系列で前後を観測できる最長区間を前後5秒付きで `outputs/m3ed_low_activity_review_20261125/` に切り出した。観察は実験台帳§108。次に状態保持の寄与を調べる場合は、UCityの同じ低活動開始点で1回だけ状態を初期化し、既存の連続推論と比較する。現動画の3条件はすべて連続推論。
+
+2026-11-25、4層連結Semantic head全4件と既存の最終層head全4件の比較が完了した（実験台帳§107）。中間特徴を直接読むと、E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、4段）の全体mIoUはDSEC公式testで+0.076ポイント、M3ED公開valで+0.722ポイント。E1 Encoder＋LSTM（h蒸留、12層後）に対する配置差の縮小はそれぞれ0.191・0.163ポイントで、4層連結後も約9.30・9.02ポイントの差が残った。次は `outputs/stage2_placement_semantic_readout_20261123/summary.json` の `comparisons` から活動量Q1〜Q5の配置別変化を回収する。再学習は不要。
+
+2026-11-24、4層連結Semantic headを既定のscratchで再開した（実験台帳§106）。起動時の空きは179.8 GiB。E1 Encoder＋LSTM（h蒸留、12層後）はDSEC・M3EDとも既存headを再照合した。E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、4段）はDSECがGPU 0で特徴抽出フェーズに移行し、M3EDはGPU 1でワーカー起動まで確認。個別ログは `outputs/stage2_placement_semantic_readout_20261123/logs/6c746ce81ae946a9957aaf7fa662c89b/`。次は同じ出力の `_SUCCESS` と `summary.json` で両データセットの完了・mIoU・配置別の改善幅を確認する。
 
 2026-11-24、DSEC Detectionの9条件についてval・test各9/9、両完了印Trueと活動別mAPを受領した（実験台帳§105）。test全体はE1 Encoder＋LSTM（h蒸留、Patchwise・12層後）38.77%、E0 Encoder（z蒸留）38.68%、E1_convlstm E1 Encoder＋LSTM（h蒸留、ConvLSTM）38.59%。E1_b3_6_9_12の4段は21.93%で、12層後との差は−16.84ポイント。全活動5群で4段が低い。今回のDetection headは最終特徴だけを受け取り、中間層の直接利用は別の4層Semantic head実験で検証する。
 

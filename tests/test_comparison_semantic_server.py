@@ -175,6 +175,20 @@ def test_semantic_inference_rejects_missing_prefix_gaps_and_sequence_switches():
     assert backend.step(frame('dsec', 1)).shape == (440, 640)
 
 
+def test_history_fork_keeps_the_input_cursor_and_independent_recurrent_states():
+    keep = fake_backend('m3ed')
+    keep.step(frame('m3ed', 1), predict=False)
+    branch = keep.fork_without_history()
+    assert branch.model is keep.model and branch.head is keep.head
+    assert branch.state is None and keep.state.item() == 1
+    for index in (2, 3):
+        sample = frame('m3ed', index)
+        keep.step(sample, predict=False)
+        branch.step(sample, predict=False)
+        assert keep.state.item() == index and branch.state.item() == index - 1
+    assert len(keep.model.inputs) == 5
+
+
 def test_semantic_constructor_rejects_a_cache_with_a_different_backbone(tmp_path):
     from tools import run_semantic_depth_activity
 
