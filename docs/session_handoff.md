@@ -1,10 +1,12 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-25
+最終更新: 2026-11-26
 
-2026-11-25、UCityの低活動50.64秒で、E1 Encoder＋LSTM（h蒸留、12層後）の状態保持と、最初の低活動窓の直前にh/cを1回だけ初期化した予測を並べるコードを追加した。`tools/render_ucity_state_reset.py --gpus 0,1,2 --execute` で既存の重みから再推論する。出力は `outputs/ucity_e1_onset_reset_20261125/comparison.mp4`。元動画と同じ前後各5秒付きで、5.04秒に分岐後の最初の予測が見える。実データの動画生成と介入結果は未確認。[実行手順](activity_comparison_videos.md#サーバーでの生成)
+2026-11-26、次のDepth評価は未採点の `E1_b3_6_9_12` E1 Encoder＋LSTM（h蒸留、3・6・9・12層後）。DSEC・M3ED各1本で既存Stage 1を凍結し、12層後だけのE1と同じ初期値・split・学習条件のDPT headを学習する。公開valの全体・活動5群でMAEを比較し、DSECは公開val視差も採点する。起動は `tools/run_common_depth.py --four-stage-placement`。サーバーでの起動・スコアは未確認。[実行手順と容量](common_depth_parallel.md#4段配置のdepth評価)
 
-2026-11-25、車両を先に手で探す負担を減らすため、画面全体のイベント発生率から低活動区間を抽出してM3EDの定性評価を先行。既存Semantic動画でQ1が連続10秒以上の区間はM3ED公開valに16件、DSEC公式test 3系列に0件。M3EDの各系列で前後を観測できる最長区間を前後5秒付きで `outputs/m3ed_low_activity_review_20261125/` に切り出した。観察は実験台帳§108。次に状態保持の寄与を調べる場合は、UCityの同じ低活動開始点で1回だけ状態を初期化し、既存の連続推論と比較する。現動画の3条件はすべて連続推論。
+2026-11-25、M3ED公開valのUCityで、E1 Encoder＋LSTM（h蒸留、12層後）の状態保持と低活動開始時にh/cを1回リセットした比較動画を受領・検証した。出力は `outputs/ucity_e1_onset_reset_20261125/comparison.mp4`。保持側のframe mIoUは最初の40 msで5.136ポイント高く、低活動50.64秒全体のフレーム平均では差が−0.00048ポイントだった。開始20秒後には両側が正面の車体中央を道路と予測した。車両単位の保持時間は未計測。結果・画像は実験台帳§109。[実行手順](activity_comparison_videos.md#サーバーでの生成)
+
+2026-11-25、車両を先に手で探す負担を減らすため、画面全体のイベント発生率から低活動区間を抽出してM3EDの定性評価を先行。既存Semantic動画でQ1が連続10秒以上の区間はM3ED公開valに16件、DSEC公式test 3系列に0件。M3EDの各系列で前後を観測できる最長区間を前後5秒付きで `outputs/m3ed_low_activity_review_20261125/` に切り出した。元動画の3条件はすべて連続推論。観察は実験台帳§108。
 
 2026-11-25、4層連結Semantic head全4件と既存の最終層head全4件の比較が完了した（実験台帳§107）。中間特徴を直接読むと、E1_b3_6_9_12 E1 Encoder＋LSTM（h蒸留、4段）の全体mIoUはDSEC公式testで+0.076ポイント、M3ED公開valで+0.722ポイント。E1 Encoder＋LSTM（h蒸留、12層後）に対する配置差の縮小はそれぞれ0.191・0.163ポイントで、4層連結後も約9.30・9.02ポイントの差が残った。次は `outputs/stage2_placement_semantic_readout_20261123/summary.json` の `comparisons` から活動量Q1〜Q5の配置別変化を回収する。再学習は不要。
 

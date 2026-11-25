@@ -15,6 +15,8 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+COMMON_OUTPUT = Path('outputs/stage2_common_depth_vkitti_20261110')
+PLACEMENT_OUTPUT = Path('outputs/stage2_placement_depth_20261126')
 CONDITIONS = [
     ('E0', 'E0 Encoder（z蒸留）', 'stage1_joined_baseline_full_20261107', 'E0_w1', 99999),
     ('E1', 'E1 Encoder＋LSTM（h蒸留）', 'stage1_joined_baseline_full_20261107', 'E1_w1', 99999),
@@ -132,6 +134,10 @@ def verify_decoder(weights):
 
 
 def _conditions(a):
+    if getattr(a, 'four_stage_placement', False):
+        from event_state.evaluation.placement_features import FOUR_STAGE, CONDITIONS as placement_labels
+        return [(FOUR_STAGE, placement_labels[FOUR_STAGE], 'stage1_placement_full_20261118',
+                 FOUR_STAGE + '_w1', 99999)]
     return CONDITIONS[:3] if a.baselines_only else CONDITIONS
 
 
@@ -325,6 +331,9 @@ def run_condition(a, job, status_callback=None):
         if saved is None:
             raise ValueError(f'{score}: incomplete disparity validation')
         result['mae_px'] = saved['mean_sequence_mae_px']
+    if getattr(a, 'four_stage_placement', False):
+        from tools.placement_depth_comparison import attach_comparison
+        result = attach_comparison(job, result)
     phase('completed')
     return result
 
@@ -340,12 +349,48 @@ def _existing_timestamps(out):
     return dest
 
 
+def _placement_index(source, destination, preflight):
+    """Use the original Depth target index; disparity evaluation reads the copy inside the run."""
+    data = source.read_bytes()
+    if destination.exists():
+        if destination.read_bytes() != data:
+            raise ValueError(f'Placement target index differs from the original: {destination}')
+        return destination
+    if preflight:
+        return source
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_suffix('.tmp')
+    partial.write_bytes(data)
+    partial.replace(destination)
+    return destination
+
+
 def _prepare(a):
     from event_state.dense.protocol import sha256_file
     preflight = bool(getattr(a, 'preflight', False))
     activity_only = bool(getattr(a, 'activity_only', False))
     activity_indexes = _activity_indexes(a)
     out, data = a.output, a.data
+    placement = getattr(a, 'four_stage_placement', False)
+    if placement:
+        from tools.placement_depth_comparison import baseline_record
+        reference = ROOT / COMMON_OUTPUT
+        control = read(reference / 'run.json')
+        if sha256_file(a.weights) != control['weights']:
+            raise ValueError('DPT initializer differs from the completed common Depth run')
+        for ds in ('dsec', 'm3ed'):
+            if activity_indexes[ds].identity['manifest_sha256'] != baseline_record(ds)['manifest_sha256']:
+                raise ValueError(f'{ds}: activity manifest differs from the evaluated E1 baseline')
+        if not preflight:
+            from event_state.training import load_checkpoint_config_metadata
+            from event_state.evaluation.placement_features import placement_input_contract
+            from event_state.dense.protocol import load_statistics_provenance
+            condition, = _conditions(a)
+            for ds in ('dsec', 'm3ed'):
+                metadata = load_checkpoint_config_metadata(checkpoint(ds, condition))
+                placement_input_contract(metadata.config, ds, condition[0], metadata.global_step, ROOT)
+                load_statistics_provenance(ROOT/'outputs/stage1_common_20261105/statistics'/f'{ds}_common.json',
+                                           metadata.config)
     if not activity_only:
         identity = dict(weights=sha256_file(a.weights), data=str(data.resolve()), conditions={})
         for ds in ('dsec', 'm3ed'):
@@ -372,6 +417,9 @@ def _prepare(a):
             if ds == 'm3ed':
                 target = a.m3ed_val_targets if role == 'val' else a.m3ed_targets
             path = out/'targets'/f'{ds}_{role}.json'
+            if placement:
+                indexes[ds, role] = _placement_index(reference/'targets'/path.name, path, preflight)
+                continue
             if not path.exists():
                 if preflight:
                     raise FileNotFoundError(f'{path}: target index required for read-only --preflight; '
@@ -461,6 +509,7 @@ def pipeline(a, lock_fd=None):
     summary = read(summary_path) if activity_only and summary_path.exists() else {}
     if getattr(a, 'gpus', None):
         from tools.common_depth_parallel import parse_gpus, run_parallel
+        from tools.run_temporal_downstream import idle_gpus
         if lock_fd is None:
             raise ValueError('Parallel workers require the parent run.lock')
         state_dir = Path(tempfile.mkdtemp(dir=a.output, prefix='parallel_'))
@@ -468,7 +517,8 @@ def pipeline(a, lock_fd=None):
         values = {key: str(value) if isinstance(value, Path) else value for key, value in vars(a).items()}
         save(plan_path, dict(arguments=values, jobs=jobs))
         results = run_parallel(jobs, parse_gpus(a.gpus), scratch=a.scratch, state_dir=state_dir,
-            worker_command=_worker_command(a, plan_path, lock_fd), lock_fd=lock_fd)
+            worker_command=_worker_command(a, plan_path, lock_fd), lock_fd=lock_fd,
+            idle_devices=idle_gpus if getattr(a, 'four_stage_placement', False) else None)
         for job in jobs:
             summary[job['name']] = results[job['name']]
         save(summary_path, summary)
@@ -557,12 +607,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--data', type=Path, default=Path('/home/iASL/Arata_repo/dataset'))
     p.add_argument('--weights', type=Path, default=Path('weights/depth_anything_v2/depth_anything_v2_metric_vkitti_vits.pth'))
-    p.add_argument('--output', type=Path, default=Path('outputs/stage2_common_depth_vkitti_20261110'))
+    p.add_argument('--output', type=Path)
     p.add_argument('--scratch', type=Path)
     p.add_argument('--m3ed-targets', type=Path, help='Override the default M3ED target root for both splits')
     p.add_argument('--m3ed-val-targets', type=Path, help='Separate prepared depth targets for validation')
     p.add_argument('--local-only', action='store_true', help='Evaluate both public validation sets without preparing a hidden-test ZIP')
-    p.add_argument('--baselines-only', action='store_true')
+    conditions = p.add_mutually_exclusive_group()
+    conditions.add_argument('--baselines-only', action='store_true')
+    conditions.add_argument('--four-stage-placement', action='store_true',
+                            help='Evaluate only E1_b3_6_9_12 on DSEC and M3ED public val with activity quintiles')
     p.add_argument('--dsec-activity-manifest', type=Path, help='Shared train-fitted DSEC event-rate quintiles')
     p.add_argument('--m3ed-activity-manifest', type=Path, help='Shared train-fitted M3ED event-rate quintiles')
     p.add_argument('--activity-only', action='store_true', help='Score completed heads; never train or export')
@@ -577,6 +630,16 @@ def main():
     if a.worker_plan is not None:
         _worker(a)
         return
+    a.output = a.output or (PLACEMENT_OUTPUT if a.four_stage_placement else COMMON_OUTPUT)
+    if a.four_stage_placement:
+        os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+        if a.output.resolve() == (ROOT / COMMON_OUTPUT).resolve():
+            p.error('Choose a separate output for the four-stage placement')
+        a.local_only = True
+        a.gpus = a.gpus if a.gpus is not None else os.environ.get('CUDA_VISIBLE_DEVICES', '0,1,2')
+        manifests = ROOT / 'outputs/semantic_depth_activity_20261110/manifests'
+        a.dsec_activity_manifest = a.dsec_activity_manifest or manifests / 'dsec.json'
+        a.m3ed_activity_manifest = a.m3ed_activity_manifest or manifests / 'm3ed.json'
     if a.gpus is not None:
         from tools.common_depth_parallel import parse_gpus
         try:

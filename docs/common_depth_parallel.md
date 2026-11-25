@@ -5,6 +5,29 @@ Common Depth、ConvLSTMの混合ランナー、F³の並列ランナーは同じ
 既存runの完了済みhead・評価を再利用する。Depth headのbatch、loss、seed、epoch数、split、best選択基準は変更しない。
 条件名の旧型DDP・新型DDPはStage 1重みの学習方式を表し、今回のDepth headをDDPで学習する意味ではない。
 
+## 4段配置のDepth評価
+
+`--four-stage-placement` は `E1_b3_6_9_12` E1 Encoder＋LSTM（h蒸留、3・6・9・12層後）について、DSEC・M3ED各1本のDepth headを学習・評価する。両方ともseed 0、既存の99,999更新のStage 1を凍結し、VKITTI初期化のDPTを50 epoch、batch 4で学習する。対照のE1 Encoder＋LSTM（h蒸留、12層後）もDPTが同じ4位置の特徴を読む。4段配置では4位置すべてがLSTM通過後、対照では最後の位置がLSTM通過後である。
+
+11月10日のCommon Depthと同じtarget indexを使う。DSECはtrain 37系列・公開val 4系列、M3EDはtrain 3系列・公開val 2系列。全体と共通活動Q1〜Q5の画素単位MAE・フレーム平均MAE、およびDSEC公開valの視差MAEを集計する。比較対象は完了済み12層後E1の記録で、公開valのpooled MAEはDSEC 2.445824 m、M3ED 3.678082 m。
+
+変更をMacからpush後、`sig-gpu5` のbashで実行する。過去の同じtarget件数でscratch予約はDSEC約99.6 GiB、M3ED約119.2 GiB、2件合計約218.8 GiB。ここでは以前の `df` で `/` に余裕があったため `/var/tmp` を使う。現在の空きと必要量はpreflightに表示される。GPU 0・1・2の空きと共有Depth枠に合わせて最大2並列で実行し、同時に容量が足りなければ順に処理する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+git pull --ff-only
+df -h /home /var/tmp
+args=(--four-stage-placement --gpus 0,1,2 --scratch "/var/tmp/$USER/eventstate-placement-depth")
+if env/bin/python -u tools/run_common_depth.py "${args[@]}" --preflight; then
+  log="outputs/placement_depth_$(date +%Y%m%d_%H%M%S).log"
+  nohup env/bin/python -u tools/run_common_depth.py "${args[@]}" >"$log" 2>&1 </dev/null &
+  echo "PID=$!  log=$log"
+  tail -f "$log"
+fi
+```
+
+完了時の `outputs/stage2_placement_depth_20261126/summary.json` に両条件の結果が入る。各データセットの `comparison_to_E1.groups` は、時刻・正解・有効画素・活動群の一致を照合した上で、`all` と5群の4段配置と12層後E1のMAEを並べる。`delta_m` は4段配置から12層後E1を引いた差で、負の値が改善を表す。再実行でも同じ出力先を指定すると、完了したheadと評価を再利用する。
+
 ## 現在の直列実行から切り替える
 
 **先に、現在の学習を実行した元のターミナルでCtrl+Cを1回押し、shellのpromptへ戻るまで待つ。**
