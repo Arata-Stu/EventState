@@ -12,7 +12,8 @@ class FourStageLSTM(nn.Module):
     readouts retain the ViT features produced downstream of earlier insertions.
     """
 
-    def __init__(self, input_dim, hidden_dim, output_dim, first_stage=1, *, after_blocks=None):
+    def __init__(self, input_dim, hidden_dim, output_dim, first_stage=1, *,
+                 after_blocks=None, residual_skip=False):
         super().__init__()
         if input_dim != output_dim:
             raise ValueError("Direct stage connections require the ViT token dimension")
@@ -30,6 +31,11 @@ class FourStageLSTM(nn.Module):
                     or after_blocks != tuple(sorted(set(after_blocks)))):
                 raise ValueError("after_blocks must be a nonempty, increasing subset of [3, 6, 9, 12]")
         self.after_blocks = after_blocks
+        if not isinstance(residual_skip, bool):
+            raise ValueError("residual_skip must be a boolean")
+        if residual_skip and after_blocks != (3,):
+            raise ValueError("The residual_skip ablation requires after_blocks=[3]")
+        self.skip_scale = nn.Parameter(torch.zeros(())) if residual_skip else None
         self.first_stage = after_blocks[0] // 3
         self.stages = nn.ModuleList(
             PatchwiseLSTM(input_dim, hidden_dim, output_dim) for _ in self.after_blocks
@@ -56,8 +62,13 @@ class FourStageLSTM(nn.Module):
                     continue
                 active = len(states)
                 h, carried = self.stages[active](z, state[active])
+                next_patches = h.flatten(0, 1)
+                if self.skip_scale is not None:
+                    # Keep the unnormalized ViT residual stream as the identity path.
+                    next_patches = tokens[:, prefix:] + self.skip_scale * next_patches
+                    h = backbone.norm(next_patches).reshape_as(z)
                 outputs.append(h)
                 states.append(carried)
                 if index < 12:
-                    tokens = torch.cat((tokens[:, :prefix], h.flatten(0, 1)), dim=1)
+                    tokens = torch.cat((tokens[:, :prefix], next_patches), dim=1)
         return z, tuple(outputs), tuple(states)

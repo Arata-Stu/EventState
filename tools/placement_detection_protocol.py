@@ -110,6 +110,7 @@ def check_backbone(path, condition, split):
     blocks = list(PLACEMENTS[condition]) if condition in PLACEMENTS else None
     dims = ("input_dim", "output_dim") if condition == "E0" else ("input_dim", "hidden_dim", "output_dim")
     if (not kind or temporal.get("type") != kind or temporal.get("after_blocks") != blocks
+            or temporal.get("residual_skip", False) is not False
             or any(temporal.get(k) != 384 for k in dims)
             or (condition != "E0" and temporal.get("num_layers") != 1)):
         raise ValueError(f"{path}: wrong temporal model or placement for {condition}")

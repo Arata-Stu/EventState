@@ -1,5 +1,31 @@
 # Patchwise LSTMの配置比較とSemantic segmentation
 
+## 3層後のスキップ接続
+
+2026-11-26実装、実測前。DSEC・M3EDで、3層後に1個のPatchwise LSTMを置く2条件を比較する。どちらもE1 Encoder＋LSTM（h蒸留）で、Semantic headは12層まで通した最終特徴を読む。
+
+| 条件ID・配置 | 第4ブロックに渡すパッチ特徴 |
+| --- | --- |
+| `E1_b3` 3層後・置換（既存の対照） | 正規化した第3ブロック出力をLSTMに通し、線形射影した更新量 `u₃` |
+| `E1_b3_skip` 3層後・スキップ接続 | 正規化前の第3ブロック出力 `x₃ + α × u₃`。αは層全体で共有する学習可能なスカラーで初期値0 |
+
+seed 0、同じRGB教師・訓練系列・イベント窓・99,999更新を使う。SemanticはDSEC公式testとM3ED公開valで、全体・活動量Q1〜Q5のmIoUを求める。置換対照の全体mIoUはDSEC 51.218%、M3ED 30.963%。測る差は次の2つ。
+
+- **接続を変えた効果**は、連続推論での `E1_b3_skip − E1_b3`。12層後の既存E1との差も集計する。
+- **スキップ接続モデルが履歴を使う効果**は、同じ学習済みbackboneとheadでの「連続推論 − 毎イベント窓の直前にLSTM状態をゼロにした推論」。後者でも現在窓と残差枝の計算を使う。学習後のαも記録する。αは枝の出力スケールにも依存するため、履歴の寄与はmIoU差で判断する。
+
+サーバーに変更を同期後、次を実行する。GPU 0・1・2の空きに合わせてDSEC・M3EDを最大2件並列にし、smoke、本学習、Semantic、履歴の評価まで順に進める。
+
+```bash
+cd /home/iASL/Arata_repo/EventState
+mkdir -p outputs
+nohup bash tools/run_b3_skip.sh >>outputs/b3_skip_20261126.log 2>&1 </dev/null &
+```
+
+集計先は `outputs/stage2_b3_skip_semantic_20261126/summary.json`。スクリプトは完了印のあるStage 1を再利用する。中断後にSemanticを再実行すると、検証済みのheadを再利用できる。
+
+## 配置6条件の比較
+
 2026-11-18の計画。DSEC・M3EDで以下の6配置を新しく事前学習し、各最終checkpointを凍結してSemantic segmentationを評価する。Depthはこの段階の実行対象に含めない。
 
 | 挿入するViTブロックの直後 | LSTM数 | 条件 |

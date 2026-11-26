@@ -8,7 +8,7 @@ import unittest
 
 from event_state.dense.common_protocol import load_common, audit_common
 from event_state.dense.protocol import digest, load_protocol
-from tools.placement_conditions import PLACEMENTS, placement_label
+from tools.placement_conditions import PLACEMENTS, SKIP_CONDITION, placement_label
 from tools.run_stage1_common import plan
 from event_state.dense.stream_lanes import segments, FullStreamBatchSampler
 
@@ -125,6 +125,24 @@ class CommonTests(unittest.TestCase):
                                      '++model.temporal.after_blocks=' + json.dumps(expected[key], separators=(',', ':')),
                                      f"hydra.run.dir={(a.output_root / job['name']).resolve()}"):
                         self.assertIn(override, job['command'])
+                a.placement_suite, a.b3_skip = False, True
+                skip_jobs = plan(a)
+                self.assertEqual([job['name'] for job in skip_jobs],
+                                 [f'{ds}_{SKIP_CONDITION}_w1' for ds in ('dsec', 'm3ed')])
+                for job, direct in zip(skip_jobs, (j for j in suite if j['condition'] == 'E1_b3')):
+                    self.assertEqual(job['condition'], SKIP_CONDITION)
+                    self.assertTrue(job['residual_skip'])
+                    self.assertEqual(job['steps'], steps)
+                    self.assertEqual(job['after_blocks'], [3])
+                    self.assertIn('残差接続', job['label'])
+                    self.assertIn('++model.temporal.residual_skip=true', job['command'])
+                    skip_recipe = [arg.replace(SKIP_CONDITION, 'E1_b3') for arg in job['command']
+                                   if arg != '++model.temporal.residual_skip=true']
+                    self.assertEqual(skip_recipe, direct['command'])
+                a.placement_suite = True
+                with self.assertRaisesRegex(ValueError, 'b3-skip'):
+                    plan(a)
+                a.b3_skip = False
             self.assertFalse(a.output_root.exists())
             stats['sequences'] = ['wrong']
             (root/'m3ed_common.json').write_text(json.dumps(stats))

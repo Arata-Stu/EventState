@@ -42,6 +42,18 @@ class PlacementSemanticTests(unittest.TestCase):
             with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
                 suite.main(flags)
 
+    def test_skip_plans_two_isolated_jobs_and_requires_a_distinct_output(self):
+        flags = ["--conditions", suite.SKIP_CONDITION, "--gpus", "0,1,2"]
+        with redirect_stdout(io.StringIO()) as stream:
+            suite.main(flags)
+        self.assertEqual(stream.getvalue().count("| Semantic |"), 2)
+        for ds in suite.DATASETS:
+            self.assertIn(ds + "_" + suite.SKIP_CONDITION, stream.getvalue())
+        for args in (["--output", str(suite.PLACEMENT_OUTPUT)],
+                     ["--conditions", suite.SKIP_CONDITION, "E1_b3"]):
+            with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+                suite.main([*flags, *args])
+
     def test_multiple_workers_share_one_summary_and_use_each_available_gpu_exclusively(self):
         output, scratch = self.root/"output", self.root/"scratch"
         flags = ["--execute", "--gpus", "0,1,2", "--output", str(output), "--scratch", str(scratch)]
@@ -139,6 +151,88 @@ slot.unlink()
                     suite.validate_config(dict(config, seed=seed), dataset, condition)
             with self.assertRaises(ValueError):
                 suite.validate_config(dict(config, training=dict(max_steps=99)), "dsec", "E1_b9")
+
+    def test_identical_placement_needs_matching_residual_recipe(self):
+        config = self.metadata(cond="E1_b3").config
+        with patch.object(suite, "audit_common"):
+            with self.assertRaisesRegex(ValueError, "recipe/placement"):
+                suite.validate_config(config, "dsec", suite.SKIP_CONDITION)
+            config["model"]["temporal"]["residual_skip"] = True
+            suite.validate_config(config, "dsec", suite.SKIP_CONDITION)
+            with self.assertRaisesRegex(ValueError, "recipe/placement"):
+                suite.validate_config(config, "dsec", "E1_b3")
+
+    def test_skip_history_reuses_verified_head_and_requires_both_histories_for_success(self):
+        args = SimpleNamespace(output=self.root, activity_root=self.root/"activity", data=self.root/"data",
+                               conditions=[suite.SKIP_CONDITION])
+        args.activity_root.mkdir()
+        for ds in suite.DATASETS:
+            baseline = self.baselines[ds]
+            scores = {k: g["metrics"]["mIoU"] for k, g in baseline["groups"].items()}
+            directory = self.root / f"{ds}_{suite.SKIP_CONDITION}"
+            result = dict(head_sha256="head", backbone_sha256="backbone", report="report", mIoU=scores)
+            suite.save(directory/"verified.json", result)
+            activity = args.activity_root / (ds + ".json")
+            suite.save(activity, dict(dataset=ds))
+            reset = dict.fromkeys(scores, 0.25)
+            evaluation = dict(continuous_mIoU=scores, reset_each_window_mIoU=reset,
+                continuous_minus_reset_pp={g: 100 * (v - 0.25) for g, v in scores.items()},
+                continuous_report="report", state_policy="reset_each_window", learned_skip_scale=0.01,
+                activity_manifest_sha256=baseline["manifest_sha256"], head_sha256="head", backbone_sha256="backbone",
+                comparison_hashes={key: baseline[key] for key in suite.COMPARISON_HASHES})
+            suite.write_summary(args, self.baselines)
+            self.assertFalse((self.root/"_SUCCESS").is_file())
+            with patch.dict("sys.modules", {"tools.evaluate_b3_skip_history": SimpleNamespace(
+                    evaluate_history=lambda dataset, receipt, manifest, *, data_root: evaluation)}):
+                suite.skip_history(args, ds, result, execute=True)
+            self.assertEqual(suite.skip_history(args, ds, result), evaluation)
+        suite.write_summary(args, self.baselines)
+        summary = suite.read(self.root/"summary.json")
+        self.assertEqual(len(summary["semantic"]), 2)
+        self.assertTrue((self.root/"_SUCCESS").is_file())
+        stored = suite.read(directory/"history.json")
+        stored["evaluation"]["head_sha256"] = "other"
+        suite.save(directory/"history.json", stored)
+        with self.assertRaisesRegex(ValueError, "verified continuous head"):
+            suite.skip_history(args, ds, result)
+
+    def test_skip_dispatch_resumes_history_without_reserving_another_full_cache(self):
+        directory = self.root / f"dsec_{suite.SKIP_CONDITION}"
+        suite.save(directory / "verified.json", {"attempt": "run-a"})
+        args = SimpleNamespace(output=self.root, scratch=self.root/"scratch", conditions=[suite.SKIP_CONDITION])
+        def check(jobs, gpus, **kwargs):
+            self.assertEqual(gpus, ("0", "1", "2"))
+            self.assertIs(kwargs["idle_devices"], suite.idle_gpus)
+            self.assertEqual([(j["dataset"], j["history_only"], j["remaining_cache_bytes"]) for j in jobs],
+                             [("dsec", True, 0), ("m3ed", False, 4096)])
+        with patch.object(suite, "cache_bytes", return_value=4096) as estimate, \
+                patch.object(suite, "run_parallel", side_effect=check), patch.object(suite, "write_summary"), \
+                redirect_stdout(io.StringIO()):
+            suite.execute_jobs(args, [(ds, suite.SKIP_CONDITION) for ds in suite.DATASETS],
+                               ("0", "1", "2"), self.baselines, None)
+        estimate.assert_called_once_with(args, "m3ed", suite.SKIP_CONDITION)
+
+    def test_skip_per_activity_comparison_uses_verified_archived_replacement_head(self):
+        cond, ds = "E1_b3", "dsec"
+        directory = self.root / f"{ds}_{cond}"
+        path = directory / "run-mock"
+        self.make_report(ds, cond, path)
+        checkpoint = self.root / "replacement.pt"
+        checkpoint.write_bytes(b"replacement")
+        row = suite.verified_metrics(ds, cond, path, self.baselines[ds])
+        row.update(attempt=path.name, global_step=99999, seed=0, backbone=str(checkpoint),
+                   backbone_sha256=suite.sha256_file(checkpoint))
+        suite.save(directory/"verified.json", row)
+        training = SimpleNamespace(load_checkpoint_config_metadata=lambda _: self.metadata(ds, cond))
+        with patch.dict("sys.modules", {"event_state.training": training}), patch.object(suite, "audit_common"):
+            control = suite.replacement_control(self.root, ds, self.baselines[ds])
+            scores = dict(row["mIoU"], all=row["mIoU"]["all"] + 0.03)
+            delta = suite.skip_comparison(scores, control)["delta_from_b3_replacement_pp"]
+            self.assertAlmostEqual(delta["all"], 3.0)
+            self.assertEqual(delta["p00_20"], 0)
+            checkpoint.write_bytes(b"changed")
+            with self.assertRaisesRegex(ValueError, "Stage 1 replacement control"):
+                suite.replacement_control(self.root, ds, self.baselines[ds])
 
     def make_report(self, ds, cond, output):
         ref = self.baselines[ds]

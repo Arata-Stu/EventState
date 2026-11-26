@@ -20,7 +20,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from event_state.dense.common_protocol import load_common
 from event_state.dense.protocol import digest
-from tools.placement_conditions import PLACEMENTS, placement_label
+from tools.placement_conditions import PLACEMENTS, PLACEMENT_BLOCKS, SKIP_CONDITION, placement_label
 from tools.run_dense_pretrain import _hydra_object
 
 
@@ -32,15 +32,21 @@ DEFAULT_PREFLIGHT_TESTS = (
 
 
 def plan(a):
-    placement_suite = getattr(a, 'placement_suite', False)
+    skip = getattr(a, 'b3_skip', False)
+    suite = getattr(a, 'placement_suite', False)
     first_stage = getattr(a, 'lstm_from_stage', None)
     four_stage = getattr(a, 'four_stage_lstm', False) or first_stage is not None
-    if placement_suite and (four_stage or a.phase == 'ddp'):
+    if skip and (suite or four_stage or a.phase == 'ddp'):
+        raise ValueError('--b3-skip runs only the single-GPU block-3 skip condition; use it without other placement flags or --phase ddp')
+    if suite and (four_stage or a.phase == 'ddp'):
         raise ValueError('--placement-suite runs six single-GPU placements; use it without other placement flags or --phase ddp')
+    placements = tuple(PLACEMENTS) if suite else ()
+    if skip:
+        placements = (SKIP_CONDITION,)
     gpus = a.gpus.split(',')
     valid_ids = all(x.isdigit() for x in gpus)
     distinct_ids = valid_ids and len({int(x) for x in gpus}) == len(gpus)
-    if a.phase == 'baseline' or placement_suite:
+    if a.phase == 'baseline' or placements:
         if not 1 <= len(gpus) <= 3 or not distinct_ids:
             raise ValueError('Specify one to three distinct GPU IDs for baseline')
     elif len(gpus) != 3 or not distinct_ids:
@@ -51,8 +57,8 @@ def plan(a):
         raise FileExistsError('Use a fresh output root; do not overwrite prior runs')
     if not a.teacher_checkpoint.is_file():
         raise FileNotFoundError(a.teacher_checkpoint)
-    if placement_suite:
-        specs = [(condition, 1) for condition in PLACEMENTS]
+    if placements:
+        specs = [(condition, 1) for condition in placements]
     elif four_stage:
         specs = [('E1', world) for world in (1, 3)]
     else:
@@ -84,12 +90,12 @@ def plan(a):
             base_steps = 99 if a.stage == 'smoke' else 99999
             steps = base_steps // world
             warmup = (9 if a.stage == 'smoke' else 999) // world
-            condition = 'E1' if placement_suite else condition_id
+            condition = 'E1' if placements else condition_id
             variant = 'four_stage_lstm' if four_stage else condition_id
             if first_stage and first_stage > 1:
                 variant = f'lstm_from_s{first_stage}'
             name = f'{ds}_{variant}_w{world}'
-            model_kind = 'four_stage_lstm' if four_stage or placement_suite else ('no_memory' if condition == 'E0' else 'lstm')
+            model_kind = 'four_stage_lstm' if four_stage or placements else ('no_memory' if condition == 'E0' else 'lstm')
             experiment = {'E0': 'gep_baseline', 'E1': 'h_distill_lstm', 'E2': 'h_distill_lstm_zloss'}[condition]
             cmd = [sys.executable]
             if world > 1:
@@ -132,19 +138,23 @@ def plan(a):
                 if first_stage is not None:
                     cmd.append(f"model.temporal.first_stage={first_stage}")
                     label = f"Encoder＋S{first_stage}以降LSTM（最終h蒸留）"
-            if placement_suite:
-                blocks = PLACEMENTS[condition_id]
+            if placements:
+                blocks = PLACEMENT_BLOCKS[condition_id]
                 label = placement_label(condition_id)
                 cmd.append('++model.temporal.after_blocks=' + json.dumps(blocks, separators=(',', ':')))
-            if four_stage or placement_suite:
+                if skip:
+                    cmd.append('++model.temporal.residual_skip=true')
+            if four_stage or placements:
                 cmd.append(f"experiment.name={variant}_h_distill")
             job = dict(name=name, label=label, world=world, command=cmd, steps=steps,
                 effective_clips=2 * branch_batch * accumulation * world,
                 planned_frames=steps * 2 * branch_batch * accumulation * world * clip,
                 statistics=str(stats_file.resolve()), statistics_sha256=hashlib.sha256(stats_file.read_bytes()).hexdigest(),
                 protocol=protocol)
-            if placement_suite:
+            if placements:
                 job.update(condition=condition_id, after_blocks=list(blocks))
+                if skip:
+                    job['residual_skip'] = True
             jobs.append(job)
     return sorted(jobs, key=lambda j: j['world'])
 
@@ -174,6 +184,10 @@ def execute(a, jobs):
                            stdout=log, stderr=subprocess.STDOUT, check=True)
     pending, running = list(jobs), []
     gpu_ids = a.gpus.split(',')
+    check_idle = getattr(a, 'b3_skip', False)
+    if check_idle:
+        from tools.run_temporal_downstream import idle_gpus
+    waiting = False
     def stop(signum, frame):
         raise KeyboardInterrupt
     old = {s: signal.signal(s, stop) for s in (signal.SIGINT, signal.SIGTERM)}
@@ -182,8 +196,14 @@ def execute(a, jobs):
             used = {g for _, _, _, assigned in running for g in assigned}
             for job in pending[:]:
                 free = [g for g in gpu_ids if g not in used]
+                if check_idle and free:
+                    free = list(idle_gpus(free))
                 if len(free) < job['world']:
+                    if check_idle and not waiting:
+                        print(f'[stage1] Waiting for an idle GPU among {a.gpus}', flush=True)
+                        waiting = True
                     break
+                waiting = False
                 assigned = free[:job['world']]
                 log = (logs / f'{job["name"]}.log').open('w')
                 proc = subprocess.Popen(job['command'], cwd=PROJECT,
@@ -203,7 +223,7 @@ def execute(a, jobs):
                 if proc.returncode or not ckpt.is_file() or not ckpt.stat().st_size:
                     raise RuntimeError(f'{job["name"]} failed or missing final checkpoint; inspect log')
                 print(f'[stage1] complete: {job["name"]} {job["label"]}', flush=True)
-            time.sleep(.5)
+            time.sleep(2 if check_idle and waiting else .5)
     finally:
         for proc, _, _, _ in running:
             if proc.poll() is None:
@@ -227,7 +247,7 @@ def main():
     p.add_argument('--data-root', type=Path, default=Path('/home/iASL/Arata_repo/dataset'))
     p.add_argument('--teacher-checkpoint', type=Path, default=Path('/home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth'))
     p.add_argument('--statistics-dir', type=Path, required=True)
-    p.add_argument('--output-root', type=Path, required=True)
+    p.add_argument('--output-root', type=Path, help='Fresh output directory (optional for --b3-skip)')
     p.add_argument('--gpus', default='0,1,2')
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--num-workers', type=int, default=2)
@@ -235,10 +255,16 @@ def main():
     p.add_argument('--four-stage-lstm', action='store_true', help='Run final-h distillation with LSTMs after blocks 3/6/9/12')
     p.add_argument('--placement-suite', action='store_true',
                    help='Train single-GPU E1 with Patchwise LSTMs at [3], [6], [9], [9,12], [6,9,12], [3,6,9,12]')
+    p.add_argument('--b3-skip', action='store_true',
+                   help='Train only E1_b3_skip on DSEC and M3ED, on idle GPUs')
     p.add_argument('--execute', action='store_true')
     p.add_argument('--skip-preflight', action='store_true', help='Only after same-code server preflight passes')
     a = p.parse_args()
-    if a.placement_suite:
+    if a.output_root is None:
+        if not a.b3_skip:
+            p.error('--output-root is required for this run')
+        a.output_root = PROJECT / 'outputs' / f'stage1_b3_skip_{a.stage}_20261126'
+    if a.placement_suite or a.b3_skip:
         a.preflight_tests = DEFAULT_PREFLIGHT_TESTS + ('tests/test_four_stage_depth.py',)
     jobs = plan(a)
     for job in jobs:

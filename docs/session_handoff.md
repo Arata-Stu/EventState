@@ -2,7 +2,9 @@
 
 最終更新: 2026-11-26
 
-2026-11-26、次のDepth評価は未採点の `E1_b3_6_9_12` E1 Encoder＋LSTM（h蒸留、3・6・9・12層後）。DSEC・M3ED各1本で既存Stage 1を凍結し、12層後だけのE1と同じ初期値・split・学習条件のDPT headを学習する。公開valの全体・活動5群でMAEを比較し、DSECは公開val視差も採点する。起動は `tools/run_common_depth.py --four-stage-placement`。サーバーでの起動・スコアは未確認。[実行手順と容量](common_depth_parallel.md#4段配置のdepth評価)
+2026-11-26、`E1_b3_skip` E1 Encoder＋LSTM（h蒸留、3層後のスキップ接続）を追加。DSEC・M3EDで既存の3層後置換と比較し、同じheadで毎窓の状態リセットも評価する。サーバー同期後に `bash tools/run_b3_skip.sh`。学習・評価は未実行。[実験条件と手順](lstm_placement_semantic.md#3層後のスキップ接続)
+
+2026-11-26、`E1_b3_6_9_12` E1 Encoder＋LSTM（h蒸留、3・6・9・12層後）のDepthについて、サーバーの `outputs/stage2_placement_depth_20261126/summary.json` から公開val全体・活動5群の比較値を受領した（実験台帳§110）。12層後だけのE1に比べ、4段の全体pooled MAEはDSECで2.4458→3.1025 m、M3EDで3.6781→5.1697 mに増加。全5群で4段の誤差が大きく、増加幅は両方ともQ5で最大だった。DSEC視差MAEも1.8708→2.3590 px。比較はseed 0の2配置。[実行条件](common_depth_parallel.md#4段配置のdepth評価)
 
 2026-11-25、M3ED公開valのUCityで、E1 Encoder＋LSTM（h蒸留、12層後）の状態保持と低活動開始時にh/cを1回リセットした比較動画を受領・検証した。出力は `outputs/ucity_e1_onset_reset_20261125/comparison.mp4`。保持側のframe mIoUは最初の40 msで5.136ポイント高く、低活動50.64秒全体のフレーム平均では差が−0.00048ポイントだった。開始20秒後には両側が正面の車体中央を道路と予測した。車両単位の保持時間は未計測。結果・画像は実験台帳§109。[実行手順](activity_comparison_videos.md#サーバーでの生成)
 

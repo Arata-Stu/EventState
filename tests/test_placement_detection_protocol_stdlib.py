@@ -37,6 +37,11 @@ class DetectionProtocolTest(unittest.TestCase):
         with patch.dict(sys.modules, {"event_state.training": training}):
             return check_backbone(self.model, condition, self.split)
 
+    def test_b3_skip_checkpoint_cannot_substitute_for_b3_replacement(self):
+        self.cfg["model"]["temporal"].update(type="four_stage_lstm", after_blocks=[3], residual_skip=True)
+        with self.assertRaisesRegex(ValueError, "wrong temporal model"):
+            self.backbone("E1_b3")
+
     def test_all_nine_architectures_report_the_actual_weights_and_features(self):
         temporal = self.cfg["model"]["temporal"]
         self.assertEqual(self.backbone("E1")["sha256"], sha256_file(self.model))

@@ -23,11 +23,14 @@ def build_temporal_backbone(
     detach_state_every: int | None = None,
     first_stage: int = 1,
     after_blocks: Sequence[int] | None = None,
+    residual_skip: bool = False,
     grid_size: tuple[int, int] | None = None,
 ) -> TemporalBackbone:
     normalized_kind = str(kind).lower()
     if after_blocks is not None and normalized_kind != "four_stage_lstm":
         raise ValueError("after_blocks requires a four_stage_lstm temporal backbone")
+    if residual_skip and normalized_kind != "four_stage_lstm":
+        raise ValueError("residual_skip requires a four_stage_lstm temporal backbone")
     if normalized_kind in {"none", "identity"}:
         if output_dim != input_dim:
             raise ValueError("Identity temporal backbone requires output_dim == input_dim")
@@ -44,7 +47,8 @@ def build_temporal_backbone(
     if normalized_kind == "four_stage_lstm":
         if num_layers != 1 or dropout or detach_state_every is not None:
             raise ValueError("Expected one LSTM layer per ViT stage")
-        return FourStageLSTM(input_dim, hidden_dim, output_dim, first_stage, after_blocks=after_blocks)
+        return FourStageLSTM(input_dim, hidden_dim, output_dim, first_stage,
+                             after_blocks=after_blocks, residual_skip=residual_skip)
     if normalized_kind == "convlstm":
         if grid_size is None or num_layers != 1 or dropout or detach_state_every is not None:
             raise ValueError("ConvLSTM requires a patch grid and one layer without internal dropout or truncation")

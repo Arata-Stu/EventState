@@ -8,8 +8,11 @@ PLACEMENTS = {
     'E1_b6_9_12': (6, 9, 12),
     'E1_b3_6_9_12': (3, 6, 9, 12),
 }
+SKIP_CONDITION = 'E1_b3_skip'
+PLACEMENT_BLOCKS = {**PLACEMENTS, SKIP_CONDITION: (3,)}
 
 
 def placement_label(condition: str) -> str:
-    layers = '・'.join(str(block) for block in PLACEMENTS[condition])
-    return f'E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（{layers}層後）'
+    layers = '・'.join(str(block) for block in PLACEMENT_BLOCKS[condition])
+    skip = '、学習可能な残差接続' if condition == SKIP_CONDITION else ''
+    return f'E1 Encoder＋LSTM（h蒸留）・Patchwise LSTM（{layers}層後{skip}）'
