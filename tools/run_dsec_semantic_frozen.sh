@@ -123,7 +123,7 @@ fi
 
 for ROLE in train val test; do
   printf '[dsec-semantic] cache role=%s feature=%s gpu=%s\n' "$ROLE" "$FEATURE" "$GPU"
-  CUDA_VISIBLE_DEVICES="$GPU" python tools/cache_dsec_semantic_features.py \
+  CUDA_VISIBLE_DEVICES="$GPU" python -u tools/cache_dsec_semantic_features.py \
     --checkpoint "$CHECKPOINT" \
     --event-cache-dir "$EVENT_CACHE_DIR" \
     --labels-root "$LABELS_ROOT" \
@@ -131,7 +131,7 @@ for ROLE in train val test; do
     --role "$ROLE" \
     --features "${FEATURES[@]}" \
     "${CACHE_ARGS[@]}" \
-    >"$OUTPUT_DIR/logs/cache_${ROLE}.log" 2>&1
+    2>&1 | tee "$OUTPUT_DIR/logs/cache_${ROLE}.log"
 done
 
 DEVELOPMENT_ARGS=(--device cuda)
@@ -141,7 +141,7 @@ if [ -f "$OUTPUT_DIR/development/last.pt" ]; then
     "$OUTPUT_DIR/development/last.pt"
 fi
 
-CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
+CUDA_VISIBLE_DEVICES="$GPU" python -u tools/train_dsec_semantic.py \
   --feature-cache-dir "$FEATURE_CACHE_DIR" \
   --labels-root "$LABELS_ROOT" \
   --output-dir "$OUTPUT_DIR/development" \
@@ -158,7 +158,7 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --seed "$SEED" \
   --precision fp16 \
   "${DEVELOPMENT_ARGS[@]}" \
-  >"$OUTPUT_DIR/logs/train.log" 2>&1
+  2>&1 | tee "$OUTPUT_DIR/logs/train.log"
 
 [ -f "$OUTPUT_DIR/development/best.pt" ] || fail "best development head was not produced"
 FINAL_ARGS=(--device cuda)
@@ -168,7 +168,7 @@ if [ -f "$OUTPUT_DIR/final/last.pt" ]; then
     "$OUTPUT_DIR/final/last.pt"
 fi
 
-CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
+CUDA_VISIBLE_DEVICES="$GPU" python -u tools/train_dsec_semantic.py \
   --feature-cache-dir "$FEATURE_CACHE_DIR" \
   --labels-root "$LABELS_ROOT" \
   --output-dir "$OUTPUT_DIR/final" \
@@ -185,10 +185,10 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/train_dsec_semantic.py \
   --seed "$SEED" \
   --precision fp16 \
   "${FINAL_ARGS[@]}" \
-  >"$OUTPUT_DIR/logs/final_fit.log" 2>&1
+  2>&1 | tee "$OUTPUT_DIR/logs/final_fit.log"
 
 [ -f "$OUTPUT_DIR/final/last.pt" ] || fail "official final semantic head was not produced"
-CUDA_VISIBLE_DEVICES="$GPU" python tools/evaluate_dsec_semantic.py \
+CUDA_VISIBLE_DEVICES="$GPU" python -u tools/evaluate_dsec_semantic.py \
   --checkpoint "$OUTPUT_DIR/final/last.pt" \
   --feature-cache-dir "$FEATURE_CACHE_DIR" \
   --labels-root "$LABELS_ROOT" \
@@ -199,6 +199,6 @@ CUDA_VISIBLE_DEVICES="$GPU" python tools/evaluate_dsec_semantic.py \
   --precision fp16 \
   --device cuda \
   --output "$OUTPUT_DIR/test_metrics.json" \
-  >"$OUTPUT_DIR/logs/test.log" 2>&1
+  2>&1 | tee "$OUTPUT_DIR/logs/test.log"
 
 printf '[dsec-semantic] complete: %s/test_metrics.json\n' "$OUTPUT_DIR"

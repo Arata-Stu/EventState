@@ -85,6 +85,7 @@ def main():
     from event_state.dense.temporal import LowActivityClock
     import hdf5plugin
     import numpy as np
+    from tqdm import tqdm
     from event_state.segmentation import load_m3ed_semantic_split
     from event_state.segmentation.stage_readout import STAGE_BLOCKS
     from event_state.dense.common_features import CommonFeatures
@@ -111,6 +112,7 @@ def main():
     if not math.isfinite(threshold) or threshold < 0:
         raise ValueError('Invalid train event-rate threshold')
     targets={}; paths={}; sizes=0
+    window_counts = {}
     identity=dict(low_rate_p10_hz=threshold,checkpoint_sha256=sha256_file(a.checkpoint),features=keys,split_sha256=sha256_file(MANIFEST),sources={})
     stage_metadata = {'stage_blocks': list(STAGE_BLOCKS)} if stage_readout else {}
     identity.update(stage_metadata)
@@ -125,6 +127,7 @@ def main():
         else: raise ValueError(f'{seq}: no semantic targets; depth-only targets cannot be used')
         paths[seq]=path.parent.resolve()
         meta=json.loads(raw.read_text()); timestamps=np.array(meta['timestamps'])
+        window_counts[seq] = len(timestamps) - 1
         with h5py.File(path) as data:
             if not np.array_equal(data['timestamps'][:],timestamps) or data['semantics_11'].shape!=(len(timestamps),352,640):
                 raise ValueError(f'{seq}: semantic label geometry/timeline mismatch')
@@ -150,9 +153,13 @@ def main():
         if shutil.disk_usage(a.cache.parent).free < estimate*1.1: raise OSError('Insufficient feature cache space')
         net=CommonFeatures(a.checkpoint,'m3ed',a.device,stage_readout=stage_readout)
         a.cache.mkdir()
+        completed_windows = 0
+        total_windows = sum(window_counts.values())
         for seq,expected in targets.items():
             dest=a.cache/seq;dest.mkdir();net.state=None; seen=[]; clock=LowActivityClock(); durations={}
-            for frame in prepared_frames(a.prepared_root,seq,net.cfg,'m3ed'):
+            frames = prepared_frames(a.prepared_root, seq, net.cfg, 'm3ed')
+            for frame in tqdm(frames, desc=f'M3ED Semantic cache {seq}', total=total_windows,
+                              initial=completed_windows, unit='window', mininterval=2):
                 i=frame['frame_index']
                 lo=int(frame['previous_timestamp']); hi=int(frame['timestamp'])
                 duration=clock.update(lo,hi,frame['event_count']*1e6/(hi-lo)<=threshold)
@@ -163,6 +170,7 @@ def main():
                                  timestamp=expected[i],state_policy='continuous',checkpoint_sha256=identity['checkpoint_sha256'],
                                  **stage_metadata),dest/f'{i:06d}.pt')
                 seen.append(i); durations[i]=duration
+            completed_windows += window_counts[seq]
             if seen!=list(expected): raise ValueError(f'{seq}: incomplete labels')
             (dest/'low_duration_us.json').write_text(json.dumps(durations))
             (dest/'metadata.json').write_text(json.dumps(dict(task='m3ed_semantic',features=keys,label_size=[352,640],patch_size=16,
@@ -181,7 +189,7 @@ def main():
     view.mkdir()
     for seq,path in paths.items(): (view/seq).symlink_to(path,target_is_directory=True)
     for feature in a.features:
-        subprocess.run([sys.executable,str(ROOT/'tools/train_m3ed_semantic.py'),'--split-manifest',str(MANIFEST),
+        subprocess.run([sys.executable,'-u',str(ROOT/'tools/train_m3ed_semantic.py'),'--split-manifest',str(MANIFEST),
             '--feature-cache-dir',str(a.cache),'--target-cache-dir',str(view),'--feature',feature,
             '--output-dir',str(a.output/feature),'--device',a.device],check=True,pass_fds=inherited)
         score_groups(a.output/feature,a.cache,view,split,feature,a.device,

@@ -33,9 +33,9 @@ class FourStageLSTM(nn.Module):
         self.after_blocks = after_blocks
         if not isinstance(residual_skip, bool):
             raise ValueError("residual_skip must be a boolean")
-        if residual_skip and after_blocks != (3,):
-            raise ValueError("The residual_skip ablation requires after_blocks=[3]")
-        self.skip_scale = nn.Parameter(torch.zeros(())) if residual_skip else None
+        # Keep the scalar state_dict format of single-insertion checkpoints.
+        scale_shape = () if len(after_blocks) == 1 else (len(after_blocks),)
+        self.skip_scale = nn.Parameter(torch.zeros(scale_shape)) if residual_skip else None
         self.first_stage = after_blocks[0] // 3
         self.stages = nn.ModuleList(
             PatchwiseLSTM(input_dim, hidden_dim, output_dim) for _ in self.after_blocks
@@ -65,8 +65,13 @@ class FourStageLSTM(nn.Module):
                 next_patches = h.flatten(0, 1)
                 if self.skip_scale is not None:
                     # Keep the unnormalized ViT residual stream as the identity path.
-                    next_patches = tokens[:, prefix:] + self.skip_scale * next_patches
-                    h = backbone.norm(next_patches).reshape_as(z)
+                    gain = self.skip_scale.reshape(-1)[active]
+                    if index == 12:
+                        # The head receives the normalized final ViT feature plus memory.
+                        h = z + gain * h
+                    else:
+                        next_patches = tokens[:, prefix:] + gain * next_patches
+                        h = backbone.norm(next_patches).reshape_as(z)
                 outputs.append(h)
                 states.append(carried)
                 if index < 12:

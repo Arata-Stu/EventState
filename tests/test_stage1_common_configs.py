@@ -13,8 +13,8 @@ from event_state.training.factory import validate_config
 from tools.run_stage1_common import plan
 
 
-@pytest.mark.parametrize('placement_suite,b3_skip', [(False, False), (True, False), (False, True)])
-def test_all_launch_commands_compose_and_validate(tmp_path, placement_suite, b3_skip):
+@pytest.mark.parametrize('suite', [None, 'placement_suite', 'b3_skip', 'skip_placement_suite'])
+def test_all_launch_commands_compose_and_validate(tmp_path, suite):
     for d in ('DSEC','DSEC_cache/events/gep_rgb','DSEC_cache/dinov3_vits16',
               'm3ed_cache/half_dagr','m3ed_cache/dinov3_vits16_640x352'):
         (tmp_path/d).mkdir(parents=True)
@@ -25,18 +25,19 @@ def test_all_launch_commands_compose_and_validate(tmp_path, placement_suite, b3_
         (tmp_path/f'{ds}_common.json').write_text(json.dumps(dict(protocol_sha256=digest(p),
             sequences=p['splits']['train'], normalize_mean=[0.,0.,0.], normalize_std=[1.,1.,1.])))
     a = SimpleNamespace(gpus='0,1,2', output_root=tmp_path/'out', data_root=tmp_path,
-        statistics_dir=tmp_path, teacher_checkpoint=teacher, seed=0, num_workers=0, phase='all', stage='smoke',
-        placement_suite=placement_suite, b3_skip=b3_skip)
+        statistics_dir=tmp_path, teacher_checkpoint=teacher, seed=0, num_workers=0, phase='all', stage='smoke')
+    if suite:
+        setattr(a, suite, True)
     for job in plan(a):
         overrides = job['command'][job['command'].index('train.py')+1:]
         with initialize_config_dir(version_base=None, config_dir=str(Path(__file__).resolve().parents[1]/'configs')):
             cfg = compose(config_name='config', overrides=overrides)
         validate_config(cfg)
         assert cfg.training.sampling.mode == 'mixed'
-        if placement_suite or b3_skip:
+        if suite:
             assert cfg.model.temporal.type == 'four_stage_lstm'
             assert list(cfg.model.temporal.after_blocks) == job['after_blocks']
-            assert cfg.model.temporal.get('residual_skip', False) == b3_skip
+            assert cfg.model.temporal.get('residual_skip', False) == job.get('residual_skip', False)
             assert cfg.loss.h_distill.enabled
             assert cfg.loss.z_objective.type == 'none'
         else:

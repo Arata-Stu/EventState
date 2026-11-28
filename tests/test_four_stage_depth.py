@@ -46,7 +46,7 @@ def test_four_stage_carry_fusion_and_feedback(first_stage):
     assert all(g.abs().sum() > 0 for g in torch.autograd.grad(prediction.mean(), maps))
 
 
-@pytest.mark.parametrize("blocks", [(3,), (6,), (9,), (9, 12), (6, 9, 12), (3, 6, 9, 12)])
+@pytest.mark.parametrize("blocks", [(3,), (6,), (9,), (3, 6, 9), (9, 12), (6, 9, 12), (3, 6, 9, 12)])
 def test_placement_exposes_final_representation_and_carries_only_active_states(blocks):
     torch.manual_seed(7)
     encoder = nn.Module()
@@ -119,56 +119,79 @@ def test_final_block_insertion_matches_conventional_encoder_then_patchwise_lstm(
     torch.testing.assert_close((z, levels[-1], states[0]), (baseline_z, baseline_h, baseline_state))
 
 
-def test_block3_skip_uses_raw_tokens_and_trains_the_recurrent_branch():
+@pytest.mark.parametrize("blocks", [(3,), (6,), (9,), (3, 6, 9), (12,), (3, 6, 9, 12)])
+def test_skip_uses_raw_tokens_and_trains_each_recurrent_branch(blocks):
     torch.manual_seed(37)
     vit = TinyViT()
     frames = torch.randn(3, 8, 4)
     memory = build_temporal_backbone("four_stage_lstm", input_dim=4, hidden_dim=4, output_dim=4,
-                                     after_blocks=[3], residual_skip=True)
+                                     after_blocks=blocks, residual_skip=True)
     prefix = 1 + vit.n_storage_tokens
     tokens, _ = vit.prepare_tokens_with_masks(frames)
     plain_taps = []
     for index, block in enumerate(vit.blocks, 1):
         tokens = block(tokens, None)
-        if index == 3:
-            block3 = tokens
         if index % 3 == 0:
             plain_taps.append(vit.norm(tokens[:, prefix:]).unsqueeze(0))
 
-    assert memory.skip_scale.item() == 0
+    expected_shape = () if len(blocks) == 1 else (len(blocks),)
+    assert memory.state_dict()["skip_scale"].shape == expected_shape
+    assert memory.skip_scale.count_nonzero() == 0
     _, taps, _ = memory(vit, frames, 1, 3)
     for tap, expected in zip(taps, plain_taps):
         torch.testing.assert_close(tap, expected)
     gate_gradient, = torch.autograd.grad(taps[-1][..., 0].sum(), [memory.skip_scale])
-    assert gate_gradient.isfinite() and gate_gradient.abs() > 0
+    assert gate_gradient.isfinite().all() and (gate_gradient.abs() > 0).all()
 
+    gains = torch.tensor([0.4, -0.2, 0.8, 0.3][:len(blocks)])
     with torch.no_grad():
-        memory.skip_scale.fill_(0.4)
-    updates, _ = memory.stages[0](plain_taps[0])
-    expected_input = torch.cat((block3[:, :prefix], block3[:, prefix:] + 0.4 * updates[0]), dim=1)
-    inputs_to_fourth = []
-    handle = vit.blocks[3].register_forward_pre_hook(
-        lambda _module, inputs: inputs_to_fourth.append(inputs[0]))
-    _, taps, _ = memory(vit, frames, 1, 3)
-    handle.remove()
-    torch.testing.assert_close(inputs_to_fourth[0], expected_input)
-    torch.testing.assert_close(taps[0], vit.norm(expected_input[:, prefix:]).unsqueeze(0))
-    branch_gradient, = torch.autograd.grad(taps[-1][..., 0].sum(), [memory.stages[0].lstm.weight_ih_l0])
-    assert branch_gradient.isfinite().all() and branch_gradient.abs().sum() > 0
+        memory.skip_scale.copy_(gains.reshape_as(memory.skip_scale))
+    downstream_inputs = []
+    hooks = [vit.blocks[index].register_forward_pre_hook(
+        lambda _module, inputs: downstream_inputs.append(inputs[0])) for index in blocks if index < 12]
+    _, taps, states = memory(vit, frames, 1, 3)
+    for hook in hooks:
+        hook.remove()
+    assert len(states) == len(blocks)
+
+    # Compare the actual readouts to independent raw-token residuals at the requested blocks.
+    expected, _ = vit.prepare_tokens_with_masks(frames)
+    for index, block in enumerate(vit.blocks, 1):
+        expected = block(expected, None)
+        if index in blocks:
+            active = blocks.index(index)
+            raw = expected[:, prefix:]
+            update, _ = memory.stages[active](vit.norm(raw).unsqueeze(0))
+            if index == 12:
+                torch.testing.assert_close(taps[-1], vit.norm(raw).unsqueeze(0) + gains[active] * update)
+                continue
+            expected = torch.cat((expected[:, :prefix], raw + gains[active] * update[0]), dim=1)
+            torch.testing.assert_close(downstream_inputs[active], expected)
+        if index % 3 == 0:
+            torch.testing.assert_close(taps[index // 3 - 1], vit.norm(expected[:, prefix:]).unsqueeze(0))
+    weights = [stage.lstm.weight_ih_l0 for stage in memory.stages]
+    gradients = torch.autograd.grad(taps[-1][..., 0].sum(), weights)
+    assert all(grad.isfinite().all() and grad.abs().sum() > 0 for grad in gradients)
 
     # Downstream inference reloads this trained gain and carries state between windows.
-    reloaded = FourStageLSTM(4, 4, 4, after_blocks=[3], residual_skip=True)
+    reloaded = FourStageLSTM(4, 4, 4, after_blocks=blocks, residual_skip=True)
     reloaded.load_state_dict(memory.state_dict(), strict=True)
     state = None
     for t in range(3):
         _, current, state = reloaded(vit, frames[t:t + 1], 1, 1, state)
         torch.testing.assert_close(current[-1], taps[-1][:, t:t + 1])
-    assert "skip_scale" not in FourStageLSTM(4, 4, 4, after_blocks=[3]).state_dict()
+    if len(blocks) >= 3:
+        zeros = tuple((torch.zeros_like(h), torch.zeros_like(c)) for h, c in state)
+        _, reset, _ = reloaded(vit, frames[-1:], 1, 1, None)
+        _, explicit_reset, _ = reloaded(vit, frames[-1:], 1, 1, zeros)
+        torch.testing.assert_close(reset[-1], explicit_reset[-1])
+        assert not torch.allclose(current[-1], reset[-1])
+    assert "skip_scale" not in FourStageLSTM(4, 4, 4, after_blocks=blocks).state_dict()
 
 
-def test_residual_skip_requires_the_single_block3_placement():
+def test_residual_skip_validates_flag_and_backbone():
     with pytest.raises(ValueError, match="residual_skip"):
-        FourStageLSTM(4, 4, 4, after_blocks=[3, 6], residual_skip=True)
+        FourStageLSTM(4, 4, 4, after_blocks=[3, 12], residual_skip="yes")
     with pytest.raises(ValueError, match="residual_skip"):
         build_temporal_backbone("lstm", residual_skip=True)
 

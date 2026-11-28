@@ -20,8 +20,11 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from event_state.dense.common_protocol import load_common
 from event_state.dense.protocol import digest
-from tools.placement_conditions import PLACEMENTS, PLACEMENT_BLOCKS, SKIP_CONDITION, placement_label
+from tools.placement_conditions import (
+    PLACEMENTS, PLACEMENT_BLOCKS, SKIP_CONDITION, SKIP_CONTROLS, SKIP_PLACEMENT_SUITE, FINAL_SKIP_SUITE, placement_label,
+)
 from tools.run_dense_pretrain import _hydra_object
+from tools.stage1_progress import Stage1JobProgress
 
 
 DEFAULT_PREFLIGHT_TESTS = (
@@ -33,9 +36,12 @@ DEFAULT_PREFLIGHT_TESTS = (
 
 def plan(a):
     skip = getattr(a, 'b3_skip', False)
+    skip_suite = getattr(a, 'skip_placement_suite', False)
     suite = getattr(a, 'placement_suite', False)
     first_stage = getattr(a, 'lstm_from_stage', None)
     four_stage = getattr(a, 'four_stage_lstm', False) or first_stage is not None
+    if skip_suite and (suite or skip or four_stage or a.phase == 'ddp'):
+        raise ValueError('--skip-placement-suite requires single-GPU jobs and no other placement flags')
     if skip and (suite or four_stage or a.phase == 'ddp'):
         raise ValueError('--b3-skip runs only the single-GPU block-3 skip condition; use it without other placement flags or --phase ddp')
     if suite and (four_stage or a.phase == 'ddp'):
@@ -43,6 +49,8 @@ def plan(a):
     placements = tuple(PLACEMENTS) if suite else ()
     if skip:
         placements = (SKIP_CONDITION,)
+    elif skip_suite:
+        placements = FINAL_SKIP_SUITE if getattr(a, 'final_skip_suite', False) else SKIP_PLACEMENT_SUITE
     gpus = a.gpus.split(',')
     valid_ids = all(x.isdigit() for x in gpus)
     distinct_ids = valid_ids and len({int(x) for x in gpus}) == len(gpus)
@@ -142,7 +150,7 @@ def plan(a):
                 blocks = PLACEMENT_BLOCKS[condition_id]
                 label = placement_label(condition_id)
                 cmd.append('++model.temporal.after_blocks=' + json.dumps(blocks, separators=(',', ':')))
-                if skip:
+                if condition_id in SKIP_CONTROLS:
                     cmd.append('++model.temporal.residual_skip=true')
             if four_stage or placements:
                 cmd.append(f"experiment.name={variant}_h_distill")
@@ -153,7 +161,7 @@ def plan(a):
                 protocol=protocol)
             if placements:
                 job.update(condition=condition_id, after_blocks=list(blocks))
-                if skip:
+                if condition_id in SKIP_CONTROLS:
                     job['residual_skip'] = True
             jobs.append(job)
     return sorted(jobs, key=lambda j: j['world'])
@@ -178,14 +186,19 @@ def execute(a, jobs):
     # Synthetic distributed correctness checks must pass before expensive data loading.
     if not a.skip_preflight:
         with (logs / 'preflight.log').open('w') as log:
+            print(f'[stage1 {a.stage}] 学習前のテストを実行中 | log: {log.name}', flush=True)
             subprocess.run([sys.executable, '-m', 'pytest', '-q',
                             *getattr(a, 'preflight_tests', DEFAULT_PREFLIGHT_TESTS)],
                            cwd=PROJECT, env=dict(os.environ, CUDA_VISIBLE_DEVICES=''),
                            stdout=log, stderr=subprocess.STDOUT, check=True)
     pending, running = list(jobs), []
+    progress = {}
     gpu_ids = a.gpus.split(',')
-    check_idle = getattr(a, 'b3_skip', False)
-    if check_idle:
+    skip_suite = getattr(a, 'skip_placement_suite', False)
+    check_idle = getattr(a, 'b3_skip', False) or skip_suite
+    if skip_suite:
+        from tools.placement_gpu import idle_placement_gpus as idle_gpus
+    elif check_idle:
         from tools.run_temporal_downstream import idle_gpus
     waiting = False
     def stop(signum, frame):
@@ -194,10 +207,10 @@ def execute(a, jobs):
     try:
         while pending or running:
             used = {g for _, _, _, assigned in running for g in assigned}
+            free = [g for g in gpu_ids if g not in used]
+            if pending and free and check_idle:
+                free = list(idle_gpus(free))
             for job in pending[:]:
-                free = [g for g in gpu_ids if g not in used]
-                if check_idle and free:
-                    free = list(idle_gpus(free))
                 if len(free) < job['world']:
                     if check_idle and not waiting:
                         print(f'[stage1] Waiting for an idle GPU among {a.gpus}', flush=True)
@@ -207,21 +220,28 @@ def execute(a, jobs):
                 assigned = free[:job['world']]
                 log = (logs / f'{job["name"]}.log').open('w')
                 proc = subprocess.Popen(job['command'], cwd=PROJECT,
-                    env=dict(os.environ, CUDA_VISIBLE_DEVICES=','.join(assigned), OMP_NUM_THREADS='1'),
+                    env=dict(os.environ, CUDA_VISIBLE_DEVICES=','.join(assigned), OMP_NUM_THREADS='1',
+                             PYTHONUNBUFFERED='1'),
                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 running.append((proc, log, job, assigned))
+                progress[job['name']] = Stage1JobProgress()
                 pending.remove(job)
-                used.update(assigned)
-                print(f'[stage1] GPUs {assigned}: {job["name"]} {job["label"]}', flush=True)
+                del free[:job['world']]
+                print(f'[stage1 {a.stage}] GPUs {assigned}: {job["name"]} {job["label"]} | '
+                      f'最初の更新を待機中 | log: {log.name}', flush=True)
             for item in running[:]:
-                proc, log, job, _ = item
+                proc, log, job, assigned = item
                 if proc.poll() is None:
+                    status = progress[job['name']].status(Path(log.name), job['steps'], time.monotonic())
+                    if status:
+                        print(f'[stage1 {a.stage}] GPU {",".join(assigned)} | {job["name"]} '
+                              f'{job["label"]} | {status}', flush=True)
                     continue
                 log.close()
                 running.remove(item)
                 ckpt = a.output_root / job['name'] / 'checkpoints' / f'step_{job["steps"]:08d}.pt'
                 if proc.returncode or not ckpt.is_file() or not ckpt.stat().st_size:
-                    raise RuntimeError(f'{job["name"]} failed or missing final checkpoint; inspect log')
+                    raise RuntimeError(f'{job["name"]} failed or missing final checkpoint; see {log.name}')
                 print(f'[stage1] complete: {job["name"]} {job["label"]}', flush=True)
             time.sleep(2 if check_idle and waiting else .5)
     finally:
@@ -247,7 +267,7 @@ def main():
     p.add_argument('--data-root', type=Path, default=Path('/home/iASL/Arata_repo/dataset'))
     p.add_argument('--teacher-checkpoint', type=Path, default=Path('/home/iASL/Arata_repo/models/dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth'))
     p.add_argument('--statistics-dir', type=Path, required=True)
-    p.add_argument('--output-root', type=Path, help='Fresh output directory (optional for --b3-skip)')
+    p.add_argument('--output-root', type=Path, help='Fresh output directory (optional for skip runs)')
     p.add_argument('--gpus', default='0,1,2')
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--num-workers', type=int, default=2)
@@ -257,14 +277,26 @@ def main():
                    help='Train single-GPU E1 with Patchwise LSTMs at [3], [6], [9], [9,12], [6,9,12], [3,6,9,12]')
     p.add_argument('--b3-skip', action='store_true',
                    help='Train only E1_b3_skip on DSEC and M3ED, on idle GPUs')
+    p.add_argument('--skip-placement-suite', action='store_true',
+                   help='Train block-6, block-9 and blocks-3/6/9 skip models and their missing 3/6/9 replacement control')
+    p.add_argument('--final-skip-suite', action='store_true', help='Train final-only and all-four residual placements')
     p.add_argument('--execute', action='store_true')
     p.add_argument('--skip-preflight', action='store_true', help='Only after same-code server preflight passes')
     a = p.parse_args()
+    if a.final_skip_suite:
+        if a.skip_placement_suite:
+            p.error('Choose one skip suite')
+        a.skip_placement_suite = True
+        if a.output_root is None:
+            a.output_root = PROJECT / 'outputs' / f'stage1_final_skip_{a.stage}_20261128'
     if a.output_root is None:
-        if not a.b3_skip:
+        if a.skip_placement_suite:
+            a.output_root = PROJECT / 'outputs' / f'stage1_skip_placement_{a.stage}_20261128'
+        elif a.b3_skip:
+            a.output_root = PROJECT / 'outputs' / f'stage1_b3_skip_{a.stage}_20261126'
+        else:
             p.error('--output-root is required for this run')
-        a.output_root = PROJECT / 'outputs' / f'stage1_b3_skip_{a.stage}_20261126'
-    if a.placement_suite or a.b3_skip:
+    if a.placement_suite or a.b3_skip or a.skip_placement_suite:
         a.preflight_tests = DEFAULT_PREFLIGHT_TESTS + ('tests/test_four_stage_depth.py',)
     jobs = plan(a)
     for job in jobs:

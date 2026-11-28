@@ -1,11 +1,41 @@
-"""Score the frozen block-3 skip head with its LSTM state cleared before every window."""
+"""Score a frozen residual-placement Semantic head with all LSTM states cleared each window."""
 
 import json
 import math
 from pathlib import Path
 
 from event_state.dense.protocol import sha256_file
-from tools.placement_conditions import SKIP_CONDITION
+from tools.placement_conditions import PLACEMENT_BLOCKS, SKIP_CONDITION, SKIP_CONTROLS
+
+
+def validate_skip_scales(evaluation, condition):
+    """Check the gain associated with each insertion, including the original scalar b3 reports."""
+    if condition not in SKIP_CONTROLS:
+        raise ValueError(f"No residual placement for {condition}")
+    blocks = [str(block) for block in PLACEMENT_BLOCKS[condition]]
+    scales = evaluation.get("learned_skip_scales")
+    if condition == SKIP_CONDITION and "learned_skip_scales" not in evaluation:
+        scales = {"3": evaluation.get("learned_skip_scale")}
+    if (not isinstance(scales, dict) or set(scales) != set(blocks)
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in scales.values())):
+        raise ValueError(f"Invalid per-block residual scales for {condition}")
+    if "learned_skip_scale" in evaluation:
+        scalar = evaluation["learned_skip_scale"]
+        if len(blocks) != 1 or type(scalar) not in (int, float) or scalar != scales[blocks[0]]:
+            raise ValueError(f"Inconsistent scalar residual scale for {condition}")
+
+
+def _model_scales(temporal, condition):
+    blocks = PLACEMENT_BLOCKS[condition]
+    if temporal.after_blocks != blocks or temporal.skip_scale is None:
+        raise ValueError(f"Checkpoint residual placement differs from {condition}")
+    values = temporal.skip_scale.detach().cpu().reshape(-1).tolist()
+    scales = {str(block): value for block, value in zip(blocks, values, strict=True)}
+    result = {"learned_skip_scales": scales}
+    if len(blocks) == 1:
+        result["learned_skip_scale"] = values[0]
+    validate_skip_scales(result, condition)
+    return result
 
 
 def _matched_scores(report, continuous):
@@ -41,8 +71,9 @@ def evaluate_history(dataset, receipt, activity_path, *, data_root=None):
     from event_state.segmentation import EventStateSegmentationHead, find_semantic_label_dir, load_semantic_label
     from event_state.segmentation.activity_evaluation import ActivitySemanticEvaluator
 
-    if dataset not in ("dsec", "m3ed") or receipt["condition"] != SKIP_CONDITION or receipt["dataset"] != dataset:
-        raise ValueError("History control requires the verified block-3 skip condition")
+    condition = receipt["condition"]
+    if dataset not in ("dsec", "m3ed") or condition not in SKIP_CONTROLS or receipt["dataset"] != dataset:
+        raise ValueError("History control requires a verified residual-placement condition")
     head_path, checkpoint = Path(receipt["head"]), Path(receipt["backbone"])
     if sha256_file(head_path) != receipt["head_sha256"] or sha256_file(checkpoint) != receipt["backbone_sha256"]:
         raise ValueError("Weights changed since continuous evaluation")
@@ -60,9 +91,7 @@ def evaluate_history(dataset, receipt, activity_path, *, data_root=None):
 
     device = torch.device("cuda")
     net = CommonFeatures(checkpoint, dataset, device)
-    alpha = float(net.model.temporal_model.skip_scale.detach().cpu().item())
-    if not math.isfinite(alpha):
-        raise ValueError("Nonfinite learned block-3 skip scale")
+    scales = _model_scales(net.model.temporal_model, condition)
     head_checkpoint = torch.load(head_path, map_location="cpu", weights_only=True)
     cfg = head_checkpoint["config"]
     size = (440 if dataset == "dsec" else 352, 640)
@@ -81,8 +110,11 @@ def evaluate_history(dataset, receipt, activity_path, *, data_root=None):
     label_files = {}
     try:
         keys = []
+        windows = {}
         for sequence in sequences:
-            validate_activity_source(index, sequence, json.loads((source / sequence / "metadata.json").read_text()))
+            metadata = json.loads((source / sequence / "metadata.json").read_text())
+            validate_activity_source(index, sequence, metadata)
+            windows[sequence] = int(metadata["frame_count"]) - int(dataset == "m3ed")
             if dataset == "dsec":
                 # Cache generation uses the original RGB frame index; frame 0 has no preceding event window.
                 directory = find_semantic_label_dir(project / cfg["labels_root"], role="test", sequence=sequence)
@@ -109,9 +141,12 @@ def evaluate_history(dataset, receipt, activity_path, *, data_root=None):
             batch.clear()
 
         with torch.inference_mode():
+            completed_windows = 0
+            total_windows = sum(windows.values())
             for sequence in sequences:
                 frames = prepared_frames(source, sequence, net.cfg, dataset)
-                for frame in tqdm(frames, desc=f"{dataset} {receipt['condition']} {receipt['label']} | reset {sequence}"):
+                description = f"{dataset} {receipt['condition']} {receipt['label']} | reset {sequence}"
+                for frame in tqdm(frames, desc=description, total=total_windows, initial=completed_windows, unit="window"):
                     stamp = int(frame["timestamp"])
                     if (sequence, stamp) not in labeled:
                         continue  # No state is carried between any two windows in this control.
@@ -129,12 +164,13 @@ def evaluate_history(dataset, receipt, activity_path, *, data_root=None):
                     batch.append((features, label, sequence, stamp))
                     if len(batch) == batch_size:
                         score_batch()
+                completed_windows += windows[sequence]
             if batch:
                 score_batch()
         scores, hashes = _matched_scores(meter.compute()["activity_evaluation"], continuous)
     finally:
         targets.close()
-    return dict(state_policy="reset_each_window", learned_skip_scale=alpha,
+    return dict(state_policy="reset_each_window", **scales,
                 head_sha256=receipt["head_sha256"], backbone_sha256=receipt["backbone_sha256"],
                 activity_manifest_sha256=index.identity["manifest_sha256"], comparison_hashes=hashes,
                 continuous_report=receipt["report"], continuous_mIoU=archived_scores,

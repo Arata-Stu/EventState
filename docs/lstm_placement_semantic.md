@@ -1,8 +1,62 @@
 # Patchwise LSTMの配置比較とSemantic segmentation
 
+
+## 12層後だけ・3＋6＋9＋12層後のスキップ接続
+
+2026-11-28実装。DSEC・M3EDで、E1 Encoder＋LSTM（h蒸留）の新しい2配置を評価する。各データセット2条件、計4ジョブ。
+
+| 条件ID | 配置 | 同位置の既存置換対照 |
+| --- | --- | --- |
+| `E1_b12_skip` E1 Encoder＋LSTM（h蒸留） | 12層後に1個のスキップ | `E1` E1 Encoder＋LSTM（h蒸留、12層後） |
+| `E1_b3_6_9_12_skip` E1 Encoder＋LSTM（h蒸留） | 3・6・9・12層後に各1個のスキップ | `E1_b3_6_9_12` E1 Encoder＋LSTM（h蒸留、4段置換） |
+
+3・6・9層後では既存スキップ実験と同じく、正規化前のViT特徴に射影済みLSTM出力を加え、次のViTブロックへ渡す。**12層後では正規化済み最終特徴 `zₜ` にLSTM出力 `uₜ` を加え、`hₜ = zₜ + α₁₂uₜ` を蒸留とheadへ渡す**。加算後に追加の正規化を置かない。全αの初期値は0、4段では位置ごとに独立に学習する。
+
+seed 0、既存のRGB教師・train split・Hybrid samplingを使う。smoke99更新、本学習99,999更新の後、backboneを凍結してSemantic headを学習する。DSECは6 train／2 devでepoch選択後8 trainで再学習し公式test3系列、M3EDは3 train／公開val2系列を用いる。全体と活動量Q1〜Q5で、既存の同位置の置換対照との差、既存12層後E1との差、同じheadで履歴を保持した場合と全LSTM状態を毎窓リセットした場合の差を保存する。4段のリセット差は4個を合わせた履歴の効果で、層ごとの寄与の分解は行っていない。
+
+コードをpush後、学習サーバーで次を実行する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState && git pull --ff-only && bash tools/run_final_skip.sh --follow
+```
+
+GPU候補は0・1・2、空いたGPUへ独立したジョブを1件ずつ割り当てる。候補を限定する場合は `--follow 0,2`。進捗・残り時間と日本時間の終了見込みを端末に表示し、`outputs/final_skip_20261128.log` に保存する。Ctrl+Cで表示を閉じても処理は継続し、`bash tools/run_final_skip.sh --watch` で再確認、`--status` で1回表示できる。完了したStage 1の完了印がある場合は再利用する。Stage 1の途中再開は未対応。
+
+過去の12層後と4段置換の実測速度から、Stage 1終了まで3 GPUで約34時間、2 GPUで約41時間が初期目安。GPU待ち、起動・保存・テスト、Semantic・履歴評価は別途かかる。実行時の進捗から予測を更新する。
+
+- Stage 1の出力は `outputs/stage1_final_skip_{smoke,full}_20261128/`。
+- Semanticの集計は `outputs/stage2_final_skip_semantic_20261128/summary.json`。4条件のheadと履歴評価、比較対照の照合、全ワーカー正常終了後に親の `_SUCCESS` を作る。
+- 各行の `delta_from_replacement_pp`、`delta_from_final_block_only_pp`、`history.continuous_minus_reset_pp` と `history.learned_skip_scales` を読む。12層後だけの条件は、同位置の対照が既存12層後E1なので前二者が同じ値になる。
+- 今回新規に作る一時特徴キャッシュは、そのジョブの必要な評価が終わった後に解放する。backbone、head、評価レポート、履歴比較は保存する。
+
+
+## 6層後・9層後・3＋6＋9層後のスキップ接続
+
+3層後スキップ接続で得たDSECの改善（実験台帳§111）が、別の深さや複数配置でも得られるかを調べる。seed 0、DSEC・M3EDそれぞれの既存Stage 1設定でsmokeを99更新、本学習を99,999更新とし、backboneを凍結して最終特徴を読むSemantic headを学習する。新しい全条件で12層後は通常のViT出力を使う。
+
+| 新条件（すべてE1 Encoder＋LSTM（h蒸留）、Patchwise LSTM） | 同位置の置換対照 | 比較の意図 |
+| --- | --- | --- |
+| `E1_b6_skip` 6層後に1個 | `E1_b6` 6層後、学習済み | 中間層の元特徴を残す効果 |
+| `E1_b9_skip` 9層後に1個 | `E1_b9` 9層後、学習済み | 後段の元特徴を残す効果 |
+| `E1_b3_6_9_skip` 3・6・9層後に各1個 | `E1_b3_6_9` 3・6・9層後、新規学習 | 同じ3位置・3個のLSTMで接続方式を比較 |
+
+各挿入位置では `x_l + α_l × u_l` を次のブロックに渡す。元の特徴 `x_l` をそのまま渡す初期状態から学習し、3段モデルのαは各位置で独立に更新する。6・9層後の置換対照は従来の6配置の検証済み結果を再利用する。DSEC公式test・M3ED公開valの全体と活動量Q1〜Q5で、同位置の置換対照との差と12層後E1との差を集計する。各スキップモデルについては同じheadで全LSTM状態を毎窓リセットした場合とも比較し、履歴を保持した効果と層別のαを保存する。3段のリセット比較が測るのは3個の状態を合わせた履歴の効果。
+
+学習サーバーにコードを同期後、初回は次で開始する。
+
+```bash
+cd /home/iASL/Arata_repo/EventState && git pull --ff-only && bash tools/run_skip_placements.sh --follow
+```
+
+候補GPUは既定で0・1・2。Stage 1、Semanticともに同時に使えるGPUへ独立した条件を1件ずつ割り当てる。ログは起動端末と `outputs/skip_placement_20261128.log` に出る。Ctrl+Cで表示を閉じた後は `bash tools/run_skip_placements.sh --watch` で既存の出力を確認できる。起動時にGPUを限定する場合は `--follow 0,2`、同じ並列数で残り時間を見る場合は `--watch 0,2` とする。
+
+3種のスキップ＋1種の新規対照を2データセットで実行し、各段階は8ジョブ。3 GPUを継続利用できる想定でStage 1終了まで約57時間、2 GPUなら約80時間。6・9層後は同じ深さの既存モデル、3・6・9層後は同じLSTM数の既存6・9・12層後モデルの速度からの初期予測。GPU待ちや起動・保存、後続のSemantic・履歴評価には別途時間がかかる。実行中は進捗と日本時間の終了見込みを更新する。
+
+Stage 1の出力は `outputs/stage1_skip_placement_{smoke,full}_20261128/`。Semanticの集計は `outputs/stage2_skip_placement_semantic_20261128/summary.json`。新規スキップの各行には同位置の置換対照との差 `delta_from_replacement_pp`、12層後との差 `delta_from_final_block_only_pp`、履歴の効果 `history.continuous_minus_reset_pp`、層番号別の `history.learned_skip_scales` が入る。3・6・9層後スキップの比較行は、同じデータセットの置換対照も検証されてから集計される。今回のSemanticワーカーが新規に作る一時特徴キャッシュは、そのジョブの必要な評価が完了した後に解放する。学習済みbackbone、head、評価レポートは保存される。
+
 ## 3層後のスキップ接続
 
-2026-11-26実装、実測前。DSEC・M3EDで、3層後に1個のPatchwise LSTMを置く2条件を比較する。どちらもE1 Encoder＋LSTM（h蒸留）で、Semantic headは12層まで通した最終特徴を読む。
+2026-11-28にDSEC公式testの結果を受領した（[実験結果台帳](experiment_results.md) §111）。M3ED公開valは結果待ち。DSEC・M3EDで、3層後に1個のPatchwise LSTMを置く2条件を比較する。どちらもE1 Encoder＋LSTM（h蒸留）で、Semantic headは12層まで通した最終特徴を読む。
 
 | 条件ID・配置 | 第4ブロックに渡すパッチ特徴 |
 | --- | --- |
@@ -14,13 +68,16 @@ seed 0、同じRGB教師・訓練系列・イベント窓・99,999更新を使�
 - **接続を変えた効果**は、連続推論での `E1_b3_skip − E1_b3`。12層後の既存E1との差も集計する。
 - **スキップ接続モデルが履歴を使う効果**は、同じ学習済みbackboneとheadでの「連続推論 − 毎イベント窓の直前にLSTM状態をゼロにした推論」。後者でも現在窓と残差枝の計算を使う。学習後のαも記録する。αは枝の出力スケールにも依存するため、履歴の寄与はmIoU差で判断する。
 
-サーバーに変更を同期後、次を実行する。GPU 0・1・2の空きに合わせてDSEC・M3EDを最大2件並列にし、smoke、本学習、Semantic、履歴の評価まで順に進める。
+サーバーに変更を同期後、**新しく開始する場合**は次を実行する。GPU 0・1・2の空きに合わせてDSEC・M3EDを最大2件並列にし、smoke、本学習、Semantic、履歴の評価まで順に進める。起動端末に進捗が流れ、同じ内容を `outputs/b3_skip_20261126.log` に追記する。Ctrl+Cでログ表示を閉じてもサーバーの実験は続く。
 
 ```bash
 cd /home/iASL/Arata_repo/EventState
-mkdir -p outputs
-nohup bash tools/run_b3_skip.sh >>outputs/b3_skip_20261126.log 2>&1 </dev/null &
+bash tools/run_b3_skip.sh --follow
 ```
+
+**実行中のものを見る場合**は `bash tools/run_b3_skip.sh --watch` で既存の出力を1分ごとに読む。`--status` は1回だけ表示する。どちらも学習を起動しないため、以前のコマンドで開始した実験にも使える。起動時に候補GPUを1枚に限定した場合は `--watch 0` のように同じ候補を渡す。新しい親ログの追跡は `tail -n 30 -F outputs/b3_skip_20261126.log`。
+
+全工程の見積もりは起動時と5分ごとに表示する。Stage 1は今回のstepと処理速度を使い、開始前は既存の3層後置換の実測速度を使う。2 GPUなら各段階でDSEC・M3EDの長い方、1 GPUなら両方を足す。空きGPUを待つ時間は別途かかる。終了見込みは日本時間。未計測の工程が残る間は、見積もれる部分の残り時間と未計測部分を併記する。
 
 集計先は `outputs/stage2_b3_skip_semantic_20261126/summary.json`。スクリプトは完了印のあるStage 1を再利用する。中断後にSemanticを再実行すると、検証済みのheadを再利用できる。
 

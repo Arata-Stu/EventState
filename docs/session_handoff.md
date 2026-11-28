@@ -1,6 +1,14 @@
 # EventState セッション引き継ぎメモ
 
-最終更新: 2026-11-26
+最終更新: 2026-11-28
+
+2026-11-28、12層後だけのスキップ `E1_b12_skip` と4段スキップ `E1_b3_6_9_12_skip` を追加。DSEC・M3EDの計4ジョブでsmoke→Stage 1本学習→Semantic→全LSTM毎窓リセットを実行する。12層後は正規化済みViT特徴に射影済みLSTM出力を足す。起動はサーバー同期後に `bash tools/run_final_skip.sh --follow`、集計先は `outputs/stage2_final_skip_semantic_20261128/summary.json`。新条件の実GPU学習・評価は未実行。[条件と手順](lstm_placement_semantic.md)
+
+2026-11-28、3層後スキップのDSEC結果を受け、6層後、9層後、3・6・9層後のスキップ接続をDSEC・M3EDのStage 1とSemanticで比較する実験を追加。3・6・9層後は置換対照も新規学習する。サーバー同期後の起動は `bash tools/run_skip_placements.sh --follow`。新条件の学習と評価は未実行。集計先は `outputs/stage2_skip_placement_semantic_20261128/summary.json`。[条件・所要時間・実行手順](lstm_placement_semantic.md)
+
+2026-11-28、3層後スキップ接続のStage 1本学習完了印とDSEC公式testのSemantic・履歴リセット評価を受領。E1_b3_skip E1 Encoder＋LSTM（h蒸留）は全体60.811%、3層後置換比+9.593ポイント、12層後比+0.328ポイント。同じモデルの履歴保持は毎窓リセット比で全体+1.262ポイント、Q1で+1.538ポイント。報告時点でM3ED公開valの両評価ファイルと親の完了印は未生成。次は `outputs/stage2_b3_skip_semantic_20261126/m3ed_E1_b3_skip/` の結果を確認する。実験台帳§111。
+
+長時間ジョブの進捗と残り時間を起動端末でも確認する。3層後スキップ接続の新規起動は `bash tools/run_b3_skip.sh --follow`、実行済みの出力を見るときは `bash tools/run_b3_skip.sh --watch`。見積もりには使用GPU数と対象工程を添え、未計測の工程は明示する。[起動と確認](lstm_placement_semantic.md#3層後のスキップ接続)
 
 2026-11-26、`E1_b3_skip` E1 Encoder＋LSTM（h蒸留、3層後のスキップ接続）を追加。DSEC・M3EDで既存の3層後置換と比較し、同じheadで毎窓の状態リセットも評価する。サーバー同期後に `bash tools/run_b3_skip.sh`。学習・評価は未実行。[実験条件と手順](lstm_placement_semantic.md#3層後のスキップ接続)
 

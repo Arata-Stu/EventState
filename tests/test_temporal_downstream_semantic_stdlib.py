@@ -18,6 +18,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SemanticJobTests(unittest.TestCase):
+    def test_shell_streams_cache_failure_and_preserves_exit_code_and_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            python = root / "python"
+            python.write_text("#!/bin/sh\necho 'failed cache job' >&2\nexit 23\n")
+            python.chmod(0o755)
+            checkpoint = root / "checkpoint.pt"
+            checkpoint.touch()
+            result = subprocess.run(["bash", str(ROOT / "tools/run_dsec_semantic_frozen.sh"),
+                                     "--checkpoint", str(checkpoint), "--event-cache-dir", tmp,
+                                     "--labels-root", tmp, "--feature-cache-dir", str(root / "cache"),
+                                     "--output-dir", str(root / "output")], capture_output=True, text=True,
+                                    env=dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"]))
+            self.assertEqual(result.returncode, 23)
+            self.assertIn("failed cache job", result.stdout)
+            self.assertEqual((root / "output/logs/cache_train.log").read_text(), "failed cache job\n")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="semantic plan ")
         self.addCleanup(self.temp.cleanup)

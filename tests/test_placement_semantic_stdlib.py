@@ -54,6 +54,130 @@ class PlacementSemanticTests(unittest.TestCase):
             with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
                 suite.main([*flags, *args])
 
+    def test_skip_placement_suite_selects_all_eight_and_keeps_workers_in_the_same_run(self):
+        flags = ["--skip-placement-suite"]
+        with redirect_stdout(io.StringIO()) as stream:
+            suite.main(flags)
+        self.assertEqual(stream.getvalue().count("| Semantic | GPU pool 0,1,2"), 8)
+        for cond in ("E1_b3_6_9", "E1_b6_skip", "E1_b9_skip", "E1_b3_6_9_skip"):
+            for ds in suite.DATASETS:
+                self.assertIn(f"[{ds}_{cond}]", stream.getvalue())
+        with patch.object(suite, "run_worker") as dispatch:
+            suite.main(flags + ["--conditions", "E1_b6_skip", "--datasets", "m3ed",
+                                "--worker-result", str(self.root / "result"), "--execute"])
+            args, ds, condition = dispatch.call_args.args
+            self.assertEqual((ds, condition), ("m3ed", "E1_b6_skip"))
+            self.assertEqual(args.stage1_root.name, "stage1_skip_placement_full_20261128")
+            self.assertEqual(args.output.name, "stage2_skip_placement_semantic_20261128")
+            command = suite.worker_command(args, dict(condition=condition, dataset=ds), "status", "result", 25)
+            self.assertIn("--skip-placement-suite", command)
+            self.assertIn(str(args.placement_semantic_root), command)
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            suite.main(flags + ["--output", str(suite.PLACEMENT_OUTPUT)])
+
+    def test_final_skip_suite_dispatch_summary_and_baseline_control(self):
+        args = SimpleNamespace(conditions=suite.FINAL_SKIP_SUITE, output=self.root / "final",
+                               placement_semantic_root=self.root / "archive", skip_placement_suite=True,
+                               final_skip_suite=True)
+        for ds in suite.DATASETS:
+            for cond in suite.FINAL_SKIP_SUITE:
+                suite.save(args.output / f"{ds}_{cond}/verified.json",
+                           dict(condition=cond, dataset=ds,
+                                mIoU={g: .61 for g in self.baselines[ds]["groups"]}))
+        with patch.object(suite, "replacement_control",
+                          return_value=dict(condition="E1_b3_6_9_12",
+                                            mIoU={g: .5 for g in self.baselines["dsec"]["groups"]})), \
+                patch.object(suite, "skip_history", return_value={"state_policy": "reset_each_window"}):
+            suite.write_summary(args, self.baselines, workers_finished=False)
+            self.assertFalse((args.output / "_SUCCESS").exists())
+            suite.write_summary(args, self.baselines)
+        rows = suite.read(args.output / "summary.json")["semantic"]
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows["dsec_E1_b12_skip"]["replacement_control"]["condition"], "E1")
+        self.assertEqual(rows["dsec_E1_b3_6_9_12_skip"]["replacement_control"]["condition"], "E1_b3_6_9_12")
+        self.assertTrue((args.output / "_SUCCESS").exists())
+        with patch.object(suite, "run_worker") as worker:
+            suite.main(["--final-skip-suite", "--conditions", "E1_b12_skip", "--datasets", "dsec",
+                        "--worker-result", str(self.root / "worker"), "--execute"])
+        parsed, ds, cond = worker.call_args.args
+        self.assertEqual(parsed.output.name, "stage2_final_skip_semantic_20261128")
+        self.assertEqual(parsed.stage1_root.name, "stage1_final_skip_full_20261128")
+        self.assertIn("--final-skip-suite",
+                      suite.worker_command(parsed, dict(condition=cond, dataset=ds), "s", "r", 25))
+
+    def test_new_skip_summary_requires_own_history_and_exact_replacement(self):
+        output, archive = self.root / "new", self.root / "old"
+        args = SimpleNamespace(conditions=suite.SKIP_PLACEMENT_SUITE, output=output,
+                               placement_semantic_root=archive, skip_placement_suite=True)
+        def scores(ds, cond):
+            return {g: 0.50 if cond in suite.SKIP_CONTROLS else 0.38 for g in self.baselines[ds]["groups"]}
+        def create(ds, cond):
+            suite.save(output / f"{ds}_{cond}/verified.json",
+                       dict(condition=cond, dataset=ds, mIoU=scores(ds, cond)))
+        def control(root, ds, baseline, cond):
+            self.assertEqual(root, archive if cond in suite.PLACEMENTS else output)
+            return dict(condition=cond, mIoU=scores(ds, cond))
+        delayed = ("m3ed", "E1_b3_6_9_skip")
+        def history(a, ds, result):
+            return None if (ds, result["condition"]) == delayed else {"state_policy": "reset_each_window"}
+        for ds in suite.DATASETS:
+            for cond in suite.SKIP_PLACEMENT_SUITE:
+                if cond in suite.SKIP_CONTROLS:
+                    create(ds, cond)
+        with patch.object(suite, "replacement_control", side_effect=control), \
+                patch.object(suite, "skip_history", side_effect=history):
+            suite.write_summary(args, self.baselines)
+            rows = suite.read(output / "summary.json")["semantic"]
+            self.assertEqual(len(rows), 4)
+            self.assertEqual(rows["dsec_E1_b6_skip"]["replacement_control"]["condition"], "E1_b6")
+            self.assertAlmostEqual(rows["dsec_E1_b9_skip"]["delta_from_replacement_pp"]["all"], 12.)
+            for ds in suite.DATASETS:
+                create(ds, "E1_b3_6_9")
+            suite.write_summary(args, self.baselines)
+            rows = suite.read(output / "summary.json")["semantic"]
+            self.assertEqual(len(rows), 7)
+            self.assertNotIn("history", rows["dsec_E1_b3_6_9"])
+            self.assertEqual(rows["dsec_E1_b3_6_9_skip"]["replacement_control"]["condition"], "E1_b3_6_9")
+            self.assertFalse((output / "_SUCCESS").exists())
+            delayed = None
+            suite.write_summary(args, self.baselines, workers_finished=False)
+            self.assertEqual(len(suite.read(output / "summary.json")["semantic"]), 8)
+            self.assertFalse((output / "_SUCCESS").exists())
+            suite.write_summary(args, self.baselines)
+            self.assertTrue((output / "_SUCCESS").is_file())
+            # Published comparisons do not mutate the head receipt that signed the history evaluation.
+            self.assertNotIn("replacement_control", suite.read(output / "dsec_E1_b6_skip/verified.json"))
+
+    def test_only_this_workers_new_verified_cache_is_temporary(self):
+        ds, condition, attempt = "dsec", "E1_b6_skip", "run-abcdef123456"
+        key = f"{ds}_{condition}"
+        receipt = self.root / key / "verified.json"
+        cache = self.root.resolve() / "scratch" / key / attempt
+        cache.mkdir(parents=True)
+        (cache / "_SUCCESS").touch()
+        args = SimpleNamespace(output=self.root, scratch=self.root.resolve() / "scratch", execute=True,
+                               skip_placement_suite=True, worker_status=self.root / "status",
+                               worker_result=self.root / "result")
+        def fit(*_args, **_kwargs):
+            row = dict(attempt=attempt, cache=str(cache))
+            suite.save(receipt, row)
+            return row
+        with (self.root / ".lock").open("w") as lock, patch.dict(os.environ, CUDA_VISIBLE_DEVICES="1"), \
+                patch.object(suite, "idle_gpus", return_value=("1",)), patch.object(suite, "run_condition", side_effect=fit), \
+                patch.object(suite, "skip_history", side_effect=[{"ok": True}, {"ok": True}, RuntimeError("reset interrupted")]):
+            args.parent_lock_fd = lock.fileno()
+            suite.run_worker(args, ds, condition)
+            self.assertFalse(cache.exists())
+            self.assertFalse(suite.read(args.worker_result)["cache_retained"])
+            cache.mkdir(parents=True)
+            (cache / "_SUCCESS").touch()
+            suite.run_worker(args, ds, condition)
+            self.assertTrue(cache.is_dir())
+            receipt.unlink()
+            with self.assertRaisesRegex(RuntimeError, "reset interrupted"):
+                suite.run_worker(args, ds, condition)
+            self.assertTrue(cache.is_dir())
+
     def test_multiple_workers_share_one_summary_and_use_each_available_gpu_exclusively(self):
         output, scratch = self.root/"output", self.root/"scratch"
         flags = ["--execute", "--gpus", "0,1,2", "--output", str(output), "--scratch", str(scratch)]

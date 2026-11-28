@@ -9,11 +9,63 @@ import unittest
 from event_state.dense.common_protocol import load_common, audit_common
 from event_state.dense.protocol import digest, load_protocol
 from tools.placement_conditions import PLACEMENTS, SKIP_CONDITION, placement_label
+from tools.placement_gpu import PROJECT, semantic_worker_gpus
 from tools.run_stage1_common import plan
+from tools.stage1_progress import Stage1JobProgress, read_stage1_progress
+from tools.progress_eta import format_eta
 from event_state.dense.stream_lanes import segments, FullStreamBatchSampler
 
 
 class CommonTests(unittest.TestCase):
+    def test_running_semantic_worker_keeps_its_gpu_between_cuda_processes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            launcher = str(PROJECT / 'tools/run_placement_semantic.py').encode()
+            for pid, gpu, args in [('10', '2', [launcher, b'--worker-result', b'result.json']),
+                                   ('11', '1', [launcher, b'--execute'])]:
+                process = proc / pid
+                process.mkdir()
+                (process / 'cmdline').write_bytes(b'\0'.join([b'python', *args, b'']))
+                (process / 'environ').write_bytes(f'CUDA_VISIBLE_DEVICES={gpu}\0'.encode())
+            self.assertEqual(semantic_worker_gpus(proc), {'2'})
+
+    def test_progress_uses_recent_complete_training_updates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "train.log"
+            self.assertIsNone(read_stage1_progress(log))
+            log.write_bytes(b"initializing\n[train] step=5 ")
+            self.assertIsNone(read_stage1_progress(log))
+            log.write_text("startup " + "x" * (160 * 1024) + "\n"
+                           "[train] step=1 loss=0.3 clips_per_update=4 samples_per_second=2\n"
+                           "[validation] step=1 loss=1.9\n"
+                           "[train] step=2 loss=0.2 clips_per_update=4 samples_per_second=4\n"
+                           "[train] step=3 loss=0.1 clips_per_update=4 samples_per_second=nan\n"
+                           "[train] step=4 loss=99")
+            self.assertEqual(read_stage1_progress(log), (3, 0.1, 1.5))
+
+    def test_live_eta_calibrates_to_wall_time_and_flags_stalled_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "train.log"
+            log.write_text("[train] step=1 loss=0.25 clips_per_update=8 samples_per_second=16\n")
+            progress = Stage1JobProgress()
+            first = progress.status(log, 10081, 2)
+            self.assertIn("step 1/10,081", first)
+            self.assertIn("約1.4時間", first)
+            self.assertIn("JST", first)
+            self.assertIsNone(progress.status(log, 10081, 60))
+            with log.open("a") as stream:
+                stream.write("[train] step=61 loss=0.123\n")
+            update = progress.status(log, 10081, 62)
+            self.assertIn("loss=0.123", update)
+            self.assertIn("約2.8時間", update)
+            self.assertIn("実測更新速度", update)
+            self.assertIn("再計測中", progress.status(log, 10081, 122))
+            with log.open("a") as stream:
+                stream.write("[train] step=10081 loss=0.1\n")
+            self.assertIn("最終checkpoint", progress.status(log, 10081, 182))
+        self.assertIn("約1分", format_eta(2))
+        self.assertIn("待ち", format_eta(float("nan")))
+
     def test_full_stream_lanes_are_disjoint_and_chronological(self):
         records = [(name, start, 8) for name, count in [('a',19),('b',25),('c',32)]
                    for start in range(count)]
@@ -143,6 +195,28 @@ class CommonTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'b3-skip'):
                     plan(a)
                 a.b3_skip = False
+                a.skip_placement_suite = True
+                with self.assertRaisesRegex(ValueError, 'skip-placement-suite'):
+                    plan(a)
+                a.placement_suite = False
+                extra = plan(a)
+                blocks = {'E1_b3_6_9': [3, 6, 9], 'E1_b6_skip': [6], 'E1_b9_skip': [9],
+                          'E1_b3_6_9_skip': [3, 6, 9]}
+                self.assertEqual([job['name'] for job in extra],
+                                 [f'{ds}_{name}_w1' for ds in ('dsec', 'm3ed') for name in blocks])
+                for job in extra:
+                    name = job['condition']
+                    self.assertEqual((job['steps'], job['after_blocks'], job['world']), (steps, blocks[name], 1))
+                    self.assertEqual('++model.temporal.residual_skip=true' in job['command'], name.endswith('_skip'))
+                    self.assertEqual(job.get('residual_skip', False), name.endswith('_skip'))
+                a.final_skip_suite = True
+                final_jobs = plan(a)
+                self.assertEqual([j['condition'] for j in final_jobs],
+                    ['E1_b12_skip', 'E1_b3_6_9_12_skip'] * 2)
+                self.assertEqual([j['after_blocks'] for j in final_jobs], [[12], [3, 6, 9, 12]] * 2)
+                self.assertTrue(all(j['residual_skip'] and j['steps'] == steps for j in final_jobs))
+                a.final_skip_suite = False
+                a.placement_suite, a.skip_placement_suite = True, False
             self.assertFalse(a.output_root.exists())
             stats['sequences'] = ['wrong']
             (root/'m3ed_common.json').write_text(json.dumps(stats))

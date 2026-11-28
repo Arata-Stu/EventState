@@ -67,6 +67,27 @@ def setUpModule():
 
 
 class ParallelDepthSchedulerTest(unittest.TestCase):
+    def test_sample_live_log_reports_latest_parallel_worker_bar_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "m3ed_worker.log"
+            path.write_text("startup\n" + "x" * 20000 +
+                            "\rcache: 25% | 1/4 [00:30<01:30, 30s/window]"
+                            "\rM3ED Semantic cache: 50% | 2/4 [01:00<01:00, 30s/window]")
+            entry = dict(log_path=path, gpu="2", job=dict(label="E1 skip"))
+            output = StringIO()
+            with redirect_stdout(output), patch.object(parallel, "format_eta", return_value="1分") as eta:
+                parallel._report_worker_progress("m3ed_E1_b3_skip", entry)
+                parallel._report_worker_progress("m3ed_E1_b3_skip", entry)
+                with path.open("a") as stream:
+                    stream.write("\nHistory completed\n")
+                parallel._report_worker_progress("m3ed_E1_b3_skip", entry)
+                eta.assert_called_once_with(60)
+            rows = output.getvalue().splitlines()
+            self.assertEqual(len(rows), 2)
+            self.assertIn("[m3ed_E1_b3_skip] GPU 2 | E1 skip | M3ED Semantic cache: 50%", rows[0])
+            self.assertIn("表示中の区間の残り 1分", rows[0])
+            self.assertTrue(rows[1].endswith("History completed"))
+
     def fixture(self, root):
         worker = root/'worker.py'
         worker.write_text(WORKER)

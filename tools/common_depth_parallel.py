@@ -10,6 +10,33 @@ import time
 
 
 from tools.depth_slots import MAX_PARALLEL_DEPTH_JOBS, SLOT_FD_ENV, try_depth_slot
+from tools.progress_eta import format_eta, tqdm_remaining_seconds
+
+
+def _report_worker_progress(name, entry):
+    """Sample a growing worker log, including tqdm's carriage-return records."""
+    path = entry['log_path']
+    previous = entry.get('log_offset', 0)
+    try:
+        with path.open('rb') as stream:
+            end = stream.seek(0, os.SEEK_END)
+            if end == previous:
+                return False
+            # Skim the latest output rather than replaying every batch on each GPU.
+            start = previous if previous < end else 0
+            stream.seek(max(start, end - 16384))
+            lines = stream.read(end - stream.tell()).decode(errors='replace').splitlines()
+    except OSError:
+        # Training can still be healthy while its log is being rotated.
+        return False
+    entry['log_offset'] = end
+    line = next((line.strip() for line in reversed(lines) if line.strip()), '')
+    if not line:
+        return False
+    seconds = tqdm_remaining_seconds(line)
+    suffix = '' if seconds is None else f' | 表示中の区間の残り {format_eta(seconds)}'
+    print(f"[{name}] GPU {entry['gpu']} | {entry['job']['label']} | {line[:600]}{suffix}", flush=True)
+    return True
 
 
 def parse_gpus(value):
@@ -109,13 +136,15 @@ def _start_worker(job, gpu, slot, state_dir, worker_command, popen_factory, lock
 
 def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None,
                  poll_interval=2.0, popen_factory=None, disk_free=None, sleep=None,
-                 on_complete=None, idle_devices=None, waiting_for="an idle GPU"):
+                 on_complete=None, idle_devices=None, waiting_for="an idle GPU", live_logs=True):
     """Run condition workers with exclusive GPUs and aggregate scratch reservations.
 
     Across datasets, at most two workers with kind='depth' can run together.
     Workers atomically write status and result JSON files. A cache reservation may
     decrease only after that entire cache role has been extracted. Interrupted
     worker-owned caches and head/report artifacts are deliberately left in place.
+    Mirror one recent worker log line every 30 seconds for each running job.
+    A tqdm ETA applies only to the operation covered by that progress bar.
     """
     popen_factory = popen_factory or subprocess.Popen
     disk_free = disk_free or (lambda: shutil.disk_usage(scratch).free)
@@ -147,6 +176,11 @@ def run_parallel(jobs, gpus, *, scratch, state_dir, worker_command, lock_fd=None
                           f"{status.get('phase')} | log: {entry['log_path']}", flush=True)
                 entry['status'] = status
                 code = entry['proc'].poll()
+                if live_logs:
+                    now = time.monotonic()
+                    if now >= entry.get('next_progress', 0) or code is not None:
+                        if _report_worker_progress(name, entry):
+                            entry['next_progress'] = now + 30
                 if code is None:
                     continue
                 entry['proc'].wait()
